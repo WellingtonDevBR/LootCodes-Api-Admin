@@ -26,10 +26,9 @@ enable_https_alb             = true
 api_fqdn                     = "admin-api.lootcodes.com"
 route53_zone_id              = ""
 create_route53_alias_for_api = false
-# Step 1: Set both to false, apply, add ACM CNAME to GoDaddy
-# Step 2: After ACM shows Issued, set both to true, apply again
-alb_redirect_http_to_https   = false
-create_alb_https_listener    = false
+# ACM cert is ISSUED — HTTPS listener enabled
+alb_redirect_http_to_https   = true
+create_alb_https_listener    = true
 
 # EIP: off by default when ALB is on (traffic goes through ALB DNS)
 allocate_elastic_ip             = true
