@@ -1,0 +1,132 @@
+export interface EmitInventoryStockChangedDto {
+  product_ids: string[];
+  reason: string;
+  admin_id: string;
+}
+
+export interface EmitInventoryStockChangedResult {
+  success: boolean;
+}
+
+export interface SendStockNotificationsNowDto {
+  admin_id: string;
+}
+
+export interface SendStockNotificationsNowResult {
+  success: boolean;
+  notifications_sent: number;
+}
+
+export interface ReplaceKeyDto {
+  order_item_id: string;
+  old_key_id: string;
+  admin_id: string;
+}
+
+export interface ReplaceKeyResult {
+  success: boolean;
+  new_key_id?: string;
+}
+
+export interface FixKeyStatesDto {
+  variant_id: string;
+  admin_id: string;
+}
+
+export interface FixKeyStatesResult {
+  success: boolean;
+  keys_fixed: number;
+}
+
+export interface UpdateAffectedKeyDto {
+  key_id: string;
+  new_status: string;
+  admin_id: string;
+}
+
+export interface UpdateAffectedKeyResult {
+  success: boolean;
+}
+
+export interface DecryptKeysDto {
+  key_ids: string[];
+  admin_id: string;
+}
+
+export interface DecryptKeysResult {
+  keys: Array<{ id: string; decrypted_value: string }>;
+}
+
+export interface RecryptProductKeysDto {
+  product_id: string;
+  admin_id: string;
+}
+
+export interface RecryptProductKeysResult {
+  success: boolean;
+  keys_recrypted: number;
+}
+
+export interface SetKeysSalesBlockedDto {
+  key_ids: string[];
+  blocked: boolean;
+  admin_id: string;
+}
+
+export interface SetKeysSalesBlockedResult {
+  success: boolean;
+  keys_updated: number;
+}
+
+export interface SetVariantSalesBlockedDto {
+  variant_id: string;
+  blocked: boolean;
+  admin_id: string;
+}
+
+export interface SetVariantSalesBlockedResult {
+  success: boolean;
+}
+
+export interface MarkKeysFaultyDto {
+  key_ids: string[];
+  admin_id: string;
+  reason: string;
+}
+
+export interface MarkKeysFaultyResult {
+  success: boolean;
+  keys_marked: number;
+}
+
+export interface LinkReplacementKeyDto {
+  original_key_id: string;
+  replacement_key_id: string;
+  admin_id: string;
+}
+
+export interface LinkReplacementKeyResult {
+  success: boolean;
+}
+
+export interface ManualSellDto {
+  variant_id: string;
+  quantity: number;
+  buyer_email: string;
+  admin_id: string;
+}
+
+export interface ManualSellResult {
+  success: boolean;
+  order_id?: string;
+}
+
+export interface UpdateVariantPriceDto {
+  variant_id: string;
+  price_cents: number;
+  admin_id: string;
+}
+
+export interface UpdateVariantPriceResult {
+  success: boolean;
+}

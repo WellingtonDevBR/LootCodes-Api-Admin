@@ -1,0 +1,32 @@
+# Example only — copy to terraform.tfvars (gitignored) and edit.
+# Never commit terraform.tfvars if it contains sensitive CIDRs.
+
+aws_region    = "us-east-1"
+project_name  = "lootcodes-admin-api"
+environment   = "production"
+
+ecr_repository_name = "lootcodes-admin-api"
+instance_type       = "t3.small"
+
+# Host port (container 3002 mapped to this on the EC2 host).
+api_port = 3000
+
+# Required for a reachable public API unless you use a load balancer / private only.
+# Replace with your public IP:  curl -s https://checkip.amazonaws.com
+api_ingress_cidr_blocks = ["203.0.113.10/32"]
+
+# Prefer false and use SSM Session Manager only.
+enable_unrestricted_api_ingress = false
+
+# Optional: tighten further
+# vpc_id    = "vpc-xxxxxxxx"
+# subnet_id = "subnet-yyyyyyyy"
+
+associate_public_ip = true
+deploy_directory    = "/opt/lootcodes-admin-api"
+
+# Must already exist in EC2 → Key pairs (same as your LootBoxy/Eneba.pem).
+ec2_key_pair_name = "Eneba"
+
+# Optional SSH (not recommended if using SSM); requires security group rule on 22.
+# ssh_ingress_cidr_blocks = ["203.0.113.10/32"]

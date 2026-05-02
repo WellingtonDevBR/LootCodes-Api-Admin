@@ -1,0 +1,178 @@
+export const TOKENS = {
+  // Infrastructure (low-level)
+  Database: Symbol.for('IDatabase'),
+
+  // Auth
+  AuthProvider: Symbol.for('IAuthProvider'),
+  AdminRoleChecker: Symbol.for('IAdminRoleChecker'),
+  IpBlocklist: Symbol.for('IIpBlocklist'),
+
+  // Domain repositories
+  AdminOrderRepository: Symbol.for('IAdminOrderRepository'),
+  AdminInventoryRepository: Symbol.for('IAdminInventoryRepository'),
+  AdminInventorySourceRepository: Symbol.for('IAdminInventorySourceRepository'),
+  AdminUserRepository: Symbol.for('IAdminUserRepository'),
+  AdminSecurityRepository: Symbol.for('IAdminSecurityRepository'),
+  AdminPromoRepository: Symbol.for('IAdminPromoRepository'),
+  AdminSupportRepository: Symbol.for('IAdminSupportRepository'),
+  AdminCurrencyRepository: Symbol.for('IAdminCurrencyRepository'),
+  AdminProcurementRepository: Symbol.for('IAdminProcurementRepository'),
+  AdminPriceMatchRepository: Symbol.for('IAdminPriceMatchRepository'),
+  AdminReferralRepository: Symbol.for('IAdminReferralRepository'),
+  AdminReviewRepository: Symbol.for('IAdminReviewRepository'),
+  AdminAnalyticsRepository: Symbol.for('IAdminAnalyticsRepository'),
+  AdminNotificationRepository: Symbol.for('IAdminNotificationRepository'),
+  AdminAlgoliaRepository: Symbol.for('IAdminAlgoliaRepository'),
+  AdminSettingsRepository: Symbol.for('IAdminSettingsRepository'),
+  AdminApprovalRepository: Symbol.for('IAdminApprovalRepository'),
+  AdminAuditRepository: Symbol.for('IAdminAuditRepository'),
+  AdminVerificationRepository: Symbol.for('IAdminVerificationRepository'),
+  AdminAuthSmsRepository: Symbol.for('IAdminAuthSmsRepository'),
+  AdminDigisellerRepository: Symbol.for('IAdminDigisellerRepository'),
+  AdminPricingRepository: Symbol.for('IAdminPricingRepository'),
+
+  // Shared infra
+  EventBus: Symbol.for('IEventBus'),
+  EmailSender: Symbol.for('IEmailSender'),
+} as const;
+
+export const UC_TOKENS = {
+  // Orders & Fulfillment
+  FulfillVerifiedOrder: Symbol.for('FulfillVerifiedOrderUseCase'),
+  ManualFulfill: Symbol.for('ManualFulfillUseCase'),
+  RecoverOrder: Symbol.for('RecoverOrderUseCase'),
+  ConfirmPayment: Symbol.for('ConfirmPaymentUseCase'),
+  ProcessPreorder: Symbol.for('ProcessPreorderUseCase'),
+  GenerateGuestAccessLink: Symbol.for('GenerateGuestAccessLinkUseCase'),
+  RefundOrder: Symbol.for('RefundOrderUseCase'),
+  RefundTicket: Symbol.for('RefundTicketUseCase'),
+  RefundInitiate: Symbol.for('RefundInitiateUseCase'),
+  ListOrders: Symbol.for('ListOrdersUseCase'),
+  GetOrderDetail: Symbol.for('GetOrderDetailUseCase'),
+  ReissueEmail: Symbol.for('ReissueEmailUseCase'),
+
+  // Inventory & Keys
+  EmitInventoryStockChanged: Symbol.for('EmitInventoryStockChangedUseCase'),
+  SendStockNotificationsNow: Symbol.for('SendStockNotificationsNowUseCase'),
+  ReplaceKey: Symbol.for('ReplaceKeyUseCase'),
+  FixKeyStates: Symbol.for('FixKeyStatesUseCase'),
+  UpdateAffectedKey: Symbol.for('UpdateAffectedKeyUseCase'),
+  DecryptKeys: Symbol.for('DecryptKeysUseCase'),
+  RecryptProductKeys: Symbol.for('RecryptProductKeysUseCase'),
+  SetKeysSalesBlocked: Symbol.for('SetKeysSalesBlockedUseCase'),
+  SetVariantSalesBlocked: Symbol.for('SetVariantSalesBlockedUseCase'),
+  MarkKeysFaulty: Symbol.for('MarkKeysFaultyUseCase'),
+  LinkReplacementKey: Symbol.for('LinkReplacementKeyUseCase'),
+  ManualSell: Symbol.for('ManualSellUseCase'),
+  UpdateVariantPrice: Symbol.for('UpdateVariantPriceUseCase'),
+
+  // Inventory Sources
+  LinkVariantInventorySource: Symbol.for('LinkVariantInventorySourceUseCase'),
+  UnlinkVariantInventorySource: Symbol.for('UnlinkVariantInventorySourceUseCase'),
+  ListVariantInventorySources: Symbol.for('ListVariantInventorySourcesUseCase'),
+  ListLinkableInventorySources: Symbol.for('ListLinkableInventorySourcesUseCase'),
+
+  // Users
+  GetComprehensiveUserData: Symbol.for('GetComprehensiveUserDataUseCase'),
+  GetUserTimeline: Symbol.for('GetUserTimelineUseCase'),
+  GetUserSessions: Symbol.for('GetUserSessionsUseCase'),
+  SearchAccountProfiles: Symbol.for('SearchAccountProfilesUseCase'),
+  ToggleUserRole: Symbol.for('ToggleUserRoleUseCase'),
+  DeleteUserAccount: Symbol.for('DeleteUserAccountUseCase'),
+  BlockCustomer: Symbol.for('BlockCustomerUseCase'),
+  ForceLogout: Symbol.for('ForceLogoutUseCase'),
+
+  // Security & Fraud
+  GetSecurityConfigs: Symbol.for('GetSecurityConfigsUseCase'),
+  UpdateSecurityConfig: Symbol.for('UpdateSecurityConfigUseCase'),
+  UnlockRateLimit: Symbol.for('UnlockRateLimitUseCase'),
+  DirectUnlockRateLimit: Symbol.for('DirectUnlockRateLimitUseCase'),
+
+  // Promo Codes
+  CreatePromoCode: Symbol.for('CreatePromoCodeUseCase'),
+  UpdatePromoCode: Symbol.for('UpdatePromoCodeUseCase'),
+  TogglePromoActive: Symbol.for('TogglePromoActiveUseCase'),
+  DeletePromoCode: Symbol.for('DeletePromoCodeUseCase'),
+  SubmitPromoApproval: Symbol.for('SubmitPromoApprovalUseCase'),
+  ApprovePromoCode: Symbol.for('ApprovePromoCodeUseCase'),
+  RejectPromoCode: Symbol.for('RejectPromoCodeUseCase'),
+  SendPromoNotifications: Symbol.for('SendPromoNotificationsUseCase'),
+  EstimatePromoReach: Symbol.for('EstimatePromoReachUseCase'),
+  ListPromoCodes: Symbol.for('ListPromoCodesUseCase'),
+  GetPromoUsageStats: Symbol.for('GetPromoUsageStatsUseCase'),
+
+  // Support
+  UpdateTicketStatus: Symbol.for('UpdateTicketStatusUseCase'),
+
+  // Currency
+  SyncCurrency: Symbol.for('SyncCurrencyUseCase'),
+  UpdateCurrencyManual: Symbol.for('UpdateCurrencyManualUseCase'),
+  GetCurrencyRates: Symbol.for('GetCurrencyRatesUseCase'),
+
+  // Procurement
+  TestProviderQuote: Symbol.for('TestProviderQuoteUseCase'),
+  SearchProviders: Symbol.for('SearchProvidersUseCase'),
+  ManageProviderOffer: Symbol.for('ManageProviderOfferUseCase'),
+  IngestProviderCatalog: Symbol.for('IngestProviderCatalogUseCase'),
+  IngestProviderCatalogStatus: Symbol.for('IngestProviderCatalogStatusUseCase'),
+  RefreshProviderPrices: Symbol.for('RefreshProviderPricesUseCase'),
+  ManualProviderPurchase: Symbol.for('ManualProviderPurchaseUseCase'),
+  RecoverProviderOrder: Symbol.for('RecoverProviderOrderUseCase'),
+
+  // Price Match
+  ApprovePriceMatch: Symbol.for('ApprovePriceMatchUseCase'),
+  RejectPriceMatch: Symbol.for('RejectPriceMatchUseCase'),
+  PreviewPriceMatchDiscount: Symbol.for('PreviewPriceMatchDiscountUseCase'),
+
+  // Referrals
+  ListReferrals: Symbol.for('ListReferralsUseCase'),
+  ListReferralLeaderboard: Symbol.for('ListReferralLeaderboardUseCase'),
+  ResolveReferralDispute: Symbol.for('ResolveReferralDisputeUseCase'),
+  InvalidateReferral: Symbol.for('InvalidateReferralUseCase'),
+  PayLeaderboardPrizes: Symbol.for('PayLeaderboardPrizesUseCase'),
+
+  // Reviews
+  ListTrustpilotReviewClaims: Symbol.for('ListTrustpilotReviewClaimsUseCase'),
+  ResolveTrustpilotReviewClaim: Symbol.for('ResolveTrustpilotReviewClaimUseCase'),
+
+  // Analytics & Financial
+  GetDashboardMetrics: Symbol.for('GetDashboardMetricsUseCase'),
+  GetFinancialSummary: Symbol.for('GetFinancialSummaryUseCase'),
+  GetTransactions: Symbol.for('GetTransactionsUseCase'),
+
+  // Notifications
+  SendBroadcastNotification: Symbol.for('SendBroadcastNotificationUseCase'),
+  GetAdminUnseenCounts: Symbol.for('GetAdminUnseenCountsUseCase'),
+  MarkAdminSectionSeen: Symbol.for('MarkAdminSectionSeenUseCase'),
+
+  // Algolia
+  GetAlgoliaIndexStats: Symbol.for('GetAlgoliaIndexStatsUseCase'),
+
+  // Settings
+  ListSettings: Symbol.for('ListSettingsUseCase'),
+  UpdateSetting: Symbol.for('UpdateSettingUseCase'),
+
+  // Approval Workflow
+  RequestAction: Symbol.for('RequestActionUseCase'),
+  ApproveAction: Symbol.for('ApproveActionUseCase'),
+  RejectAction: Symbol.for('RejectActionUseCase'),
+  ListActionRequests: Symbol.for('ListActionRequestsUseCase'),
+
+  // Audit
+  ListAuditLog: Symbol.for('ListAuditLogUseCase'),
+
+  // Verification
+  ApproveVerification: Symbol.for('ApproveVerificationUseCase'),
+  DenyVerification: Symbol.for('DenyVerificationUseCase'),
+
+  // Admin Auth/SMS
+  SendAdminSms: Symbol.for('SendAdminSmsUseCase'),
+  VerifyAdminSms: Symbol.for('VerifyAdminSmsUseCase'),
+  SendSecurityAlertSms: Symbol.for('SendSecurityAlertSmsUseCase'),
+
+  // Digiseller
+  DigisellerReconcileProfit: Symbol.for('DigisellerReconcileProfitUseCase'),
+
+  // Variant Price Timeline
+  GetVariantPriceTimeline: Symbol.for('GetVariantPriceTimelineUseCase'),
+} as const;

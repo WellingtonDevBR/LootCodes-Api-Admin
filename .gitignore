@@ -1,0 +1,21 @@
+node_modules
+dist
+.env
+.env.prod
+*.local
+
+# Terraform state (contains secrets)
+deploy/terraform/.terraform/
+deploy/terraform/*.tfstate
+deploy/terraform/*.tfstate.backup
+deploy/terraform/.terraform.lock.hcl
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.sw?
+
+# Coverage
+coverage/
