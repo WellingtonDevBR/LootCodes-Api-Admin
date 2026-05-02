@@ -1,0 +1,56 @@
+---
+description: "Backend Admin (Fastify API) architecture rules and conventions"
+globs:
+  - "**"
+alwaysApply: true
+---
+# Backend Admin — Fastify + Clean Architecture
+
+## Architecture
+
+Three-layer Hexagonal (Ports and Adapters). Dependencies flow **inward only**.
+
+| Layer | Path | Allowed imports |
+|---|---|---|
+| Core (domain) | `src/core/` | Only other `core/` files, `@shared/`, and `tsyringe` (DI decorators only). ZERO other external packages. |
+| Infrastructure (adapters) | `src/infra/` | `core/ports/`, `@shared/`, external SDKs |
+| Transport (HTTP) | `src/http/` | `core/use-cases/*/*.types.js` (`import type` only), `core/errors/`, `@shared/`, Fastify types |
+| Shared utilities | `src/shared/` | Node.js built-ins only. |
+| Config | `src/config/` | `zod`, Node.js built-ins |
+| DI container | `src/di/` | Everything (composition root) |
+
+## Admin-Only Service
+
+Every route requires authentication. Three guard levels:
+
+- `adminGuard` — admin role required (most mutation operations)
+- `employeeGuard` — admin or employee role (read-heavy/monitoring operations)
+- `internalSecretGuard` — X-Internal-Secret header (cron/internal triggers only)
+
+No public routes. No guest access. No storefront routes.
+
+## FORBIDDEN
+
+- Importing from `infra/` in `core/` or `http/`
+- `console.log` — use `createLogger()` from `@shared/logger.ts`
+- `any` types — use `unknown` and narrow
+- Imports inside functions
+- `process.env.*` reads outside `config/env.ts`
+- Public/unauthenticated routes (except `/health`)
+- Business logic in route handlers — routes parse input, call use case, format output
+- Direct `@supabase/supabase-js` imports in `core/` or `http/`
+
+## Naming Conventions
+
+- Port interfaces: `admin-xxx-repository.port.ts` → `IAdminXxxRepository`
+- Adapters: `supabase-admin-xxx.repository.ts`
+- Use cases: `verb-noun.use-case.ts`
+- Routes: `xxx.routes.ts`
+- Types: `xxx.types.ts`
+- Tests: `xxx.test.ts`
+
+## Testing
+
+- **Unit tests** (`test/unit/`): Mock ports, test use case logic
+- **Integration tests** (`test/integration/`): `buildTestApp()` + `app.inject()`
+- Framework: Vitest

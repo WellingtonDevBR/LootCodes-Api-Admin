@@ -1,0 +1,184 @@
+# CI/CD for Admin Fastify API.
+#
+# GitHub → Variables: AWS_REGION, ECR_REPOSITORY_ADMIN, EC2_INSTANCE_IDS_ADMIN, EC2_DEPLOY_DIR_ADMIN (optional)
+# GitHub → Secrets:   AWS_ROLE_ARN (e.g. arn:aws:iam::546820406679:role/GitHubActionsLootCodesApiDeploy)
+
+name: Backend Admin CI / CD
+
+on:
+  pull_request:
+    paths:
+      - "**"
+      - ".github/workflows/backend-admin-ci-cd.yml"
+  push:
+    branches: [main]
+    paths:
+      - "**"
+      - ".github/workflows/backend-admin-ci-cd.yml"
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Docker build (verify)
+        run: docker build -t lootcodes-admin-api:ci .
+
+  deploy:
+    needs: [ci]
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Verify EC2 targets exist
+        env:
+          INSTANCE_IDS: ${{ vars.EC2_INSTANCE_IDS_ADMIN }}
+        run: |
+          if [ -z "$INSTANCE_IDS" ]; then
+            echo "Set GitHub variable EC2_INSTANCE_IDS_ADMIN."
+            exit 1
+          fi
+          aws sts get-caller-identity
+          for id in $(echo "$INSTANCE_IDS" | tr ',' ' '); do
+            id=$(echo "$id" | xargs)
+            [ -z "$id" ] && continue
+            st=$(aws ec2 describe-instances --region "$AWS_REGION" --instance-ids "$id" --query 'Reservations[0].Instances[0].State.Name' --output text 2>/dev/null)
+            if [ "$st" != "running" ]; then
+              echo "::error::EC2 $id is not running (state: $st)"
+              exit 1
+            fi
+            ping=$(aws ssm describe-instance-information --region "$AWS_REGION" --filters "Key=InstanceIds,Values=$id" --query 'InstanceInformationList[0].PingStatus' --output text 2>/dev/null)
+            if [ "$ping" = "Online" ]; then
+              echo "OK: $id running, SSM Online"
+            else
+              echo "::error::SSM: $id is not Online (status: ${ping:-not registered})"
+              exit 1
+            fi
+          done
+
+      - name: Login to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image
+        id: image
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          REPO: ${{ vars.ECR_REPOSITORY_ADMIN }}
+        run: |
+          if [ -z "$REPO" ]; then
+            echo "Set GitHub variable ECR_REPOSITORY_ADMIN."
+            exit 1
+          fi
+          IMAGE="${REGISTRY}/${REPO}"
+          docker build -t "${IMAGE}:${GITHUB_SHA}" -t "${IMAGE}:latest" .
+          docker push "${IMAGE}:${GITHUB_SHA}"
+          docker push "${IMAGE}:latest"
+          echo "uri=${IMAGE}:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy to EC2 via SSM
+        env:
+          FULL_IMAGE: ${{ steps.image.outputs.uri }}
+          INSTANCE_IDS: ${{ vars.EC2_INSTANCE_IDS_ADMIN }}
+          EC2_DEPLOY_DIR: ${{ vars.EC2_DEPLOY_DIR_ADMIN }}
+        run: |
+          if [ -z "$INSTANCE_IDS" ]; then
+            echo "Set GitHub variable EC2_INSTANCE_IDS_ADMIN."
+            exit 1
+          fi
+          python3 << 'PY'
+          import json, os, subprocess, sys, time
+
+          region = os.environ["AWS_REGION"]
+          image = os.environ["FULL_IMAGE"]
+          deploy_dir = os.environ.get("EC2_DEPLOY_DIR") or "/opt/lootcodes-admin-api"
+          raw = os.environ.get("INSTANCE_IDS", "")
+          instances = [x.strip() for x in raw.replace(",", " ").split() if x.strip()]
+          if not instances:
+              print("No instance IDs", file=sys.stderr); sys.exit(1)
+
+          commands = [
+              "set -euo pipefail",
+              f"export API_IMAGE_URI={image}",
+              f"export AWS_DEFAULT_REGION={region}",
+              'REGISTRY=$(echo "$API_IMAGE_URI" | cut -d/ -f1)',
+              'aws ecr get-login-password --region "$AWS_DEFAULT_REGION" | docker login --username AWS --password-stdin "$REGISTRY"',
+              f"cd {deploy_dir}",
+              "docker compose -f docker-compose.prod.yml pull",
+              "docker compose -f docker-compose.prod.yml up -d --remove-orphans",
+          ]
+
+          params = {"commands": commands}
+          with open("/tmp/ssm-params.json", "w") as f:
+              json.dump(params, f)
+
+          sha = (os.environ.get("GITHUB_SHA") or "")[:7]
+          cmd_id = subprocess.check_output([
+              "aws", "ssm", "send-command", "--region", region,
+              "--document-name", "AWS-RunShellScript",
+              "--comment", f"lootcodes-admin-api deploy {sha}",
+              "--parameters", "file:///tmp/ssm-params.json",
+              "--instance-ids", *instances,
+              "--output", "text", "--query", "Command.CommandId",
+          ], text=True).strip()
+          print(f"SSM CommandId: {cmd_id}")
+
+          deadline = time.time() + 600
+          while time.time() < deadline:
+              data = json.loads(subprocess.check_output([
+                  "aws", "ssm", "list-command-invocations", "--region", region,
+                  "--command-id", cmd_id, "--details", "--output", "json",
+              ], text=True))
+              invs = data.get("CommandInvocations") or []
+              if not invs: time.sleep(5); continue
+              statuses = [i.get("Status") for i in invs]
+              print("Statuses:", statuses)
+              if all(s == "Success" for s in statuses): sys.exit(0)
+              if any(s in ("Failed", "Cancelled", "TimedOut") for s in statuses):
+                  for inv in invs:
+                      if inv.get("Status") != "Success":
+                          print(inv.get("StandardErrorContent") or inv.get("StatusDetails"), file=sys.stderr)
+                  sys.exit(1)
+              time.sleep(5)
+          print("Timed out", file=sys.stderr); sys.exit(1)
+          PY
