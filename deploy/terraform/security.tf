@@ -1,6 +1,6 @@
 resource "aws_security_group" "api" {
   name_prefix = "${local.name_prefix}-sg-"
-  description = "LootCodes Admin API EC2 - SSM egress, API on ${var.api_port} from allowed CIDRs only"
+  description = var.enable_https_alb ? "LootCodes Admin API EC2 - SSM egress; API :${var.api_port} from ALB only" : "LootCodes Admin API EC2 - SSM egress, API on ${var.api_port} from allowed CIDRs only"
   vpc_id      = local.vpc_id
 
   egress {
@@ -20,10 +20,23 @@ resource "aws_security_group" "api" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
+  # When ALB is enabled, allow traffic from ALB security group only.
   dynamic "ingress" {
-    for_each = length(local.api_ingress) > 0 ? [1] : []
+    for_each = var.enable_https_alb ? [1] : []
     content {
-      description = "Admin API (Docker publishes container ${var.api_port} to host ${var.api_port})"
+      description     = "Admin API port ${var.api_port} from ALB only"
+      from_port       = var.api_port
+      to_port         = var.api_port
+      protocol        = "tcp"
+      security_groups = [aws_security_group.alb[0].id]
+    }
+  }
+
+  # When ALB is disabled, allow traffic from specified CIDRs.
+  dynamic "ingress" {
+    for_each = !var.enable_https_alb && length(local.api_ingress) > 0 ? [1] : []
+    content {
+      description = "Admin API port ${var.api_port} (host and container)"
       from_port   = var.api_port
       to_port     = var.api_port
       protocol    = "tcp"

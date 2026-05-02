@@ -11,8 +11,8 @@ instance_type       = "t3.small"
 # Host/container API port (docker-compose.prod uses ${var.api_port}:${var.api_port}).
 api_port = 3000
 
-# Required for a reachable public API unless you use a load balancer / private only.
-# Replace with your public IP:  curl -s https://checkip.amazonaws.com
+# When enable_https_alb = false, these CIDRs can reach EC2:3000 directly.
+# When enable_https_alb = true, EC2 only accepts traffic from the ALB SG.
 api_ingress_cidr_blocks = ["203.0.113.10/32"]
 
 # Prefer false and use SSM Session Manager only.
@@ -30,3 +30,28 @@ ec2_key_pair_name = "Eneba"
 
 # Optional SSH (not recommended if using SSM); requires security group rule on 22.
 # ssh_ingress_cidr_blocks = ["203.0.113.10/32"]
+
+# ---------------------------------------------------------------------------
+# ALB / HTTPS / ACM  (enable for admin-api.lootcodes.com with TLS)
+# ---------------------------------------------------------------------------
+# Step-by-step:
+#   1. Set enable_https_alb = true, api_fqdn = "admin-api.lootcodes.com"
+#   2. terraform apply → creates ALB + ACM cert in Pending validation
+#   3. Copy `acm_dns_validation_records` CNAME to GoDaddy
+#   4. Wait for ACM → Issued
+#   5. Set create_alb_https_listener = true, alb_redirect_http_to_https = true
+#   6. terraform apply → enables :443 listener with cert
+#   7. In GoDaddy: admin-api CNAME → `alb_dns_name` output
+
+enable_https_alb             = false
+api_fqdn                     = "admin-api.lootcodes.com"
+route53_zone_id              = ""         # leave empty if using GoDaddy
+create_route53_alias_for_api = false      # set true only if using Route53
+
+# After ACM is Issued:
+create_alb_https_listener    = false
+alb_redirect_http_to_https   = false
+
+# Elastic IP: default true when no ALB; when ALB is on, EIP is skipped unless:
+allocate_elastic_ip             = true
+allocate_elastic_ip_alongside_alb = false  # set true if you want direct EC2 access + ALB

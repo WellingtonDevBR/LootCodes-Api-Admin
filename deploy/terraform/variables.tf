@@ -107,3 +107,66 @@ variable "extra_tags" {
   description = "Additional tags for all tagged resources."
   default     = {}
 }
+
+# ---------------------------------------------------------------------------
+# ALB / HTTPS / ACM
+# ---------------------------------------------------------------------------
+
+variable "allocate_elastic_ip" {
+  type        = bool
+  description = "Create a customer-managed Elastic IP on the Admin API EC2 instance. When enable_https_alb is true, the public hostname should target the ALB, not this IP—set allocate_elastic_ip_alongside_alb only if you still need direct EC2 access on a static IP."
+  default     = true
+}
+
+variable "allocate_elastic_ip_alongside_alb" {
+  type        = bool
+  description = "When both allocate_elastic_ip and enable_https_alb are true, set true to attach the Elastic IP to EC2 anyway. Default false avoids an extra static IPv4: traffic to admin-api FQDN should use the ALB (AWS does not support linking your EIP to an Application Load Balancer)."
+  default     = false
+}
+
+variable "alb_availability_zone_count" {
+  type        = number
+  description = "How many AZs the internet-facing ALB uses (min 2). Always includes the API instance AZ first, then other public AZs. Each AZ adds AWS-managed ALB addresses."
+  default     = 2
+
+  validation {
+    condition     = var.alb_availability_zone_count >= 2 && var.alb_availability_zone_count <= 8
+    error_message = "alb_availability_zone_count must be between 2 and 8."
+  }
+}
+
+variable "enable_https_alb" {
+  type        = bool
+  description = "If true, create an internet-facing ALB with ACM TLS, HTTP→HTTPS redirect, and Route53 DNS validation. EC2 :3000 accepts traffic only from the ALB security group."
+  default     = false
+}
+
+variable "api_fqdn" {
+  type        = string
+  description = "Public hostname for the Admin API (e.g. admin-api.lootcodes.com). Required when enable_https_alb is true. Used for ACM cert and optional Route53 alias."
+  default     = ""
+}
+
+variable "route53_zone_id" {
+  type        = string
+  description = "Route53 hosted zone ID for the api_fqdn parent zone (e.g. Z... for lootcodes.com). If empty, create the ACM DNS validation CNAME at your DNS provider (see acm_dns_validation_records output), then re-run apply."
+  default     = ""
+}
+
+variable "create_route53_alias_for_api" {
+  type        = bool
+  description = "When enable_https_alb is true, create an A (alias) record from api_fqdn to the ALB. Set false if you manage DNS elsewhere (update manually after apply)."
+  default     = false
+}
+
+variable "alb_redirect_http_to_https" {
+  type        = bool
+  description = "When enable_https_alb is true, port 80 behavior: true = 301 redirect to HTTPS (use only after ACM cert is ISSUED and :443 listener exists); false = forward to targets so HTTP works while cert is pending."
+  default     = false
+}
+
+variable "create_alb_https_listener" {
+  type        = bool
+  description = "When enable_https_alb is true, create ACM validation wait + :443 listener. Set false until the ACM DNS validation CNAME exists and ACM shows ISSUED (or use after first apply, then set true)."
+  default     = false
+}
