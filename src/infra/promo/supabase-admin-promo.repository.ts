@@ -71,7 +71,7 @@ export class SupabaseAdminPromoRepository implements IAdminPromoRepository {
   async updatePromoCode(dto: UpdatePromoCodeDto): Promise<UpdatePromoCodeResult> {
     logger.info('Updating promo code', { promoId: dto.promo_id, adminId: dto.admin_id });
 
-    const { product_ids, admin_id, ...updates } = dto.updates;
+    const { product_ids, admin_id: _adminId, ...updates } = dto.updates;
 
     if (Object.keys(updates).length > 0) {
       await this.db.update('promo_codes', { id: dto.promo_id }, updates as Record<string, unknown>);

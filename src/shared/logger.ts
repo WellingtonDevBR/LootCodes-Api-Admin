@@ -32,7 +32,6 @@ class Logger {
   warn(message: string, error: Error | unknown, context?: LogContext): void;
   warn(message: string, second?: Error | unknown | LogContext, third?: LogContext) {
     const details = this.mergeErrorContext(second, third);
-    // eslint-disable-next-line no-console
     console.warn(this.format('warn', message, details));
   }
 
@@ -40,7 +39,6 @@ class Logger {
   error(message: string, error: Error | unknown, context?: LogContext): void;
   error(message: string, second?: Error | unknown | LogContext, third?: LogContext) {
     const details = this.mergeErrorContext(second, third);
-    // eslint-disable-next-line no-console
     console.error(this.format('error', message, details));
   }
 
