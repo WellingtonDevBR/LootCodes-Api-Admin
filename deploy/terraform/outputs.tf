@@ -3,9 +3,9 @@ output "instance_id" {
   value       = aws_instance.api.id
 }
 
-output "public_ip" {
-  description = "Public IPv4 (if associate_public_ip is true and subnet routes to IGW)."
-  value       = aws_instance.api.public_ip
+output "elastic_ip" {
+  description = "Static Elastic IP for the Admin API instance."
+  value       = aws_eip.api.public_ip
 }
 
 output "private_ip" {
@@ -14,7 +14,7 @@ output "private_ip" {
 
 output "api_url_example" {
   description = "Health check (after image deploy and .env are in place)."
-  value       = "http://${aws_instance.api.public_ip}:${var.api_port}/health/"
+  value       = "http://${aws_eip.api.public_ip}:${var.api_port}/health/"
 }
 
 output "ssm_session_hint" {
@@ -28,4 +28,9 @@ output "security_group_id" {
 
 output "iam_instance_profile_arn" {
   value = aws_iam_instance_profile.ec2.arn
+}
+
+output "eip_allocation_id" {
+  description = "Elastic IP allocation ID (for DNS or other references)."
+  value       = aws_eip.api.allocation_id
 }
