@@ -4,6 +4,9 @@ dist
 .env.prod
 *.local
 
+# Private keys — never commit
+Eneba.pem
+
 # Terraform state (contains secrets)
 deploy/terraform/.terraform/
 deploy/terraform/*.tfstate
