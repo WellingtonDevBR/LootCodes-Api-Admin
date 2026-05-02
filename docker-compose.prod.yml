@@ -1,8 +1,8 @@
 # Production stack for EC2: Admin API only (Supabase is external).
 # Set API_IMAGE_URI when running (GitHub Actions sets it on deploy via SSM).
 #
-# Host port 3000 → container 3002 (app default PORT in src/config/env.ts). The
-# process still listens on 3002 inside the container; visitors use http://EC2:3000.
+# App listens on PORT (default 3000). Map host:container as 3000:3000 so EC2 :3000
+# matches SG rule `api_port` in Terraform (default 3000).
 #
 # On the instance: place a .env file next to this compose file with production
 # variables (see src/config/env.ts). Example path: /opt/lootcodes-admin-api/.env
@@ -12,6 +12,6 @@ services:
     image: ${API_IMAGE_URI:?Set API_IMAGE_URI to the full ECR image URI}
     restart: unless-stopped
     ports:
-      - "3000:3002"
+      - "3000:3000"
     env_file:
       - .env

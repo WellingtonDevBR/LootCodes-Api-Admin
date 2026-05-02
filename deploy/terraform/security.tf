@@ -23,7 +23,7 @@ resource "aws_security_group" "api" {
   dynamic "ingress" {
     for_each = length(local.api_ingress) > 0 ? [1] : []
     content {
-      description = "Admin API port ${var.api_port} to container 3002"
+      description = "Admin API (Docker publishes container ${var.api_port} to host ${var.api_port})"
       from_port   = var.api_port
       to_port     = var.api_port
       protocol    = "tcp"

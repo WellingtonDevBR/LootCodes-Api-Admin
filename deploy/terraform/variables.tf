@@ -48,7 +48,7 @@ variable "associate_public_ip" {
 
 variable "api_port" {
   type        = number
-  description = "Host port the API is exposed on (container exposes 3002, mapped to this port on host)."
+  description = "TCP port exposed on the EC2 host and opened in the security group (maps 1:1 to container PORT, default 3000)."
   default     = 3000
 }
 

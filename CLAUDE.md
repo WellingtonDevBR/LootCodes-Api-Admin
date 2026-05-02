@@ -15,7 +15,7 @@ Admin-only Fastify API server. Hexagonal architecture with SOLID principles. Eve
 - **Rate limiting**: `@fastify/rate-limit` (100 req/min global)
 - **File uploads**: `@fastify/multipart` (10 MB limit)
 - **Package manager**: npm
-- **Container port**: 3002 (internal) → mapped to 3000 on host
+- **Container port**: 3000 (default `PORT`; host maps `3000:3000` on EC2)
 
 ## Architecture Layers
 
@@ -231,7 +231,7 @@ All env vars validated at startup in `config/env.ts`. App crashes on missing req
 
 - `Dockerfile` — multi-stage build (builder + minimal `node:22-alpine` runtime)
 - `docker-compose.yml` — local dev
-- `docker-compose.prod.yml` — production on EC2 (host 3000 → container 3002)
+- `docker-compose.prod.yml` — production on EC2 (`3000:3000`; matches Terraform `api_port`)
 - Final image: non-root `node` user, no `.env`, only dist + node_modules + package.json
 - Health check: `GET /health/`
 
