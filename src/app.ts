@@ -33,6 +33,8 @@ import { adminVerificationRoutes } from './http/routes/verification.routes.js';
 import { adminAuthRoutes } from './http/routes/admin-auth.routes.js';
 import { adminDigisellerRoutes } from './http/routes/digiseller.routes.js';
 import { adminPricingRoutes } from './http/routes/pricing.routes.js';
+import { adminProductRoutes } from './http/routes/products.routes.js';
+import { adminSellerRoutes } from './http/routes/seller.routes.js';
 
 export async function buildApp(): Promise<FastifyInstance> {
   const env = loadEnv();
@@ -108,6 +110,8 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(adminAuthRoutes, { prefix: '/api/admin/auth' });
   await app.register(adminDigisellerRoutes, { prefix: '/api/admin/digiseller' });
   await app.register(adminPricingRoutes, { prefix: '/api/admin/pricing' });
+  await app.register(adminProductRoutes, { prefix: '/api/admin/products' });
+  await app.register(adminSellerRoutes, { prefix: '/api/admin/seller' });
 
   Sentry.setupFastifyErrorHandler(app);
 

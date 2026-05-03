@@ -29,6 +29,8 @@ import { SupabaseAdminVerificationRepository } from '../infra/verification/supab
 import { SupabaseAdminAuthSmsRepository } from '../infra/admin-auth/supabase-admin-auth-sms.repository.js';
 import { SupabaseAdminDigisellerRepository } from '../infra/digiseller/supabase-admin-digiseller.repository.js';
 import { SupabaseAdminPricingRepository } from '../infra/pricing/supabase-admin-pricing.repository.js';
+import { SupabaseAdminProductRepository } from '../infra/products/supabase-admin-product.repository.js';
+import { SupabaseAdminSellerRepository } from '../infra/seller/supabase-admin-seller.repository.js';
 
 // Use cases — Orders & Fulfillment
 import { FulfillVerifiedOrderUseCase } from '../core/use-cases/orders/fulfill-verified-order.use-case.js';
@@ -94,7 +96,12 @@ import { UpdateCurrencyManualUseCase } from '../core/use-cases/currency/update-c
 import { GetCurrencyRatesUseCase } from '../core/use-cases/currency/get-currency-rates.use-case.js';
 
 // Use cases — Support
+import { ListTicketsUseCase } from '../core/use-cases/support/list-tickets.use-case.js';
+import { GetTicketUseCase } from '../core/use-cases/support/get-ticket.use-case.js';
 import { UpdateTicketStatusUseCase } from '../core/use-cases/support/update-ticket-status.use-case.js';
+import { UpdateTicketPriorityUseCase } from '../core/use-cases/support/update-ticket-priority.use-case.js';
+import { AddTicketMessageUseCase } from '../core/use-cases/support/add-ticket-message.use-case.js';
+import { ProcessTicketRefundUseCase } from '../core/use-cases/support/process-ticket-refund.use-case.js';
 
 // Use cases — Inventory Sources
 import { LinkVariantInventorySourceUseCase } from '../core/use-cases/inventory-sources/link-variant-inventory-source.use-case.js';
@@ -159,6 +166,20 @@ import { DigisellerReconcileProfitUseCase } from '../core/use-cases/digiseller/r
 // Use cases — Pricing
 import { GetVariantPriceTimelineUseCase } from '../core/use-cases/pricing/get-variant-price-timeline.use-case.js';
 
+// Use cases — Seller
+import { ListProviderAccountsUseCase } from '../core/use-cases/seller/list-provider-accounts.use-case.js';
+import { ListSellerListingsUseCase } from '../core/use-cases/seller/list-seller-listings.use-case.js';
+import { GetVariantOffersUseCase } from '../core/use-cases/seller/get-variant-offers.use-case.js';
+
+// Use cases — Products
+import { ListProductsUseCase } from '../core/use-cases/products/list-products.use-case.js';
+import { GetProductUseCase } from '../core/use-cases/products/get-product.use-case.js';
+import { CreateProductUseCase } from '../core/use-cases/products/create-product.use-case.js';
+import { UpdateProductUseCase } from '../core/use-cases/products/update-product.use-case.js';
+import { DeleteProductUseCase } from '../core/use-cases/products/delete-product.use-case.js';
+import { CreateVariantUseCase } from '../core/use-cases/products/create-variant.use-case.js';
+import { UpdateVariantUseCase } from '../core/use-cases/products/update-variant.use-case.js';
+
 // Use cases — Procurement
 import { TestProviderQuoteUseCase } from '../core/use-cases/procurement/test-provider-quote.use-case.js';
 import { SearchProvidersUseCase } from '../core/use-cases/procurement/search-providers.use-case.js';
@@ -198,6 +219,8 @@ container.register(TOKENS.AdminVerificationRepository, { useClass: SupabaseAdmin
 container.register(TOKENS.AdminAuthSmsRepository, { useClass: SupabaseAdminAuthSmsRepository });
 container.register(TOKENS.AdminDigisellerRepository, { useClass: SupabaseAdminDigisellerRepository });
 container.register(TOKENS.AdminPricingRepository, { useClass: SupabaseAdminPricingRepository });
+container.register(TOKENS.AdminProductRepository, { useClass: SupabaseAdminProductRepository });
+container.register(TOKENS.AdminSellerRepository, { useClass: SupabaseAdminSellerRepository });
 
 // Use cases — Orders & Fulfillment
 container.register(UC_TOKENS.FulfillVerifiedOrder, { useClass: FulfillVerifiedOrderUseCase });
@@ -263,7 +286,12 @@ container.register(UC_TOKENS.UpdateCurrencyManual, { useClass: UpdateCurrencyMan
 container.register(UC_TOKENS.GetCurrencyRates, { useClass: GetCurrencyRatesUseCase });
 
 // Use cases — Support
+container.register(UC_TOKENS.ListTickets, { useClass: ListTicketsUseCase });
+container.register(UC_TOKENS.GetTicket, { useClass: GetTicketUseCase });
 container.register(UC_TOKENS.UpdateTicketStatus, { useClass: UpdateTicketStatusUseCase });
+container.register(UC_TOKENS.UpdateTicketPriority, { useClass: UpdateTicketPriorityUseCase });
+container.register(UC_TOKENS.AddTicketMessage, { useClass: AddTicketMessageUseCase });
+container.register(UC_TOKENS.ProcessTicketRefund, { useClass: ProcessTicketRefundUseCase });
 
 // Use cases — Procurement
 container.register(UC_TOKENS.TestProviderQuote, { useClass: TestProviderQuoteUseCase });
@@ -337,5 +365,19 @@ container.register(UC_TOKENS.DigisellerReconcileProfit, { useClass: DigisellerRe
 
 // Use cases — Pricing
 container.register(UC_TOKENS.GetVariantPriceTimeline, { useClass: GetVariantPriceTimelineUseCase });
+
+// Use cases — Seller
+container.register(UC_TOKENS.ListProviderAccounts, { useClass: ListProviderAccountsUseCase });
+container.register(UC_TOKENS.ListSellerListings, { useClass: ListSellerListingsUseCase });
+container.register(UC_TOKENS.GetVariantOffers, { useClass: GetVariantOffersUseCase });
+
+// Use cases — Products
+container.register(UC_TOKENS.ListProducts, { useClass: ListProductsUseCase });
+container.register(UC_TOKENS.GetProduct, { useClass: GetProductUseCase });
+container.register(UC_TOKENS.CreateProduct, { useClass: CreateProductUseCase });
+container.register(UC_TOKENS.UpdateProduct, { useClass: UpdateProductUseCase });
+container.register(UC_TOKENS.DeleteProduct, { useClass: DeleteProductUseCase });
+container.register(UC_TOKENS.CreateVariant, { useClass: CreateVariantUseCase });
+container.register(UC_TOKENS.UpdateVariant, { useClass: UpdateVariantUseCase });
 
 export { container };

@@ -30,6 +30,8 @@ export const TOKENS = {
   AdminAuthSmsRepository: Symbol.for('IAdminAuthSmsRepository'),
   AdminDigisellerRepository: Symbol.for('IAdminDigisellerRepository'),
   AdminPricingRepository: Symbol.for('IAdminPricingRepository'),
+  AdminProductRepository: Symbol.for('IAdminProductRepository'),
+  AdminSellerRepository: Symbol.for('IAdminSellerRepository'),
 
   // Shared infra
   EventBus: Symbol.for('IEventBus'),
@@ -102,7 +104,12 @@ export const UC_TOKENS = {
   GetPromoUsageStats: Symbol.for('GetPromoUsageStatsUseCase'),
 
   // Support
+  ListTickets: Symbol.for('ListTicketsUseCase'),
+  GetTicket: Symbol.for('GetTicketUseCase'),
   UpdateTicketStatus: Symbol.for('UpdateTicketStatusUseCase'),
+  UpdateTicketPriority: Symbol.for('UpdateTicketPriorityUseCase'),
+  AddTicketMessage: Symbol.for('AddTicketMessageUseCase'),
+  ProcessTicketRefund: Symbol.for('ProcessTicketRefundUseCase'),
 
   // Currency
   SyncCurrency: Symbol.for('SyncCurrencyUseCase'),
@@ -175,4 +182,18 @@ export const UC_TOKENS = {
 
   // Variant Price Timeline
   GetVariantPriceTimeline: Symbol.for('GetVariantPriceTimelineUseCase'),
+
+  // Seller
+  ListProviderAccounts: Symbol.for('ListProviderAccountsUseCase'),
+  ListSellerListings: Symbol.for('ListSellerListingsUseCase'),
+  GetVariantOffers: Symbol.for('GetVariantOffersUseCase'),
+
+  // Products
+  ListProducts: Symbol.for('ListProductsUseCase'),
+  GetProduct: Symbol.for('GetProductUseCase'),
+  CreateProduct: Symbol.for('CreateProductUseCase'),
+  UpdateProduct: Symbol.for('UpdateProductUseCase'),
+  DeleteProduct: Symbol.for('DeleteProductUseCase'),
+  CreateVariant: Symbol.for('CreateVariantUseCase'),
+  UpdateVariant: Symbol.for('UpdateVariantUseCase'),
 } as const;
