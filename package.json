@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx --import ./src/instrument.ts watch src/server.ts",
+    "dev": "tsx watch --import ./src/instrument.ts src/server.ts",
     "build": "tsc && sentry-cli sourcemaps inject ./dist && sentry-cli sourcemaps upload --org $SENTRY_ORG --project $SENTRY_PROJECT ./dist",
     "build:no-sentry": "tsc",
     "start": "node --import ./dist/instrument.js dist/server.js",
@@ -24,6 +24,7 @@
     "@sentry/profiling-node": "^10.51.0",
     "@supabase/supabase-js": "^2.75.1",
     "algoliasearch": "^5.52.0",
+    "dotenv": "^17.4.2",
     "fastify": "^5.3.3",
     "reflect-metadata": "^0.2.2",
     "resend": "^4.0.0",
