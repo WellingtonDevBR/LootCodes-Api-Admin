@@ -15,10 +15,7 @@ export class SupabaseAdminRoleAdapter implements IAdminRoleChecker {
   }
 
   async isAdmin(userId: string): Promise<boolean> {
-    const profile = await this.db.queryOne<{ role: string }>('profiles', {
-      select: 'role',
-      eq: [['id', userId]],
-    });
-    return profile?.role === 'admin';
+    const result = await this.db.rpc<boolean>('has_role', { _user_id: userId, _role: 'admin' });
+    return result === true;
   }
 }
