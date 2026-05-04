@@ -15,7 +15,7 @@ describe('Auth Guards', () => {
   it('rejects requests without Authorization header', async () => {
     const res = await testApp.app.inject({
       method: 'GET',
-      url: '/api/admin/audit/',
+      url: '/audit/',
     });
     expect(res.statusCode).toBe(401);
   });
@@ -23,7 +23,7 @@ describe('Auth Guards', () => {
   it('rejects requests with invalid token', async () => {
     const res = await testApp.app.inject({
       method: 'GET',
-      url: '/api/admin/audit/',
+      url: '/audit/',
       headers: {
         authorization: 'Bearer invalid-token',
       },
@@ -36,7 +36,7 @@ describe('Auth Guards', () => {
 
     const res = await testApp.app.inject({
       method: 'POST',
-      url: '/api/admin/orders/fulfill-verified',
+      url: '/orders/fulfill-verified',
       headers: {
         authorization: `Bearer ${token}`,
       },
@@ -50,7 +50,7 @@ describe('Auth Guards', () => {
 
     const res = await testApp.app.inject({
       method: 'GET',
-      url: '/api/admin/audit/',
+      url: '/audit/',
       headers: {
         authorization: `Bearer ${token}`,
       },
@@ -65,7 +65,7 @@ describe('Auth Guards', () => {
 
     const res = await testApp.app.inject({
       method: 'GET',
-      url: '/api/admin/security/configs',
+      url: '/security/configs',
       headers: {
         authorization: `Bearer ${token}`,
       },
