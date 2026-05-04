@@ -37,6 +37,11 @@ export const TOKENS = {
   AdminOpportunitiesRepository: Symbol.for('IAdminOpportunitiesRepository'),
   AdminAlertsRepository: Symbol.for('IAdminAlertsRepository'),
 
+  // Marketplace adapters & seller services
+  MarketplaceAdapterRegistry: Symbol.for('IMarketplaceAdapterRegistry'),
+  SellerKeyOperations: Symbol.for('ISellerKeyOperationsPort'),
+  SellerDomainEvents: Symbol.for('ISellerDomainEventPort'),
+
   // Shared infra
   EventBus: Symbol.for('IEventBus'),
   EmailSender: Symbol.for('IEmailSender'),
@@ -282,6 +287,16 @@ export const UC_TOKENS = {
   GetDecisionHistory: Symbol.for('GetDecisionHistoryUseCase'),
   GetLatestDecision: Symbol.for('GetLatestDecisionUseCase'),
   GetProviderDefaults: Symbol.for('GetProviderDefaultsUseCase'),
+
+  // Seller Webhooks
+  HandleDeclaredStockReserve: Symbol.for('HandleDeclaredStockReserveUseCase'),
+  HandleDeclaredStockProvide: Symbol.for('HandleDeclaredStockProvideUseCase'),
+  HandleDeclaredStockCancel: Symbol.for('HandleDeclaredStockCancelUseCase'),
+  HandleKeyUploadOrder: Symbol.for('HandleKeyUploadOrderUseCase'),
+  HandleMarketplaceRefund: Symbol.for('HandleMarketplaceRefundUseCase'),
+  HandleListingDeactivation: Symbol.for('HandleListingDeactivationUseCase'),
+  HandleDigisellerDelivery: Symbol.for('HandleDigisellerDeliveryUseCase'),
+  HandleInventoryCallback: Symbol.for('HandleInventoryCallbackUseCase'),
 
   // Products
   ListProducts: Symbol.for('ListProductsUseCase'),

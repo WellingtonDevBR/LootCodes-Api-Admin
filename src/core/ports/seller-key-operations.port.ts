@@ -1,0 +1,103 @@
+/**
+ * Seller key operations port — atomic key claim, decrypt, provision, release.
+ *
+ * Abstraction over the DB-level key management that the webhook handlers need.
+ * Infrastructure implements this with direct DB queries + Edge Function
+ * delegation for decryption (`encrypt-product-keys`).
+ */
+
+export interface ClaimKeysResult {
+  reservationId: string;
+  keyIds: string[];
+  viaJit: boolean;
+}
+
+export interface ClaimKeysParams {
+  variantId: string;
+  listingId: string;
+  providerAccountId: string;
+  quantity: number;
+  externalReservationId: string;
+  externalOrderId: string;
+  expiresAt: string;
+  providerMetadata?: Record<string, unknown>;
+  salePriceCents?: number;
+  feesCents?: number;
+  minMarginCents?: number;
+}
+
+export interface DecryptedKey {
+  keyId: string;
+  plaintext: string;
+}
+
+export interface ProvisionResult {
+  keyIds: string[];
+  decryptedKeys: DecryptedKey[];
+}
+
+export interface CompleteProvisionParams {
+  reservationId: string;
+  listingId: string;
+  providerCode: string;
+  externalOrderId: string;
+  keyIds: string[];
+  keysProvisionedCount: number;
+  priceCents?: number;
+  currency?: string;
+  marketplaceFinancialsSnapshot?: Record<string, unknown>;
+}
+
+export interface ReleaseKeysResult {
+  keysReleased: number;
+}
+
+export interface PostProvisionReturnParams {
+  reservation: {
+    id: string;
+    seller_listing_id: string;
+    quantity: number;
+  };
+  providerCode: string;
+  externalOrderId: string;
+  reason: string;
+  maxKeysToRestock?: number;
+  refundEventId?: string;
+}
+
+export interface ISellerKeyOperationsPort {
+  /**
+   * Atomically claim keys for a seller reservation with JIT fallback.
+   * Uses `claim_and_reserve_atomic` RPC internally.
+   */
+  claimKeysForReservation(params: ClaimKeysParams): Promise<ClaimKeysResult>;
+
+  /**
+   * Provision keys from a pending reservation — decrypt and prepare for delivery.
+   * Delegates decryption to `encrypt-product-keys` Edge Function.
+   */
+  provisionFromPendingKeys(reservationId: string): Promise<ProvisionResult>;
+
+  /**
+   * Decrypt keys from an already-provisioned reservation (idempotent replay).
+   */
+  decryptDeliveredProvisionKeys(reservationId: string): Promise<{ decryptedKeys: DecryptedKey[] }>;
+
+  /**
+   * Complete post-provision orchestration: record marketplace sale, emit
+   * domain events, notify stock change.
+   */
+  completeProvisionOrchestration(params: CompleteProvisionParams): Promise<void>;
+
+  /**
+   * Release keys from a pending reservation back to available inventory.
+   * Calls `release_seller_reserved_keys` RPC.
+   */
+  releaseReservationKeys(reservationId: string, newStatus: string): Promise<number>;
+
+  /**
+   * Handle post-provision merchandise return — restock keys + ledger refund.
+   * Supports partial refunds via `maxKeysToRestock`.
+   */
+  handlePostProvisionReturn(params: PostProvisionReturnParams): Promise<number>;
+}

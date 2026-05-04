@@ -33,6 +33,9 @@ import { SupabaseAdminPricingRepository } from '../infra/pricing/supabase-admin-
 import { SupabaseAdminProductRepository } from '../infra/products/supabase-admin-product.repository.js';
 import { SupabaseAdminSellerRepository } from '../infra/seller/supabase-admin-seller.repository.js';
 import { SupabaseAdminSellerPricingRepository } from '../infra/seller/supabase-admin-seller-pricing.repository.js';
+import { SellerKeyOperationsService } from '../infra/seller/seller-key-operations.service.js';
+import { SellerDomainEventsService } from '../infra/seller/seller-domain-events.service.js';
+import { MarketplaceAdapterRegistry } from '../infra/marketplace/marketplace-adapter-registry.js';
 import { SupabaseAdminOpportunitiesRepository } from '../infra/opportunities/supabase-admin-opportunities.repository.js';
 import { SupabaseAdminAlertsRepository } from '../infra/alerts/supabase-admin-alerts.repository.js';
 
@@ -265,6 +268,16 @@ import { DryRunPricingUseCase } from '../core/use-cases/seller/dry-run-pricing.u
 import { GetDecisionHistoryUseCase } from '../core/use-cases/seller/get-decision-history.use-case.js';
 import { GetLatestDecisionUseCase } from '../core/use-cases/seller/get-latest-decision.use-case.js';
 import { GetProviderDefaultsUseCase } from '../core/use-cases/seller/get-provider-defaults.use-case.js';
+
+// Use cases — Seller Webhooks
+import { HandleDeclaredStockReserveUseCase } from '../core/use-cases/seller-webhook/handle-declared-stock-reserve.use-case.js';
+import { HandleDeclaredStockProvideUseCase } from '../core/use-cases/seller-webhook/handle-declared-stock-provide.use-case.js';
+import { HandleDeclaredStockCancelUseCase } from '../core/use-cases/seller-webhook/handle-declared-stock-cancel.use-case.js';
+import { HandleKeyUploadOrderUseCase } from '../core/use-cases/seller-webhook/handle-key-upload-order.use-case.js';
+import { HandleMarketplaceRefundUseCase } from '../core/use-cases/seller-webhook/handle-marketplace-refund.use-case.js';
+import { HandleListingDeactivationUseCase } from '../core/use-cases/seller-webhook/handle-listing-deactivation.use-case.js';
+import { HandleDigisellerDeliveryUseCase } from '../core/use-cases/seller-webhook/handle-digiseller-delivery.use-case.js';
+import { HandleInventoryCallbackUseCase } from '../core/use-cases/seller-webhook/handle-inventory-callback.use-case.js';
 
 // Use cases — Products
 import { ListProductsUseCase } from '../core/use-cases/products/list-products.use-case.js';
@@ -580,6 +593,21 @@ container.register(UC_TOKENS.DryRunPricing, { useClass: DryRunPricingUseCase });
 container.register(UC_TOKENS.GetDecisionHistory, { useClass: GetDecisionHistoryUseCase });
 container.register(UC_TOKENS.GetLatestDecision, { useClass: GetLatestDecisionUseCase });
 container.register(UC_TOKENS.GetProviderDefaults, { useClass: GetProviderDefaultsUseCase });
+
+// Infrastructure — Marketplace & Seller Services
+container.register(TOKENS.MarketplaceAdapterRegistry, { useClass: MarketplaceAdapterRegistry });
+container.register(TOKENS.SellerKeyOperations, { useClass: SellerKeyOperationsService });
+container.register(TOKENS.SellerDomainEvents, { useClass: SellerDomainEventsService });
+
+// Use cases — Seller Webhooks
+container.register(UC_TOKENS.HandleDeclaredStockReserve, { useClass: HandleDeclaredStockReserveUseCase });
+container.register(UC_TOKENS.HandleDeclaredStockProvide, { useClass: HandleDeclaredStockProvideUseCase });
+container.register(UC_TOKENS.HandleDeclaredStockCancel, { useClass: HandleDeclaredStockCancelUseCase });
+container.register(UC_TOKENS.HandleKeyUploadOrder, { useClass: HandleKeyUploadOrderUseCase });
+container.register(UC_TOKENS.HandleMarketplaceRefund, { useClass: HandleMarketplaceRefundUseCase });
+container.register(UC_TOKENS.HandleListingDeactivation, { useClass: HandleListingDeactivationUseCase });
+container.register(UC_TOKENS.HandleDigisellerDelivery, { useClass: HandleDigisellerDeliveryUseCase });
+container.register(UC_TOKENS.HandleInventoryCallback, { useClass: HandleInventoryCallbackUseCase });
 
 // Use cases — Products
 container.register(UC_TOKENS.ListProducts, { useClass: ListProductsUseCase });

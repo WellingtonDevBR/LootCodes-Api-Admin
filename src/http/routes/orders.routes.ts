@@ -218,7 +218,8 @@ export async function adminOrderRoutes(app: FastifyInstance) {
         page: Math.floor(offset / limit) + 1,
         limit,
         status: query.status,
-        search: query.from && query.to ? `${query.from}..${query.to}` : undefined,
+        from: query.from,
+        to: query.to,
       }),
       loadCurrencyRates(getDb()),
     ]);

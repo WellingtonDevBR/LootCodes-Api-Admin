@@ -122,6 +122,8 @@ export interface ListOrdersDto {
   limit?: number;
   status?: string;
   search?: string;
+  from?: string;
+  to?: string;
 }
 
 export interface ListOrdersResult {

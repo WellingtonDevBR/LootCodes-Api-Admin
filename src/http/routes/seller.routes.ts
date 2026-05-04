@@ -25,6 +25,8 @@ import type { FetchRemoteStockUseCase } from '../../core/use-cases/seller/fetch-
 import type { GetProviderAccountDetailUseCase } from '../../core/use-cases/seller/get-provider-account-detail.use-case.js';
 import type { RegisterWebhooksUseCase } from '../../core/use-cases/seller/register-webhooks.use-case.js';
 import type { GetWebhookStatusUseCase } from '../../core/use-cases/seller/get-webhook-status.use-case.js';
+import type { IDatabase } from '../../core/ports/database.port.js';
+import { TOKENS } from '../../di/tokens.js';
 
 export async function adminSellerRoutes(app: FastifyInstance) {
   // --- Provider Accounts ---
@@ -324,5 +326,96 @@ export async function adminSellerRoutes(app: FastifyInstance) {
     const admin_id = (request as unknown as Record<string, unknown>).adminId as string;
     const result = await uc.execute({ listing_id: id, admin_id });
     return reply.send(result);
+  });
+
+  // ─── Monitoring Endpoints ────────────────────────────────────────────
+
+  app.get('/webhook-events', { preHandler: [employeeGuard] }, async (request, reply) => {
+    const db = container.resolve<IDatabase>(TOKENS.Database);
+    const query = request.query as Record<string, string>;
+    const limit = Math.min(parseInt(query.limit ?? '50', 10), 200);
+    const offset = parseInt(query.offset ?? '0', 10);
+    const providerCode = query.provider_code;
+
+    const options: import('../../core/ports/database.port.js').QueryOptions = {
+      select: 'id, event_type, aggregate_id, payload, created_at',
+      order: { column: 'created_at', ascending: false },
+      limit,
+      range: [offset, offset + limit - 1],
+    };
+
+    if (providerCode) {
+      options.ilike = [['event_type', `seller.%`]];
+    } else {
+      options.ilike = [['event_type', `seller.%`]];
+    }
+
+    const events = await db.query('domain_events', options);
+    return reply.send({ events, limit, offset });
+  });
+
+  app.get('/active-reservations', { preHandler: [employeeGuard] }, async (request, reply) => {
+    const db = container.resolve<IDatabase>(TOKENS.Database);
+    const query = request.query as Record<string, string>;
+    const limit = Math.min(parseInt(query.limit ?? '50', 10), 200);
+
+    const reservations = await db.query('seller_stock_reservations', {
+      select: 'id, seller_listing_id, status, quantity, external_order_id, expires_at, created_at, provider_metadata',
+      eq: [['status', 'pending']],
+      order: { column: 'created_at', ascending: false },
+      limit,
+    });
+
+    return reply.send({ reservations });
+  });
+
+  app.get('/provision-history', { preHandler: [employeeGuard] }, async (request, reply) => {
+    const db = container.resolve<IDatabase>(TOKENS.Database);
+    const query = request.query as Record<string, string>;
+    const limit = Math.min(parseInt(query.limit ?? '50', 10), 200);
+    const offset = parseInt(query.offset ?? '0', 10);
+
+    const provisions = await db.query('seller_key_provisions', {
+      select: 'id, reservation_id, product_key_id, status, created_at',
+      order: { column: 'created_at', ascending: false },
+      limit,
+      range: [offset, offset + limit - 1],
+    });
+
+    return reply.send({ provisions, limit, offset });
+  });
+
+  app.get('/marketplace-health', { preHandler: [employeeGuard] }, async (request, reply) => {
+    const db = container.resolve<IDatabase>(TOKENS.Database);
+
+    const listings = await db.query<{
+      id: string;
+      external_listing_id: string;
+      status: string;
+      provider_account_id: string;
+      listing_type: string;
+      last_synced_at: string | null;
+      error_message: string | null;
+      reservation_success_count: number;
+      reservation_failure_count: number;
+      provision_success_count: number;
+      provision_failure_count: number;
+    }>('seller_listings', {
+      select: 'id, external_listing_id, status, provider_account_id, listing_type, last_synced_at, error_message, reservation_success_count, reservation_failure_count, provision_success_count, provision_failure_count',
+      eq: [['status', 'active']],
+      order: { column: 'updated_at', ascending: false },
+      limit: 100,
+    });
+
+    const pendingReservations = await db.query<{ id: string }>('seller_stock_reservations', {
+      select: 'id',
+      eq: [['status', 'pending']],
+    });
+
+    return reply.send({
+      activeListings: listings.length,
+      pendingReservations: pendingReservations.length,
+      listings,
+    });
   });
 }
