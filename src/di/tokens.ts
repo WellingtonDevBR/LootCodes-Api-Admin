@@ -92,6 +92,17 @@ export const UC_TOKENS = {
   UpdateSecurityConfig: Symbol.for('UpdateSecurityConfigUseCase'),
   UnlockRateLimit: Symbol.for('UnlockRateLimitUseCase'),
   DirectUnlockRateLimit: Symbol.for('DirectUnlockRateLimitUseCase'),
+  ListRateLimitViolations: Symbol.for('ListRateLimitViolationsUseCase'),
+  ListRateLimitUnlocks: Symbol.for('ListRateLimitUnlocksUseCase'),
+  ListIpBlocklist: Symbol.for('ListIpBlocklistUseCase'),
+  AddIpBlock: Symbol.for('AddIpBlockUseCase'),
+  RemoveIpBlock: Symbol.for('RemoveIpBlockUseCase'),
+  ListCustomerBlocklist: Symbol.for('ListCustomerBlocklistUseCase'),
+  RemoveCustomerBlock: Symbol.for('RemoveCustomerBlockUseCase'),
+  GetSurgeState: Symbol.for('GetSurgeStateUseCase'),
+  GetPlatformSecuritySetting: Symbol.for('GetPlatformSecuritySettingUseCase'),
+  UpdatePlatformSecuritySetting: Symbol.for('UpdatePlatformSecuritySettingUseCase'),
+  ListSecurityAuditLog: Symbol.for('ListSecurityAuditLogUseCase'),
 
   // Promo Codes
   CreatePromoCode: Symbol.for('CreatePromoCodeUseCase'),
@@ -212,8 +223,14 @@ export const UC_TOKENS = {
 
   // Seller
   ListProviderAccounts: Symbol.for('ListProviderAccountsUseCase'),
+  CreateProviderAccount: Symbol.for('CreateProviderAccountUseCase'),
+  UpdateProviderAccount: Symbol.for('UpdateProviderAccountUseCase'),
+  DeleteProviderAccount: Symbol.for('DeleteProviderAccountUseCase'),
   ListSellerListings: Symbol.for('ListSellerListingsUseCase'),
   GetVariantOffers: Symbol.for('GetVariantOffersUseCase'),
+  CreateVariantOffer: Symbol.for('CreateVariantOfferUseCase'),
+  UpdateVariantOffer: Symbol.for('UpdateVariantOfferUseCase'),
+  DeleteVariantOffer: Symbol.for('DeleteVariantOfferUseCase'),
 
   // Products
   ListProducts: Symbol.for('ListProductsUseCase'),

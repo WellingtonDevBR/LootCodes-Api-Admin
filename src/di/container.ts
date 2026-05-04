@@ -62,6 +62,17 @@ import { UnlockRateLimitUseCase } from '../core/use-cases/security/unlock-rate-l
 import { DirectUnlockRateLimitUseCase } from '../core/use-cases/security/direct-unlock-rate-limit.use-case.js';
 import { BlockCustomerUseCase } from '../core/use-cases/security/block-customer.use-case.js';
 import { ForceLogoutUseCase } from '../core/use-cases/security/force-logout.use-case.js';
+import { ListRateLimitViolationsUseCase } from '../core/use-cases/security/list-rate-limit-violations.use-case.js';
+import { ListRateLimitUnlocksUseCase } from '../core/use-cases/security/list-rate-limit-unlocks.use-case.js';
+import { ListIpBlocklistUseCase } from '../core/use-cases/security/list-ip-blocklist.use-case.js';
+import { AddIpBlockUseCase } from '../core/use-cases/security/add-ip-block.use-case.js';
+import { RemoveIpBlockUseCase } from '../core/use-cases/security/remove-ip-block.use-case.js';
+import { ListCustomerBlocklistUseCase } from '../core/use-cases/security/list-customer-blocklist.use-case.js';
+import { RemoveCustomerBlockUseCase } from '../core/use-cases/security/remove-customer-block.use-case.js';
+import { GetSurgeStateUseCase } from '../core/use-cases/security/get-surge-state.use-case.js';
+import { GetPlatformSecuritySettingUseCase } from '../core/use-cases/security/get-platform-security-setting.use-case.js';
+import { UpdatePlatformSecuritySettingUseCase } from '../core/use-cases/security/update-platform-security-setting.use-case.js';
+import { ListSecurityAuditLogUseCase } from '../core/use-cases/security/list-security-audit-log.use-case.js';
 
 // Use cases — Inventory & Keys
 import { EmitInventoryStockChangedUseCase } from '../core/use-cases/inventory/emit-inventory-stock-changed.use-case.js';
@@ -203,8 +214,14 @@ import { GetPricingSnapshotUseCase } from '../core/use-cases/pricing/get-pricing
 
 // Use cases — Seller
 import { ListProviderAccountsUseCase } from '../core/use-cases/seller/list-provider-accounts.use-case.js';
+import { CreateProviderAccountUseCase } from '../core/use-cases/seller/create-provider-account.use-case.js';
+import { UpdateProviderAccountUseCase } from '../core/use-cases/seller/update-provider-account.use-case.js';
+import { DeleteProviderAccountUseCase } from '../core/use-cases/seller/delete-provider-account.use-case.js';
 import { ListSellerListingsUseCase } from '../core/use-cases/seller/list-seller-listings.use-case.js';
 import { GetVariantOffersUseCase } from '../core/use-cases/seller/get-variant-offers.use-case.js';
+import { CreateVariantOfferUseCase } from '../core/use-cases/seller/create-variant-offer.use-case.js';
+import { UpdateVariantOfferUseCase } from '../core/use-cases/seller/update-variant-offer.use-case.js';
+import { DeleteVariantOfferUseCase } from '../core/use-cases/seller/delete-variant-offer.use-case.js';
 
 // Use cases — Products
 import { ListProductsUseCase } from '../core/use-cases/products/list-products.use-case.js';
@@ -291,6 +308,17 @@ container.register(UC_TOKENS.UnlockRateLimit, { useClass: UnlockRateLimitUseCase
 container.register(UC_TOKENS.DirectUnlockRateLimit, { useClass: DirectUnlockRateLimitUseCase });
 container.register(UC_TOKENS.BlockCustomer, { useClass: BlockCustomerUseCase });
 container.register(UC_TOKENS.ForceLogout, { useClass: ForceLogoutUseCase });
+container.register(UC_TOKENS.ListRateLimitViolations, { useClass: ListRateLimitViolationsUseCase });
+container.register(UC_TOKENS.ListRateLimitUnlocks, { useClass: ListRateLimitUnlocksUseCase });
+container.register(UC_TOKENS.ListIpBlocklist, { useClass: ListIpBlocklistUseCase });
+container.register(UC_TOKENS.AddIpBlock, { useClass: AddIpBlockUseCase });
+container.register(UC_TOKENS.RemoveIpBlock, { useClass: RemoveIpBlockUseCase });
+container.register(UC_TOKENS.ListCustomerBlocklist, { useClass: ListCustomerBlocklistUseCase });
+container.register(UC_TOKENS.RemoveCustomerBlock, { useClass: RemoveCustomerBlockUseCase });
+container.register(UC_TOKENS.GetSurgeState, { useClass: GetSurgeStateUseCase });
+container.register(UC_TOKENS.GetPlatformSecuritySetting, { useClass: GetPlatformSecuritySettingUseCase });
+container.register(UC_TOKENS.UpdatePlatformSecuritySetting, { useClass: UpdatePlatformSecuritySettingUseCase });
+container.register(UC_TOKENS.ListSecurityAuditLog, { useClass: ListSecurityAuditLogUseCase });
 
 // Use cases — Inventory & Keys
 container.register(UC_TOKENS.EmitInventoryStockChanged, { useClass: EmitInventoryStockChangedUseCase });
@@ -442,8 +470,14 @@ container.register(UC_TOKENS.GetPricingSnapshot, { useClass: GetPricingSnapshotU
 
 // Use cases — Seller
 container.register(UC_TOKENS.ListProviderAccounts, { useClass: ListProviderAccountsUseCase });
+container.register(UC_TOKENS.CreateProviderAccount, { useClass: CreateProviderAccountUseCase });
+container.register(UC_TOKENS.UpdateProviderAccount, { useClass: UpdateProviderAccountUseCase });
+container.register(UC_TOKENS.DeleteProviderAccount, { useClass: DeleteProviderAccountUseCase });
 container.register(UC_TOKENS.ListSellerListings, { useClass: ListSellerListingsUseCase });
 container.register(UC_TOKENS.GetVariantOffers, { useClass: GetVariantOffersUseCase });
+container.register(UC_TOKENS.CreateVariantOffer, { useClass: CreateVariantOfferUseCase });
+container.register(UC_TOKENS.UpdateVariantOffer, { useClass: UpdateVariantOfferUseCase });
+container.register(UC_TOKENS.DeleteVariantOffer, { useClass: DeleteVariantOfferUseCase });
 
 // Use cases — Products
 container.register(UC_TOKENS.ListProducts, { useClass: ListProductsUseCase });

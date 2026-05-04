@@ -74,3 +74,69 @@ export interface VariantOfferItem {
 export interface GetVariantOffersResult {
   offers: VariantOfferItem[];
 }
+
+export interface CreateProviderAccountDto {
+  provider_code: string;
+  display_name: string;
+  is_enabled?: boolean;
+  priority?: number;
+  supports_catalog?: boolean;
+  supports_quote?: boolean;
+  supports_purchase?: boolean;
+  supports_callback?: boolean;
+  supports_seller?: boolean;
+  seller_config?: Record<string, unknown>;
+  procurement_config?: Record<string, unknown>;
+}
+
+export interface UpdateProviderAccountDto {
+  id: string;
+  display_name?: string;
+  priority?: number;
+  is_enabled?: boolean;
+  supports_catalog?: boolean;
+  supports_quote?: boolean;
+  supports_purchase?: boolean;
+  supports_callback?: boolean;
+  supports_seller?: boolean;
+  seller_config?: Record<string, unknown>;
+  procurement_config?: Record<string, unknown>;
+  health_status?: string;
+}
+
+export interface CreateProviderAccountResult {
+  account: ProviderAccountItem;
+}
+
+export interface UpdateProviderAccountResult {
+  account: ProviderAccountItem;
+}
+
+export interface CreateVariantOfferDto {
+  variant_id: string;
+  provider_account_id: string;
+  external_sku?: string;
+  external_offer_id?: string;
+  external_platform_code?: string;
+  external_region_code?: string;
+  currency?: string;
+  is_active?: boolean;
+}
+
+export interface UpdateVariantOfferDto {
+  id: string;
+  external_sku?: string;
+  external_offer_id?: string;
+  external_platform_code?: string;
+  external_region_code?: string;
+  currency?: string;
+  is_active?: boolean;
+}
+
+export interface CreateVariantOfferResult {
+  offer: VariantOfferItem;
+}
+
+export interface UpdateVariantOfferResult {
+  offer: VariantOfferItem;
+}
