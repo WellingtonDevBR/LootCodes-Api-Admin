@@ -10,6 +10,6 @@ export class ListReferralLeaderboardUseCase {
   ) {}
 
   async execute(dto: ListReferralLeaderboardDto): Promise<ListReferralLeaderboardResult> {
-    return this.repo.listReferralLeaderboard(dto);
+    return this.repo.listLeaderboard(dto);
   }
 }

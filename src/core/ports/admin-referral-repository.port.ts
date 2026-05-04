@@ -13,8 +13,8 @@ import type {
 
 export interface IAdminReferralRepository {
   listReferrals(dto: ListReferralsDto): Promise<ListReferralsResult>;
-  listReferralLeaderboard(dto: ListReferralLeaderboardDto): Promise<ListReferralLeaderboardResult>;
-  resolveReferralDispute(dto: ResolveReferralDisputeDto): Promise<ResolveReferralDisputeResult>;
-  invalidateReferral(dto: InvalidateReferralDto): Promise<InvalidateReferralResult>;
-  payLeaderboardPrizes(dto: PayLeaderboardPrizesDto): Promise<PayLeaderboardPrizesResult>;
+  listLeaderboard(dto: ListReferralLeaderboardDto): Promise<ListReferralLeaderboardResult>;
+  resolveDispute(dto: ResolveReferralDisputeDto): Promise<ResolveReferralDisputeResult>;
+  invalidate(dto: InvalidateReferralDto): Promise<InvalidateReferralResult>;
+  payPrizes(dto: PayLeaderboardPrizesDto): Promise<PayLeaderboardPrizesResult>;
 }

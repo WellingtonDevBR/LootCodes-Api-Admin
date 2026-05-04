@@ -10,6 +10,6 @@ export class ResolveReferralDisputeUseCase {
   ) {}
 
   async execute(dto: ResolveReferralDisputeDto): Promise<ResolveReferralDisputeResult> {
-    return this.repo.resolveReferralDispute(dto);
+    return this.repo.resolveDispute(dto);
   }
 }

@@ -10,6 +10,6 @@ export class InvalidateReferralUseCase {
   ) {}
 
   async execute(dto: InvalidateReferralDto): Promise<InvalidateReferralResult> {
-    return this.repo.invalidateReferral(dto);
+    return this.repo.invalidate(dto);
   }
 }

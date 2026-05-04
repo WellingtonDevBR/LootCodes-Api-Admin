@@ -10,6 +10,6 @@ export class PayLeaderboardPrizesUseCase {
   ) {}
 
   async execute(dto: PayLeaderboardPrizesDto): Promise<PayLeaderboardPrizesResult> {
-    return this.repo.payLeaderboardPrizes(dto);
+    return this.repo.payPrizes(dto);
   }
 }
