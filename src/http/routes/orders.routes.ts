@@ -7,7 +7,62 @@ import type { GetOrderDetailUseCase } from '../../core/use-cases/orders/get-orde
 
 interface OrderItemEmbed {
   product_id?: string;
+  variant_id?: string;
+  quantity?: number;
+  unit_price?: number;
+  total_price?: number;
   products?: { name?: string } | null;
+  product_variants?: {
+    face_value?: string;
+    platforms?: { name?: string }[] | null;
+    product_regions?: { name?: string }[] | null;
+  } | null;
+}
+
+interface MarketplacePricing {
+  provider?: string;
+  provider_code?: string;
+  [key: string]: unknown;
+}
+
+const DB_TO_CRM_STATUS: Record<string, string> = {
+  fulfilled: 'delivered',
+  pending_payment: 'pending',
+  processing: 'pending',
+  payment_failed: 'failed',
+};
+
+const PROVIDER_TO_CHANNEL: Record<string, string> = {
+  eneba: 'Eneba',
+  g2a: 'G2A',
+  gamivo: 'Gamivo',
+  kinguin: 'Kinguin',
+  digiseller: 'Digiseller',
+  stripe: 'Website',
+  web: 'Website',
+};
+
+function mapStatus(dbStatus: string): string {
+  return DB_TO_CRM_STATUS[dbStatus] ?? dbStatus;
+}
+
+function resolveChannel(raw: Record<string, unknown>): string {
+  const mp = raw.marketplace_pricing as MarketplacePricing | null;
+  const provider = mp?.provider ?? mp?.provider_code ?? null;
+  if (provider) {
+    const mapped = PROVIDER_TO_CHANNEL[provider.toLowerCase()];
+    if (mapped) return mapped;
+    return provider.charAt(0).toUpperCase() + provider.slice(1);
+  }
+  const paymentProvider = (raw.payment_provider as string) ?? '';
+  if (paymentProvider) {
+    const mapped = PROVIDER_TO_CHANNEL[paymentProvider.toLowerCase()];
+    if (mapped) return mapped;
+  }
+  const orderChannel = (raw.order_channel as string) ?? '';
+  if (orderChannel === 'web' || orderChannel === 'direct') return 'Website';
+  if (orderChannel === 'manual') return 'Website';
+  return orderChannel || 'Website';
 }
 
 function extractProductName(raw: Record<string, unknown>): string {
@@ -17,39 +72,91 @@ function extractProductName(raw: Record<string, unknown>): string {
   return firstItem?.products?.name ?? '';
 }
 
+function serializeOrderItems(raw: Record<string, unknown>): unknown[] {
+  const orderItems = raw.order_items as OrderItemEmbed[] | undefined;
+  if (!orderItems || orderItems.length === 0) return [];
+  return orderItems.map(item => {
+    const variant = item.product_variants;
+    const platformNames = variant?.platforms?.map(p => p.name).filter(Boolean) ?? [];
+    const regionName = variant?.product_regions?.map(r => r.name).filter(Boolean)[0] ?? null;
+    return {
+      productId: item.product_id ?? null,
+      variantId: item.variant_id ?? null,
+      productName: item.products?.name ?? '',
+      faceValue: variant?.face_value ?? null,
+      platforms: platformNames,
+      region: regionName,
+      quantity: item.quantity ?? 1,
+      unitPrice: item.unit_price ?? 0,
+      totalPrice: item.total_price ?? 0,
+    };
+  });
+}
+
+function computeKeyCost(raw: Record<string, unknown>): number {
+  if (typeof raw.key_cost_cents === 'number') return raw.key_cost_cents;
+  const keys = (raw.delivered_keys as Array<Record<string, unknown>>) ?? [];
+  let total = 0;
+  for (const k of keys) {
+    const pc = k.purchase_cost;
+    total += typeof pc === 'number' ? pc : typeof pc === 'string' ? Number(pc) : 0;
+  }
+  return total;
+}
+
+function resolveKeyCostCurrency(raw: Record<string, unknown>): string {
+  if (typeof raw.key_cost_currency === 'string') return raw.key_cost_currency;
+  const keys = (raw.delivered_keys as Array<Record<string, unknown>>) ?? [];
+  for (const k of keys) {
+    if (typeof k.purchase_currency === 'string') return k.purchase_currency;
+  }
+  return 'USD';
+}
+
 function toSerializedOrder(raw: Record<string, unknown>) {
   const totalAmount = (raw.total_amount as number) ?? 0;
   const currency = (raw.currency as string) ?? 'USD';
+  const providerFee = (raw.provider_fee as number) ?? 0;
+  const netAmount = (raw.net_amount as number) ?? totalAmount;
+  const keyCostCents = (raw.key_cost_cents as number) ?? 0;
+  const keyCostCurrency = (raw.key_cost_currency as string) ?? 'USD';
+  const qty = (raw.quantity as number) ?? 1;
+  const isMarketplace = (raw.order_channel as string) === 'marketplace';
+  const channel = resolveChannel(raw);
+
+  const totalCost = isMarketplace ? providerFee + keyCostCents : keyCostCents;
+  const profit = isMarketplace ? netAmount - keyCostCents : totalAmount - keyCostCents;
+
   const money = { amount: totalAmount, currency };
-  const zeroMoney = { amount: 0, currency };
   return {
     order: {
       id: raw.id as string,
       orderNumber: (raw.order_number as string) ?? null,
-      channel: (raw.order_channel as string) ?? 'direct',
-      status: raw.status as string,
+      channel,
+      status: mapStatus(raw.status as string),
       productName: extractProductName(raw),
       sku: (raw.order_number as string) ?? '',
-      qty: 1,
+      qty,
       revenue: money,
-      cost: zeroMoney,
+      cost: { amount: totalCost, currency },
       unitPrice: money,
       placedAt: raw.created_at as string,
-      customer: (raw.contact_email as string) ?? (raw.delivery_email as string) ?? 'Guest',
-      profit: { amount: totalAmount, currency },
+      customer: (raw.contact_email as string) ?? (raw.delivery_email as string) ?? (raw.guest_email as string) ?? 'Guest',
+      profit: { amount: profit, currency },
+      items: serializeOrderItems(raw),
     },
     presentation: {
       paidTotal: { amount: totalAmount, currency },
       paidGrossAud: null,
-      paidNetAud: null,
-      processorFeeAud: null,
+      paidNetAud: isMarketplace ? { amount: netAmount, currency } : null,
+      processorFeeAud: providerFee > 0 ? { amount: providerFee, currency } : null,
       channelFeeAud: null,
-      productCostAud: null,
-      costAud: null,
-      profitAud: null,
-      netIsSellerProceedsAfterMkt: false,
-      processorFeeLinePrefix: 'Net:' as const,
-      kpiProfitUsd: { amount: totalAmount, currency },
+      productCostAud: keyCostCents > 0 ? { amount: keyCostCents, currency: keyCostCurrency } : null,
+      costAud: totalCost > 0 ? { amount: totalCost, currency } : null,
+      profitAud: { amount: profit, currency },
+      netIsSellerProceedsAfterMkt: isMarketplace,
+      processorFeeLinePrefix: isMarketplace ? 'Mkt:' as const : 'Net:' as const,
+      kpiProfitUsd: { amount: profit, currency },
     },
   };
 }
@@ -83,8 +190,41 @@ export async function adminOrderRoutes(app: FastifyInstance) {
   app.get('/:orderId', { preHandler: [employeeGuard] }, async (request, reply) => {
     const { orderId } = request.params as { orderId: string };
     const uc = container.resolve<GetOrderDetailUseCase>(UC_TOKENS.GetOrderDetail);
-    const result = await uc.execute(orderId);
-    return reply.send(result);
+    const raw = await uc.execute(orderId) as Record<string, unknown> | null;
+    if (!raw) return reply.code(404).send({ error: 'Order not found' });
+
+    const keyCostCents = computeKeyCost(raw);
+    const keyCostCurrency = resolveKeyCostCurrency(raw);
+    const enriched = { ...raw, key_cost_cents: keyCostCents, key_cost_currency: keyCostCurrency };
+    const serialized = toSerializedOrder(enriched);
+
+    const deliveredKeys = (raw.delivered_keys as Array<Record<string, unknown>>) ?? [];
+    return reply.send({
+      ...serialized,
+      detail: {
+        ipAddress: raw.ip_address ?? null,
+        ipCountry: raw.ip_country ?? null,
+        billingCountry: raw.billing_country_code ?? null,
+        paymentMethod: raw.payment_method ?? null,
+        notes: raw.notes ?? null,
+        adminNotes: raw.admin_notes ?? null,
+        refundAmount: raw.refund_amount ?? null,
+        refundReason: raw.refund_reason ?? null,
+        refundedAt: raw.refunded_at ?? null,
+        discountAmount: raw.discount_amount_cents ?? null,
+        subtotal: raw.subtotal_cents ?? null,
+        deliveredKeys: deliveredKeys.map(k => ({
+          id: k.id,
+          variantId: k.variant_id,
+          state: k.key_state,
+          purchaseCost: k.purchase_cost ?? 0,
+          purchaseCurrency: k.purchase_currency ?? 'USD',
+          usedAt: k.used_at ?? null,
+          createdAt: k.created_at ?? null,
+          supplierReference: k.supplier_reference ?? null,
+        })),
+      },
+    });
   });
 
   app.post('/fulfill-verified', { preHandler: [adminGuard] }, async (_request, reply) => {

@@ -191,7 +191,7 @@ export class SupabaseAdminOrderRepository implements IAdminOrderRepository {
     const offset = (page - 1) * limit;
 
     const queryOpts: import('../../core/ports/database.port.js').QueryOptions = {
-      select: 'id, order_number, status, total_amount, currency, delivery_email, contact_email, created_at, updated_at, order_channel, order_items(product_id, products(name))',
+      select: 'id, order_number, status, total_amount, currency, delivery_email, contact_email, guest_email, created_at, updated_at, order_channel, payment_provider, provider_fee, net_amount, marketplace_pricing, quantity, order_items(product_id, variant_id, quantity, unit_price, total_price, products(name), product_variants(face_value, platforms(name), product_regions(name)))',
       order: { column: 'created_at', ascending: false },
       limit,
     };
@@ -203,14 +203,61 @@ export class SupabaseAdminOrderRepository implements IAdminOrderRepository {
     const allOrders = await this.db.query<Record<string, unknown>>('orders', queryOpts);
     const sliced = allOrders.slice(offset, offset + limit);
 
+    const orderIds = sliced.map(o => o.id as string);
+    const keyCostMap = new Map<string, { cost: number; currency: string }>();
+    if (orderIds.length > 0) {
+      const BATCH = 200;
+      for (let i = 0; i < orderIds.length; i += BATCH) {
+        const chunk = orderIds.slice(i, i + BATCH);
+        const keys = await this.db.query<{
+          order_id: string;
+          purchase_cost: string | number | null;
+          purchase_currency: string | null;
+        }>(
+          'product_keys',
+          { select: 'order_id, purchase_cost, purchase_currency', in: [['order_id', chunk]] },
+        );
+        for (const k of keys) {
+          const cost = typeof k.purchase_cost === 'number' ? k.purchase_cost
+            : typeof k.purchase_cost === 'string' ? Number(k.purchase_cost) : 0;
+          const existing = keyCostMap.get(k.order_id);
+          keyCostMap.set(k.order_id, {
+            cost: (existing?.cost ?? 0) + cost,
+            currency: k.purchase_currency ?? existing?.currency ?? 'USD',
+          });
+        }
+      }
+    }
+
+    const enriched = sliced.map(o => {
+      const keyCost = keyCostMap.get(o.id as string);
+      return {
+        ...o,
+        key_cost_cents: keyCost?.cost ?? 0,
+        key_cost_currency: keyCost?.currency ?? 'USD',
+      };
+    });
+
     return {
-      orders: sliced,
+      orders: enriched,
       total: allOrders.length,
       page,
     };
   }
 
   async getOrderDetail(orderId: string): Promise<unknown> {
-    return this.db.rpc('get_order_summary', { p_order_id: orderId });
+    const order = await this.db.queryOne<Record<string, unknown>>('orders', {
+      select: 'id, order_number, status, total_amount, currency, delivery_email, contact_email, guest_email, customer_full_name, created_at, updated_at, order_channel, payment_provider, payment_method, provider_fee, net_amount, marketplace_pricing, quantity, ip_address, ip_country, billing_country_code, notes, admin_notes, refund_amount, refund_reason, refunded_at, discount_amount_cents, subtotal_cents, order_items(id, product_id, variant_id, quantity, unit_price, total_price, status, products(name), product_variants(face_value, sku, platforms(name), product_regions(name)))',
+      eq: [['id', orderId]],
+    });
+
+    if (!order) return null;
+
+    const keys = await this.db.query<Record<string, unknown>>('product_keys', {
+      select: 'id, variant_id, key_state, is_used, purchase_cost, purchase_currency, used_at, created_at, supplier_reference',
+      eq: [['order_id', orderId]],
+    });
+
+    return { ...order, delivered_keys: keys };
   }
 }

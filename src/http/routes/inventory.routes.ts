@@ -14,6 +14,37 @@ function mapKeyState(keyState: string | null, isUsed: boolean): 'available' | 'r
 }
 
 export async function adminInventoryRoutes(app: FastifyInstance) {
+  app.get('/kpis', { preHandler: [employeeGuard] }, async (_request, reply) => {
+    const db = container.resolve<import('../../core/ports/database.port.js').IDatabase>(
+      TOKENS.Database,
+    );
+
+    const countResult = await db.queryPaginated<Record<string, unknown>>('product_keys', {
+      select: 'id',
+      eq: [['key_state', 'available']],
+      limit: 1,
+    });
+    const availableKeyCount = countResult.total;
+
+    const costRows = await db.query<{ purchase_cost: string | number | null }>('product_keys', {
+      select: 'purchase_cost',
+      eq: [['key_state', 'available']],
+      limit: 10000,
+    });
+
+    let totalCostCents = 0;
+    for (const row of costRows) {
+      const cost = typeof row.purchase_cost === 'number' ? row.purchase_cost
+        : typeof row.purchase_cost === 'string' ? Number(row.purchase_cost) : 0;
+      totalCostCents += cost;
+    }
+
+    return reply.send({
+      availableKeyCount,
+      purchaseCostUsdTotal: totalCostCents / 100,
+    });
+  });
+
   app.get('/catalog', { preHandler: [employeeGuard] }, async (request, reply) => {
     const query = request.query as { limit?: string; offset?: string; search?: string };
     const uc = container.resolve<GetInventoryCatalogUseCase>(UC_TOKENS.GetInventoryCatalog);
