@@ -29,6 +29,9 @@ import type {
   ManualSellResult,
   UpdateVariantPriceDto,
   UpdateVariantPriceResult,
+  GetInventoryCatalogDto,
+  GetInventoryCatalogResult,
+  InventoryCatalogRow,
 } from '../../core/use-cases/inventory/inventory.types.js';
 
 @injectable()
@@ -158,5 +161,136 @@ export class SupabaseAdminInventoryRepository implements IAdminInventoryReposito
       updated_at: new Date().toISOString(),
     });
     return { success: true };
+  }
+
+  async getInventoryCatalog(dto: GetInventoryCatalogDto): Promise<GetInventoryCatalogResult> {
+    const limit = dto.limit ?? 5000;
+    const offset = dto.offset ?? 0;
+
+    const variants = await this.db.query<Record<string, unknown>>('product_variants', {
+      select: 'id, sku, price_usd, is_active, product_id, region_id',
+      order: { column: 'created_at', ascending: false },
+    });
+
+    const sliced = variants.slice(offset, offset + limit);
+    const variantIds = sliced.map(v => v.id as string);
+    const productIds = [...new Set(sliced.map(v => v.product_id as string))];
+    const regionIds = [...new Set(sliced.map(v => v.region_id as string).filter(Boolean))];
+
+    const [products, regions, availableKeys, soldKeys, variantPlatforms, providerOffers, providerAccounts] = await Promise.all([
+      productIds.length
+        ? this.db.query<Record<string, unknown>>('products', { select: 'id, name, category', in: [['id', productIds]] })
+        : [],
+      regionIds.length
+        ? this.db.query<Record<string, unknown>>('product_regions', { select: 'id, name, code', in: [['id', regionIds]] })
+        : [],
+      variantIds.length
+        ? this.db.query<Record<string, unknown>>('product_keys', {
+            select: 'variant_id',
+            in: [['variant_id', variantIds]],
+            eq: [['key_state', 'available']],
+          })
+        : [],
+      variantIds.length
+        ? this.db.query<Record<string, unknown>>('product_keys', {
+            select: 'variant_id',
+            in: [['variant_id', variantIds]],
+            eq: [['is_used', true]],
+          })
+        : [],
+      variantIds.length
+        ? this.db.query<Record<string, unknown>>('variant_platforms', {
+            select: 'variant_id, platform_id',
+            in: [['variant_id', variantIds]],
+          })
+        : [],
+      variantIds.length
+        ? this.db.query<Record<string, unknown>>('provider_variant_offers', {
+            select: 'variant_id, provider_account_id',
+            in: [['variant_id', variantIds]],
+          })
+        : [],
+      this.db.query<Record<string, unknown>>('provider_accounts', {
+        select: 'id, display_name, supports_seller',
+      }),
+    ]);
+
+    const productMap = new Map(products.map(p => [p.id as string, p]));
+    const regionMap = new Map(regions.map(r => [r.id as string, r]));
+
+    // Stock counts per variant
+    const stockAvailableMap = new Map<string, number>();
+    for (const k of availableKeys) {
+      const vid = k.variant_id as string;
+      stockAvailableMap.set(vid, (stockAvailableMap.get(vid) ?? 0) + 1);
+    }
+    const stockSoldMap = new Map<string, number>();
+    for (const k of soldKeys) {
+      const vid = k.variant_id as string;
+      stockSoldMap.set(vid, (stockSoldMap.get(vid) ?? 0) + 1);
+    }
+
+    // Platform names per variant
+    const platformIds = [...new Set(variantPlatforms.map(vp => vp.platform_id as string))];
+    const platforms = platformIds.length
+      ? await this.db.query<Record<string, unknown>>('product_platforms', { select: 'id, name', in: [['id', platformIds]] })
+      : [];
+    const platformNameMap = new Map(platforms.map(p => [p.id as string, p.name as string]));
+    const variantPlatformMap = new Map<string, string>();
+    for (const vp of variantPlatforms) {
+      const name = platformNameMap.get(vp.platform_id as string);
+      if (name) variantPlatformMap.set(vp.variant_id as string, name);
+    }
+
+    // Provider/supplier data per variant
+    const providerMap = new Map(providerAccounts.map(pa => [pa.id as string, pa]));
+    const supplierIdsMap = new Map<string, string[]>();
+    const purchaserIdsMap = new Map<string, string[]>();
+    for (const offer of providerOffers) {
+      const vid = offer.variant_id as string;
+      const provider = providerMap.get(offer.provider_account_id as string);
+      if (!provider) continue;
+      const provId = provider.id as string;
+      // Providers that support_seller are purchasers (they buy from us)
+      if (provider.supports_seller) {
+        const arr = purchaserIdsMap.get(vid) ?? [];
+        arr.push(provId);
+        purchaserIdsMap.set(vid, arr);
+      }
+      // All providers with offers are suppliers (we can buy from them)
+      const arr = supplierIdsMap.get(vid) ?? [];
+      arr.push(provId);
+      supplierIdsMap.set(vid, arr);
+    }
+
+    const rows: InventoryCatalogRow[] = sliced.map(v => {
+      const product = productMap.get(v.product_id as string);
+      const region = regionMap.get(v.region_id as string);
+      const vid = v.id as string;
+      return {
+        product_id: (v.product_id as string) ?? '',
+        product_name: (product?.name as string) ?? '',
+        variant_id: vid,
+        sku: (v.sku as string) ?? null,
+        region_name: (region?.code as string) ?? (region?.name as string) ?? null,
+        platform_name: variantPlatformMap.get(vid) ?? null,
+        stock_available: stockAvailableMap.get(vid) ?? 0,
+        stock_reserved: 0,
+        stock_sold: stockSoldMap.get(vid) ?? 0,
+        price_usd: (v.price_usd as number) ?? 0,
+        is_active: (v.is_active as boolean) ?? false,
+        category: (product?.category as string) ?? null,
+        supplier_ids: supplierIdsMap.get(vid) ?? [],
+        purchaser_ids: purchaserIdsMap.get(vid) ?? [],
+      };
+    });
+
+    const providers = providerAccounts.map(pa => ({
+      id: pa.id as string,
+      display_name: (pa.display_name as string) ?? '',
+      supports_seller: (pa.supports_seller as boolean) ?? false,
+    }));
+
+    return { rows, providers };
   }
 }

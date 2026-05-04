@@ -130,3 +130,37 @@ export interface UpdateVariantPriceDto {
 export interface UpdateVariantPriceResult {
   success: boolean;
 }
+
+export interface GetInventoryCatalogDto {
+  limit?: number;
+  offset?: number;
+  search?: string;
+}
+
+export interface InventoryCatalogRow {
+  product_id: string;
+  product_name: string;
+  variant_id: string;
+  sku: string | null;
+  region_name: string | null;
+  platform_name: string | null;
+  stock_available: number;
+  stock_reserved: number;
+  stock_sold: number;
+  price_usd: number;
+  is_active: boolean;
+  category: string | null;
+  supplier_ids: string[];
+  purchaser_ids: string[];
+}
+
+export interface ProviderAccountInfo {
+  id: string;
+  display_name: string;
+  supports_seller: boolean;
+}
+
+export interface GetInventoryCatalogResult {
+  rows: InventoryCatalogRow[];
+  providers: ProviderAccountInfo[];
+}

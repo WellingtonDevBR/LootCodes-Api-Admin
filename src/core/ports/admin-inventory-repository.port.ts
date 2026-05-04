@@ -25,6 +25,8 @@ import type {
   ManualSellResult,
   UpdateVariantPriceDto,
   UpdateVariantPriceResult,
+  GetInventoryCatalogDto,
+  GetInventoryCatalogResult,
 } from '../use-cases/inventory/inventory.types.js';
 
 export interface IAdminInventoryRepository {
@@ -41,4 +43,5 @@ export interface IAdminInventoryRepository {
   linkReplacementKey(dto: LinkReplacementKeyDto): Promise<LinkReplacementKeyResult>;
   manualSell(dto: ManualSellDto): Promise<ManualSellResult>;
   updateVariantPrice(dto: UpdateVariantPriceDto): Promise<UpdateVariantPriceResult>;
+  getInventoryCatalog(dto: GetInventoryCatalogDto): Promise<GetInventoryCatalogResult>;
 }
