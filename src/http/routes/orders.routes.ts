@@ -76,6 +76,13 @@ function extractProductName(raw: Record<string, unknown>): string {
   return firstItem?.products?.name ?? '';
 }
 
+function extractVariantSku(raw: Record<string, unknown>): string {
+  const orderItems = raw.order_items as OrderItemEmbed[] | undefined;
+  if (!orderItems || orderItems.length === 0) return '';
+  const firstItem = orderItems[0];
+  return firstItem?.product_variants?.sku ?? '';
+}
+
 function serializeOrderItems(raw: Record<string, unknown>): unknown[] {
   const orderItems = raw.order_items as OrderItemEmbed[] | undefined;
   if (!orderItems || orderItems.length === 0) return [];
@@ -146,6 +153,15 @@ function convertCents(
   if (direct !== undefined) return Math.round(amountCents * direct);
   const inverse = rates.get(`${toCurrency}->${fromCurrency}`);
   if (inverse !== undefined && inverse > 0) return Math.round(amountCents / inverse);
+
+  // Multi-hop via USD pivot (e.g. BRL->USD->EUR)
+  const toUsd = rates.get(`USD->${fromCurrency}`);
+  const fromUsd = rates.get(`USD->${toCurrency}`);
+  if (toUsd && toUsd > 0 && fromUsd) {
+    const inUsdCents = amountCents / toUsd;
+    return Math.round(inUsdCents * fromUsd);
+  }
+
   return amountCents;
 }
 
@@ -173,7 +189,7 @@ function toSerializedOrder(raw: Record<string, unknown>, rates: RateMap) {
       channel,
       status: mapStatus(raw.status as string),
       productName: extractProductName(raw),
-      sku: (raw.order_number as string) ?? '',
+      sku: extractVariantSku(raw) || (raw.order_number as string) || '',
       qty,
       revenue: money,
       cost: { amount: totalCost, currency },

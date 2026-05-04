@@ -200,6 +200,11 @@ export class SupabaseAdminOrderRepository implements IAdminOrderRepository {
     if (dto.status) eqFilters.push(['status', dto.status]);
     if (eqFilters.length > 0) queryOpts.eq = eqFilters;
 
+    if (dto.from) queryOpts.gte = [['created_at', dto.from]];
+    if (dto.to) {
+      queryOpts.lt = [...(queryOpts.lt ?? []), ['created_at', dto.to]];
+    }
+
     const allOrders = await this.db.query<Record<string, unknown>>('orders', queryOpts);
     const sliced = allOrders.slice(offset, offset + limit);
 
@@ -263,7 +268,7 @@ export class SupabaseAdminOrderRepository implements IAdminOrderRepository {
       .map(i => i.variant_id as string)
       .filter(Boolean);
 
-    let variantPlatformMap = new Map<string, string[]>();
+    const variantPlatformMap = new Map<string, string[]>();
     if (variantIds.length > 0) {
       const vpRows = await this.db.query<{ variant_id: string; product_platforms: { name: string } }>(
         'variant_platforms',
