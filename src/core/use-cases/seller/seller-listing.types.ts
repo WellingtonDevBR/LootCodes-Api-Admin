@@ -1,3 +1,5 @@
+import type { SellerListingType } from './seller.types.js';
+
 // --- Create Listing ---
 
 export interface CreateSellerListingDto {
@@ -5,7 +7,7 @@ export interface CreateSellerListingDto {
   provider_account_id: string;
   price_cents: number;
   currency: string;
-  listing_type: 'key_upload' | 'declared_stock';
+  listing_type: SellerListingType;
   external_product_id?: string;
   auto_sync_stock?: boolean;
   auto_sync_price?: boolean;
@@ -23,7 +25,6 @@ export interface CreateSellerListingResult {
 export interface UpdateSellerListingPriceDto {
   listing_id: string;
   price_cents: number;
-  pricing_mode?: 'gross' | 'net';
   admin_id: string;
 }
 

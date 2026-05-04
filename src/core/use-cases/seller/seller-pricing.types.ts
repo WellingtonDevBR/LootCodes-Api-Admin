@@ -1,9 +1,10 @@
+import type { SellerListingType } from './seller.types.js';
+
 // --- Calculate Payout ---
 
 export interface CalculatePayoutDto {
   listing_id: string;
   price_cents: number;
-  mode: 'gross' | 'net';
 }
 
 export interface PayoutBreakdown {
@@ -48,7 +49,7 @@ export interface GetCompetitorsResult {
 export interface SuggestPriceDto {
   listing_id: string;
   effective_cost_cents: number;
-  listing_type: 'key_upload' | 'declared_stock';
+  listing_type: SellerListingType;
 }
 
 export interface PriceSuggestion {

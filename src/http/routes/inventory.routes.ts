@@ -775,59 +775,17 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
 
   app.get('/variant-context/:variantId', { preHandler: [employeeGuard] }, async (request, reply) => {
     const { variantId } = request.params as { variantId: string };
-    const db = container.resolve<import('../../core/ports/database.port.js').IDatabase>(TOKENS.Database);
+    const uc = container.resolve<import('../../core/use-cases/inventory/get-variant-context.use-case.js').GetVariantContextUseCase>(UC_TOKENS.GetVariantContext);
 
-    const variant = await db.queryOne<Record<string, unknown>>('product_variants', {
-      select: 'id, sku, price_usd, product_id, region_id',
-      filter: { id: variantId },
-    });
-
-    if (!variant) {
-      return reply.status(404).send({ error: 'Variant not found' });
+    try {
+      const result = await uc.execute({ variant_id: variantId });
+      return reply.send(result);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Variant not found';
+      if (message.includes('not found')) {
+        return reply.status(404).send({ error: message });
+      }
+      throw err;
     }
-
-    const [product, variantPlatforms, availableKeys] = await Promise.all([
-      db.queryOne<Record<string, unknown>>('products', {
-        select: 'name',
-        filter: { id: variant.product_id as string },
-      }),
-      db.query<Record<string, unknown>>('variant_platforms', {
-        select: 'platform_id',
-        filter: { variant_id: variantId },
-      }),
-      db.query<Record<string, unknown>>('product_keys', {
-        select: 'id',
-        filter: { variant_id: variantId },
-        eq: [['key_state', 'available']],
-      }),
-    ]);
-
-    const platformIds = variantPlatforms.map(vp => vp.platform_id as string);
-    const platforms = platformIds.length
-      ? await db.query<Record<string, unknown>>('product_platforms', {
-          select: 'id, name',
-          in: [['id', platformIds]],
-        })
-      : [];
-    const platformNames = platforms.map(p => p.name as string);
-
-    let regionName: string | null = null;
-    if (variant.region_id) {
-      const region = await db.queryOne<Record<string, unknown>>('product_regions', {
-        select: 'name',
-        filter: { id: variant.region_id as string },
-      });
-      regionName = (region?.name as string) ?? null;
-    }
-
-    return reply.send({
-      id: variant.id as string,
-      product_name: (product?.name as string) ?? 'Unknown',
-      platform_names: platformNames,
-      region_name: regionName,
-      sku: variant.sku as string,
-      stock_available: availableKeys.length,
-      price_usd: variant.price_usd as number,
-    });
   });
 }

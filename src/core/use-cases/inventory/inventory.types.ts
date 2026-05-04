@@ -164,3 +164,19 @@ export interface GetInventoryCatalogResult {
   rows: InventoryCatalogRow[];
   providers: ProviderAccountInfo[];
 }
+
+// --- Variant Context (seller detail page) ---
+
+export interface GetVariantContextDto {
+  variant_id: string;
+}
+
+export interface GetVariantContextResult {
+  id: string;
+  product_name: string;
+  platform_names: string[];
+  region_name: string | null;
+  sku: string;
+  stock_available: number;
+  price_usd: number;
+}

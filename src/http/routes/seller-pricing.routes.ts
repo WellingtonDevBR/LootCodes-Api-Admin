@@ -17,7 +17,6 @@ export async function adminSellerPricingRoutes(app: FastifyInstance) {
     const result = await uc.execute({
       listing_id: body.listing_id as string,
       price_cents: body.price_cents as number,
-      mode: (body.mode as 'gross' | 'net') ?? 'gross',
     });
     return reply.send(result);
   });

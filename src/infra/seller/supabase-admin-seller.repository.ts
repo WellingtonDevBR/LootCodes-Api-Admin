@@ -66,18 +66,7 @@ export class SupabaseAdminSellerRepository implements IAdminSellerRepository {
       order: { column: 'created_at', ascending: true },
     });
 
-    const accountIds = [...new Set(rows.map((r) => r.provider_account_id as string).filter(Boolean))];
-    const accountMap = new Map<string, { provider_code: string; display_name: string }>();
-
-    if (accountIds.length > 0) {
-      const accounts = await this.db.query<Record<string, unknown>>('provider_accounts', {});
-      for (const a of accounts) {
-        accountMap.set(a.id as string, {
-          provider_code: a.provider_code as string,
-          display_name: a.display_name as string,
-        });
-      }
-    }
+    const accountMap = rows.length > 0 ? await this.buildAccountMap() : new Map();
 
     const listings: SellerListingItem[] = rows.map((r) => {
       const account = accountMap.get(r.provider_account_id as string);

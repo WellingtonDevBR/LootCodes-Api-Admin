@@ -73,6 +73,7 @@ export const UC_TOKENS = {
   ManualSell: Symbol.for('ManualSellUseCase'),
   UpdateVariantPrice: Symbol.for('UpdateVariantPriceUseCase'),
   GetInventoryCatalog: Symbol.for('GetInventoryCatalogUseCase'),
+  GetVariantContext: Symbol.for('GetVariantContextUseCase'),
 
   // Inventory Sources
   LinkVariantInventorySource: Symbol.for('LinkVariantInventorySourceUseCase'),

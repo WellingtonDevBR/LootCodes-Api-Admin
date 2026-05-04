@@ -31,6 +31,8 @@ import type {
   UpdateVariantPriceResult,
   GetInventoryCatalogDto,
   GetInventoryCatalogResult,
+  GetVariantContextDto,
+  GetVariantContextResult,
   InventoryCatalogRow,
 } from '../../core/use-cases/inventory/inventory.types.js';
 
@@ -292,5 +294,57 @@ export class SupabaseAdminInventoryRepository implements IAdminInventoryReposito
     }));
 
     return { rows, providers };
+  }
+
+  async getVariantContext(dto: GetVariantContextDto): Promise<GetVariantContextResult> {
+    const variant = await this.db.queryOne<Record<string, unknown>>('product_variants', {
+      select: 'id, sku, price_usd, product_id, region_id',
+      filter: { id: dto.variant_id },
+    });
+
+    if (!variant) throw new Error(`Variant ${dto.variant_id} not found`);
+
+    const [product, variantPlatforms, availableKeys] = await Promise.all([
+      this.db.queryOne<Record<string, unknown>>('products', {
+        select: 'name',
+        filter: { id: variant.product_id as string },
+      }),
+      this.db.query<Record<string, unknown>>('variant_platforms', {
+        select: 'platform_id',
+        filter: { variant_id: dto.variant_id },
+      }),
+      this.db.query<Record<string, unknown>>('product_keys', {
+        select: 'id',
+        filter: { variant_id: dto.variant_id },
+        eq: [['key_state', 'available']],
+      }),
+    ]);
+
+    const platformIds = variantPlatforms.map(vp => vp.platform_id as string);
+    const platforms = platformIds.length
+      ? await this.db.query<Record<string, unknown>>('product_platforms', {
+          select: 'id, name',
+          in: [['id', platformIds]],
+        })
+      : [];
+
+    let regionName: string | null = null;
+    if (variant.region_id) {
+      const region = await this.db.queryOne<Record<string, unknown>>('product_regions', {
+        select: 'name',
+        filter: { id: variant.region_id as string },
+      });
+      regionName = (region?.name as string) ?? null;
+    }
+
+    return {
+      id: variant.id as string,
+      product_name: (product?.name as string) ?? 'Unknown',
+      platform_names: platforms.map(p => p.name as string),
+      region_name: regionName,
+      sku: variant.sku as string,
+      stock_available: availableKeys.length,
+      price_usd: variant.price_usd as number,
+    };
   }
 }

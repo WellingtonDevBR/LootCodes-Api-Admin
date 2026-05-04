@@ -93,6 +93,7 @@ import { LinkReplacementKeyUseCase } from '../core/use-cases/inventory/link-repl
 import { ManualSellUseCase } from '../core/use-cases/inventory/manual-sell.use-case.js';
 import { UpdateVariantPriceUseCase } from '../core/use-cases/inventory/update-variant-price.use-case.js';
 import { GetInventoryCatalogUseCase } from '../core/use-cases/inventory/get-inventory-catalog.use-case.js';
+import { GetVariantContextUseCase } from '../core/use-cases/inventory/get-variant-context.use-case.js';
 
 // Use cases — Users
 import { GetComprehensiveUserDataUseCase } from '../core/use-cases/users/get-comprehensive-user-data.use-case.js';
@@ -386,6 +387,7 @@ container.register(UC_TOKENS.LinkReplacementKey, { useClass: LinkReplacementKeyU
 container.register(UC_TOKENS.ManualSell, { useClass: ManualSellUseCase });
 container.register(UC_TOKENS.UpdateVariantPrice, { useClass: UpdateVariantPriceUseCase });
 container.register(UC_TOKENS.GetInventoryCatalog, { useClass: GetInventoryCatalogUseCase });
+container.register(UC_TOKENS.GetVariantContext, { useClass: GetVariantContextUseCase });
 
 // Use cases — Users
 container.register(UC_TOKENS.GetComprehensiveUserData, { useClass: GetComprehensiveUserDataUseCase });

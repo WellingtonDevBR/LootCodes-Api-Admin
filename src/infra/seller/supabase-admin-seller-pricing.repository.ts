@@ -24,6 +24,23 @@ import { createLogger } from '../../shared/logger.js';
 
 const logger = createLogger('AdminSellerPricingRepository');
 
+function toPricingDecisionItem(r: Record<string, unknown>): PricingDecisionItem {
+  return {
+    id: r.id as string,
+    listing_id: r.seller_listing_id as string,
+    action: r.action as string,
+    reason_code: r.reason_code as string,
+    price_before_cents: r.price_before_cents as number,
+    target_price_cents: r.target_price_cents as number,
+    lowest_competitor_cents: (r.lowest_competitor_cents as number) ?? null,
+    our_position_before: (r.our_position_before as number) ?? null,
+    estimated_fee_cents: (r.estimated_fee_cents as number) ?? null,
+    config_snapshot: (r.config_snapshot as Record<string, unknown>) ?? null,
+    decision_context: (r.decision_context as Record<string, unknown>) ?? null,
+    created_at: r.created_at as string,
+  };
+}
+
 @injectable()
 export class SupabaseAdminSellerPricingRepository implements IAdminSellerPricingRepository {
   constructor(
@@ -138,22 +155,11 @@ export class SupabaseAdminSellerPricingRepository implements IAdminSellerPricing
       range: [offset, offset + limit - 1],
     });
 
-    const decisions: PricingDecisionItem[] = data.map((r) => ({
-      id: r.id as string,
-      listing_id: r.seller_listing_id as string,
-      action: r.action as string,
-      reason_code: r.reason_code as string,
-      price_before_cents: r.price_before_cents as number,
-      target_price_cents: r.target_price_cents as number,
-      lowest_competitor_cents: (r.lowest_competitor_cents as number) ?? null,
-      our_position_before: (r.our_position_before as number) ?? null,
-      estimated_fee_cents: (r.estimated_fee_cents as number) ?? null,
-      config_snapshot: (r.config_snapshot as Record<string, unknown>) ?? null,
-      decision_context: (r.decision_context as Record<string, unknown>) ?? null,
-      created_at: r.created_at as string,
-    }));
-
-    return { listing_id: dto.listing_id, decisions, total };
+    return {
+      listing_id: dto.listing_id,
+      decisions: data.map(toPricingDecisionItem),
+      total,
+    };
   }
 
   async getLatestDecision(dto: GetLatestDecisionDto): Promise<GetLatestDecisionResult> {
@@ -163,26 +169,9 @@ export class SupabaseAdminSellerPricingRepository implements IAdminSellerPricing
       limit: 1,
     });
 
-    if (!row) {
-      return { listing_id: dto.listing_id, decision: null };
-    }
-
     return {
       listing_id: dto.listing_id,
-      decision: {
-        id: row.id as string,
-        listing_id: row.seller_listing_id as string,
-        action: row.action as string,
-        reason_code: row.reason_code as string,
-        price_before_cents: row.price_before_cents as number,
-        target_price_cents: row.target_price_cents as number,
-        lowest_competitor_cents: (row.lowest_competitor_cents as number) ?? null,
-        our_position_before: (row.our_position_before as number) ?? null,
-        estimated_fee_cents: (row.estimated_fee_cents as number) ?? null,
-        config_snapshot: (row.config_snapshot as Record<string, unknown>) ?? null,
-        decision_context: (row.decision_context as Record<string, unknown>) ?? null,
-        created_at: row.created_at as string,
-      },
+      decision: row ? toPricingDecisionItem(row) : null,
     };
   }
 

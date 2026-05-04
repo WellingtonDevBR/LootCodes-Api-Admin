@@ -1,3 +1,5 @@
+export type SellerListingType = 'key_upload' | 'declared_stock';
+
 export interface ProviderAccountItem {
   id: string;
   provider_code: string;
@@ -30,7 +32,7 @@ export interface SellerListingItem {
   provider_account_id: string;
   external_listing_id: string | null;
   external_product_id: string;
-  listing_type: 'key_upload' | 'declared_stock';
+  listing_type: SellerListingType;
   status: string;
   currency: string;
   price_cents: number;

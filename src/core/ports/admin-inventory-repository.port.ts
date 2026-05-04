@@ -27,6 +27,8 @@ import type {
   UpdateVariantPriceResult,
   GetInventoryCatalogDto,
   GetInventoryCatalogResult,
+  GetVariantContextDto,
+  GetVariantContextResult,
 } from '../use-cases/inventory/inventory.types.js';
 
 export interface IAdminInventoryRepository {
@@ -44,4 +46,5 @@ export interface IAdminInventoryRepository {
   manualSell(dto: ManualSellDto): Promise<ManualSellResult>;
   updateVariantPrice(dto: UpdateVariantPriceDto): Promise<UpdateVariantPriceResult>;
   getInventoryCatalog(dto: GetInventoryCatalogDto): Promise<GetInventoryCatalogResult>;
+  getVariantContext(dto: GetVariantContextDto): Promise<GetVariantContextResult>;
 }
