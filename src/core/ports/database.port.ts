@@ -5,6 +5,9 @@ export interface QueryOptions {
   neq?: Array<[string, unknown]>;
   in?: Array<[string, unknown[]]>;
   ilike?: Array<[string, string]>;
+  lt?: Array<[string, unknown]>;
+  gt?: Array<[string, unknown]>;
+  gte?: Array<[string, unknown]>;
   order?: { column: string; ascending?: boolean };
   limit?: number;
   range?: [number, number];
