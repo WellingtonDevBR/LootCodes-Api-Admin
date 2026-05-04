@@ -16,6 +16,13 @@ export class BlockCustomerUseCase {
     }
     if (!dto.admin_id) throw new ValidationError('Admin ID is required');
     if (!dto.reason) throw new ValidationError('Reason is required');
-    return this.repo.blockCustomer(dto);
+
+    const result = await this.repo.blockCustomer(dto);
+    await this.repo.logAdminAction(dto.admin_id, 'block_customer', 'customer_blocklist', result.blocked_id, {
+      reason: dto.reason,
+      email: dto.email,
+      user_id: dto.user_id,
+    });
+    return result;
   }
 }

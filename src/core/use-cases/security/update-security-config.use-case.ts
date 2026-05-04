@@ -13,6 +13,11 @@ export class UpdateSecurityConfigUseCase {
   async execute(dto: UpdateSecurityConfigDto): Promise<UpdateSecurityConfigResult> {
     if (!dto.key) throw new ValidationError('Config key is required');
     if (!dto.admin_id) throw new ValidationError('Admin ID is required');
-    return this.repo.updateSecurityConfig(dto);
+
+    const result = await this.repo.updateSecurityConfig(dto);
+    await this.repo.logAdminAction(dto.admin_id, 'update_security_config', 'security_config', dto.key, {
+      config_key: dto.key,
+    });
+    return result;
   }
 }

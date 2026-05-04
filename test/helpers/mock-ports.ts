@@ -1,4 +1,4 @@
-import type { IDatabase, QueryOptions } from '../../src/core/ports/database.port.js';
+import type { IDatabase, QueryOptions, PaginatedResult } from '../../src/core/ports/database.port.js';
 import type { IAuthProvider, AuthUser } from '../../src/core/ports/auth.port.js';
 import type { IAdminRoleChecker } from '../../src/core/ports/admin-role.port.js';
 import type { IIpBlocklist } from '../../src/core/ports/ip-blocklist.port.js';
@@ -22,6 +22,11 @@ export class MockDatabase implements IDatabase {
   async queryOne<T = unknown>(table: string, _options?: QueryOptions): Promise<T | null> {
     const results = this.queryResults.get(table) ?? [];
     return (results[0] ?? null) as T | null;
+  }
+
+  async queryPaginated<T = unknown>(table: string, _options?: QueryOptions): Promise<PaginatedResult<T>> {
+    const data = (this.queryResults.get(table) ?? []) as T[];
+    return { data, total: data.length };
   }
 
   async insert<T = unknown>(_table: string, data: Record<string, unknown>): Promise<T> {

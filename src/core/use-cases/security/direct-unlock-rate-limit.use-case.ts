@@ -13,6 +13,9 @@ export class DirectUnlockRateLimitUseCase {
   async execute(dto: DirectUnlockRateLimitDto): Promise<DirectUnlockRateLimitResult> {
     if (!dto.identifier) throw new ValidationError('Identifier is required');
     if (!dto.admin_id) throw new ValidationError('Admin ID is required');
-    return this.repo.directUnlockRateLimit(dto);
+
+    const result = await this.repo.directUnlockRateLimit(dto);
+    await this.repo.logAdminAction(dto.admin_id, 'direct_unlock_rate_limit', 'rate_limits', dto.identifier);
+    return result;
   }
 }
