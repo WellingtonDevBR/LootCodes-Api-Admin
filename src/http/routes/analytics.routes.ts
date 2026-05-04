@@ -5,7 +5,6 @@ import { adminGuard, employeeGuard } from '../middleware/auth.guard.js';
 import type { GetDashboardMetricsUseCase } from '../../core/use-cases/analytics/get-dashboard-metrics.use-case.js';
 import type { GetFinancialSummaryUseCase } from '../../core/use-cases/analytics/get-financial-summary.use-case.js';
 import type { GetTransactionsUseCase } from '../../core/use-cases/analytics/get-transactions.use-case.js';
-import type { GetChannelsSnapshotUseCase } from '../../core/use-cases/analytics/get-channels-snapshot.use-case.js';
 
 export async function adminAnalyticsRoutes(app: FastifyInstance) {
   app.get('/dashboard', { preHandler: [employeeGuard] }, async (request, reply) => {

@@ -94,8 +94,8 @@ export class SupabaseAdminUserRepository implements IAdminUserRepository {
     const sliced = profiles.slice(offset, offset + limit);
     const userIds = sliced.map(p => p.user_id as string).filter(Boolean);
 
-    let orderStats: Record<string, { count: number; spent: number; last: string | null }> = {};
-    let sessionLastSeen: Record<string, string> = {};
+    const orderStats: Record<string, { count: number; spent: number; last: string | null }> = {};
+    const sessionLastSeen: Record<string, string> = {};
 
     if (userIds.length > 0) {
       const orders = await this.db.query<Record<string, unknown>>('orders', {
