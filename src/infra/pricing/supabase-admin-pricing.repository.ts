@@ -13,6 +13,15 @@ import { createLogger } from '../../shared/logger.js';
 
 const logger = createLogger('AdminPricingRepository');
 
+const PERIOD_MAP: Record<string, number> = { '24h': 1, '7d': 7, '30d': 30, '90d': 90 };
+
+function periodToDays(period?: string): number {
+  if (!period) return 7;
+  if (PERIOD_MAP[period]) return PERIOD_MAP[period];
+  const parsed = parseInt(period, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 7;
+}
+
 @injectable()
 export class SupabaseAdminPricingRepository implements IAdminPricingRepository {
   constructor(
@@ -20,13 +29,14 @@ export class SupabaseAdminPricingRepository implements IAdminPricingRepository {
   ) {}
 
   async getVariantPriceTimeline(dto: GetVariantPriceTimelineDto): Promise<GetVariantPriceTimelineResult> {
-    logger.info('Fetching variant price timeline', { variantId: dto.variant_id, period: dto.period });
+    const days = periodToDays(dto.period);
+    logger.info('Fetching variant price timeline', { variantId: dto.variant_id, days });
 
     const timeline = await this.db.rpc<unknown[]>(
       'get_variant_price_timeline',
       {
         p_variant_id: dto.variant_id,
-        p_period: dto.period ?? '30d',
+        p_days: days,
       },
     );
 
