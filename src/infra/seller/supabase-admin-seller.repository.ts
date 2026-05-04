@@ -12,14 +12,20 @@ import type {
   CreateProviderAccountResult,
   UpdateProviderAccountDto,
   UpdateProviderAccountResult,
+  GetProviderAccountDetailResult,
+  GetWebhookStatusResult,
+  RegisterWebhooksResult,
   CreateVariantOfferDto,
   CreateVariantOfferResult,
   UpdateVariantOfferDto,
   UpdateVariantOfferResult,
   ProviderAccountItem,
+  ProviderAccountDetail,
   SellerListingItem,
   VariantOfferItem,
+  ProcurementConfig,
 } from '../../core/use-cases/seller/seller.types.js';
+import { parseSellerConfig } from '../../core/use-cases/seller/seller.types.js';
 import type {
   CreateSellerListingDto,
   CreateSellerListingResult,
@@ -55,6 +61,7 @@ export class SupabaseAdminSellerRepository implements IAdminSellerRepository {
 
   async listProviderAccounts(): Promise<ListProviderAccountsResult> {
     const rows = await this.db.query<ProviderAccountItem>('provider_accounts', {
+      neq: [['health_status', 'deleted']],
       order: { column: 'priority', ascending: true },
     });
     return { accounts: rows };
@@ -127,6 +134,78 @@ export class SupabaseAdminSellerRepository implements IAdminSellerRepository {
     return { offers };
   }
 
+  async getProviderAccountDetail(id: string): Promise<GetProviderAccountDetailResult> {
+    const row = await this.db.queryOne<Record<string, unknown>>('provider_accounts', {
+      filter: { id },
+    });
+    if (!row) throw new Error(`Provider account ${id} not found`);
+
+    const rawSeller = (row.seller_config as Record<string, unknown>) ?? {};
+    const rawProcurement = (row.procurement_config as Record<string, unknown>) ?? {};
+    const rawApiProfile = (row.api_profile as Record<string, unknown>) ?? {};
+
+    const account: ProviderAccountDetail = {
+      id: row.id as string,
+      provider_code: row.provider_code as string,
+      display_name: row.display_name as string,
+      is_enabled: row.is_enabled as boolean,
+      priority: row.priority as number,
+      health_status: (row.health_status as string) ?? 'unknown',
+      prioritize_quote_sync: row.prioritize_quote_sync as boolean,
+      supports_catalog: row.supports_catalog as boolean,
+      supports_quote: row.supports_quote as boolean,
+      supports_purchase: row.supports_purchase as boolean,
+      supports_callback: row.supports_callback as boolean,
+      supports_seller: row.supports_seller as boolean,
+      seller_config: parseSellerConfig(rawSeller),
+      procurement_config: rawProcurement as ProcurementConfig,
+      api_profile_keys: Object.keys(rawApiProfile),
+      created_at: row.created_at as string,
+      updated_at: row.updated_at as string,
+    };
+
+    return { account };
+  }
+
+  async registerWebhooks(accountId: string): Promise<RegisterWebhooksResult> {
+    logger.info('Registering webhooks via Edge Function', { accountId });
+    const result = await this.db.invokeFunction('provider-procurement', {
+      action: 'seller-stock',
+      sub_action: 'register-callbacks',
+      provider_account_id: accountId,
+    });
+    return {
+      registered: (result as Record<string, unknown>).registered as number ?? 0,
+      webhook_ids: ((result as Record<string, unknown>).webhook_ids as string[]) ?? [],
+    };
+  }
+
+  async getWebhookStatus(accountId: string): Promise<GetWebhookStatusResult> {
+    logger.info('Fetching webhook status', { accountId });
+
+    const row = await this.db.queryOne<Record<string, unknown>>('provider_accounts', {
+      filter: { id: accountId },
+      select: 'id,seller_config',
+    });
+    if (!row) throw new Error(`Provider account ${accountId} not found`);
+
+    const parsed = parseSellerConfig((row.seller_config as Record<string, unknown>) ?? {});
+    const callbackIds = Array.isArray(parsed.callback_ids)
+      ? (parsed.callback_ids as Record<string, unknown>[]).map((w) => ({
+          id: (w.id as string) ?? '',
+          type: (w.type as string) ?? 'unknown',
+          url: (w.url as string) ?? '',
+          active: (w.active as boolean) ?? false,
+        }))
+      : [];
+
+    return {
+      provider_account_id: accountId,
+      webhooks: callbackIds,
+      declared_stock_enabled: parsed.seller_declared_stock_enabled,
+    };
+  }
+
   async createProviderAccount(dto: CreateProviderAccountDto): Promise<CreateProviderAccountResult> {
     const now = new Date().toISOString();
     const row = await this.db.insert<Record<string, unknown>>('provider_accounts', {
@@ -134,6 +213,7 @@ export class SupabaseAdminSellerRepository implements IAdminSellerRepository {
       display_name: dto.display_name,
       is_enabled: dto.is_enabled ?? false,
       priority: dto.priority ?? 100,
+      api_profile: dto.api_profile ?? {},
       supports_catalog: dto.supports_catalog ?? false,
       supports_quote: dto.supports_quote ?? false,
       supports_purchase: dto.supports_purchase ?? false,
@@ -141,6 +221,7 @@ export class SupabaseAdminSellerRepository implements IAdminSellerRepository {
       supports_seller: dto.supports_seller ?? false,
       seller_config: dto.seller_config ?? {},
       procurement_config: dto.procurement_config ?? {},
+      prioritize_quote_sync: dto.prioritize_quote_sync ?? false,
       health_status: 'healthy',
       created_at: now,
       updated_at: now,
@@ -154,14 +235,31 @@ export class SupabaseAdminSellerRepository implements IAdminSellerRepository {
     if (fields.display_name !== undefined) updates.display_name = fields.display_name;
     if (fields.priority !== undefined) updates.priority = fields.priority;
     if (fields.is_enabled !== undefined) updates.is_enabled = fields.is_enabled;
+    if (fields.api_profile !== undefined) updates.api_profile = fields.api_profile;
     if (fields.supports_catalog !== undefined) updates.supports_catalog = fields.supports_catalog;
     if (fields.supports_quote !== undefined) updates.supports_quote = fields.supports_quote;
     if (fields.supports_purchase !== undefined) updates.supports_purchase = fields.supports_purchase;
     if (fields.supports_callback !== undefined) updates.supports_callback = fields.supports_callback;
     if (fields.supports_seller !== undefined) updates.supports_seller = fields.supports_seller;
-    if (fields.seller_config !== undefined) updates.seller_config = fields.seller_config;
-    if (fields.procurement_config !== undefined) updates.procurement_config = fields.procurement_config;
     if (fields.health_status !== undefined) updates.health_status = fields.health_status;
+    if (fields.prioritize_quote_sync !== undefined) updates.prioritize_quote_sync = fields.prioritize_quote_sync;
+
+    if (fields.seller_config !== undefined || fields.procurement_config !== undefined) {
+      const existing = await this.db.queryOne<Record<string, unknown>>('provider_accounts', {
+        filter: { id },
+        select: 'seller_config,procurement_config',
+      });
+      if (!existing) throw new Error(`Provider account ${id} not found`);
+
+      if (fields.seller_config !== undefined) {
+        const existingSeller = (existing.seller_config as Record<string, unknown>) ?? {};
+        updates.seller_config = { ...existingSeller, ...fields.seller_config };
+      }
+      if (fields.procurement_config !== undefined) {
+        const existingProcurement = (existing.procurement_config as Record<string, unknown>) ?? {};
+        updates.procurement_config = { ...existingProcurement, ...fields.procurement_config };
+      }
+    }
 
     const rows = await this.db.update<Record<string, unknown>>('provider_accounts', { id }, updates);
     if (rows.length === 0) throw new Error(`Provider account ${id} not found`);
@@ -169,7 +267,11 @@ export class SupabaseAdminSellerRepository implements IAdminSellerRepository {
   }
 
   async deleteProviderAccount(id: string): Promise<void> {
-    await this.db.delete('provider_accounts', { id });
+    await this.db.update('provider_accounts', { id }, {
+      is_enabled: false,
+      health_status: 'deleted',
+      updated_at: new Date().toISOString(),
+    });
   }
 
   async createVariantOffer(dto: CreateVariantOfferDto): Promise<CreateVariantOfferResult> {
@@ -255,21 +357,39 @@ export class SupabaseAdminSellerRepository implements IAdminSellerRepository {
   async createSellerListing(dto: CreateSellerListingDto): Promise<CreateSellerListingResult> {
     logger.info('Creating seller listing', { variantId: dto.variant_id, provider: dto.provider_account_id });
 
-    const result = await this.db.invokeFunction<CreateSellerListingResult>('provider-procurement', {
-      action: 'seller-listing',
-      sub_action: 'create',
+    const now = new Date().toISOString();
+    const row = await this.db.insert<Record<string, unknown>>('seller_listings', {
       variant_id: dto.variant_id,
       provider_account_id: dto.provider_account_id,
+      external_product_id: dto.external_product_id ?? null,
+      listing_type: dto.listing_type ?? 'declared_stock',
+      status: 'active',
+      currency: dto.currency ?? 'EUR',
       price_cents: dto.price_cents,
-      currency: dto.currency,
-      listing_type: dto.listing_type,
-      external_product_id: dto.external_product_id,
+      min_price_cents: 0,
+      declared_stock: 0,
       auto_sync_stock: dto.auto_sync_stock ?? true,
       auto_sync_price: dto.auto_sync_price ?? false,
-      admin_id: dto.admin_id,
+      created_at: now,
+      updated_at: now,
     });
 
-    return result;
+    await this.db.insert('domain_events', {
+      event_type: 'seller.listing_created',
+      payload: {
+        listing_id: row.id,
+        variant_id: dto.variant_id,
+        provider_account_id: dto.provider_account_id,
+        admin_id: dto.admin_id,
+      },
+      created_at: now,
+    });
+
+    return {
+      listing_id: row.id as string,
+      external_listing_id: null,
+      status: 'active',
+    };
   }
 
   async updateSellerListingPrice(dto: UpdateSellerListingPriceDto): Promise<UpdateSellerListingPriceResult> {
@@ -375,14 +495,21 @@ export class SupabaseAdminSellerRepository implements IAdminSellerRepository {
   async deactivateSellerListing(dto: DeactivateSellerListingDto): Promise<DeactivateSellerListingResult> {
     logger.info('Deactivating seller listing', { listingId: dto.listing_id });
 
-    const result = await this.db.invokeFunction<{ status: string }>('provider-procurement', {
-      action: 'seller-listing',
-      sub_action: 'deactivate',
-      listing_id: dto.listing_id,
-      admin_id: dto.admin_id,
+    const now = new Date().toISOString();
+    const rows = await this.db.update<Record<string, unknown>>('seller_listings', { id: dto.listing_id }, {
+      status: 'inactive',
+      updated_at: now,
     });
 
-    return { listing_id: dto.listing_id, status: result.status ?? 'inactive' };
+    if (rows.length === 0) throw new Error(`Seller listing ${dto.listing_id} not found`);
+
+    await this.db.insert('domain_events', {
+      event_type: 'seller.listing_removed',
+      payload: { listing_id: dto.listing_id, admin_id: dto.admin_id },
+      created_at: now,
+    });
+
+    return { listing_id: dto.listing_id, status: 'inactive' };
   }
 
   async deleteSellerListing(dto: DeleteSellerListingDto): Promise<void> {
@@ -434,34 +561,62 @@ export class SupabaseAdminSellerRepository implements IAdminSellerRepository {
     });
     if (!listing) throw new Error(`Seller listing ${dto.listing_id} not found`);
 
-    const subAction = listing.listing_type === 'declared_stock' ? 'declare-stock' : 'sync';
-    const result = await this.db.invokeFunction<{ declared_stock?: number }>('provider-procurement', {
-      action: 'seller-stock',
-      sub_action: subAction,
-      listing_id: dto.listing_id,
-      admin_id: dto.admin_id,
+    const availableKeys = await this.db.query<Record<string, unknown>>('product_keys', {
+      eq: [
+        ['variant_id', listing.variant_id as string],
+        ['status', 'available'],
+      ],
+    });
+
+    const stockCount = availableKeys.length;
+    const now = new Date().toISOString();
+
+    await this.db.update('seller_listings', { id: dto.listing_id }, {
+      declared_stock: stockCount,
+      last_synced_at: now,
+      updated_at: now,
     });
 
     return {
       listing_id: dto.listing_id,
-      declared_stock: result.declared_stock ?? (listing.declared_stock as number) ?? 0,
-      synced_at: new Date().toISOString(),
+      declared_stock: stockCount,
+      synced_at: now,
     };
   }
 
   async fetchRemoteStock(dto: FetchRemoteStockDto): Promise<FetchRemoteStockResult> {
-    logger.info('Fetching remote stock', { listingId: dto.listing_id });
+    logger.info('Fetching remote stock from local data', { listingId: dto.listing_id });
 
-    const result = await this.db.invokeFunction<{ items: FetchRemoteStockResult['items'] }>('provider-procurement', {
-      action: 'seller-stock',
-      sub_action: 'fetch-remote',
-      listing_id: dto.listing_id,
-      admin_id: dto.admin_id,
+    const listing = await this.db.queryOne<Record<string, unknown>>('seller_listings', {
+      filter: { id: dto.listing_id },
     });
+    if (!listing) throw new Error(`Seller listing ${dto.listing_id} not found`);
+
+    const variant = await this.db.queryOne<Record<string, unknown>>('product_variants', {
+      filter: { id: listing.variant_id as string },
+      select: 'id,name',
+    });
+
+    const availableKeys = await this.db.query<Record<string, unknown>>('product_keys', {
+      eq: [
+        ['variant_id', listing.variant_id as string],
+        ['status', 'available'],
+      ],
+    });
+
+    const stockCount = availableKeys.length;
+    const items = [{
+      external_id: (listing.external_product_id as string) ?? (listing.id as string),
+      name: (variant?.name as string) ?? 'Unknown variant',
+      price_cents: (listing.price_cents as number) ?? 0,
+      currency: (listing.currency as string) ?? 'EUR',
+      stock: stockCount,
+      is_own: true,
+    }];
 
     return {
       listing_id: dto.listing_id,
-      items: result.items ?? [],
+      items,
     };
   }
 

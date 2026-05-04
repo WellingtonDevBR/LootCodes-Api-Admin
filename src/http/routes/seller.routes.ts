@@ -22,6 +22,9 @@ import type { DeleteSellerListingUseCase } from '../../core/use-cases/seller/del
 import type { RecoverSellerListingHealthUseCase } from '../../core/use-cases/seller/recover-seller-listing-health.use-case.js';
 import type { SyncSellerStockUseCase } from '../../core/use-cases/seller/sync-seller-stock.use-case.js';
 import type { FetchRemoteStockUseCase } from '../../core/use-cases/seller/fetch-remote-stock.use-case.js';
+import type { GetProviderAccountDetailUseCase } from '../../core/use-cases/seller/get-provider-account-detail.use-case.js';
+import type { RegisterWebhooksUseCase } from '../../core/use-cases/seller/register-webhooks.use-case.js';
+import type { GetWebhookStatusUseCase } from '../../core/use-cases/seller/get-webhook-status.use-case.js';
 
 export async function adminSellerRoutes(app: FastifyInstance) {
   // --- Provider Accounts ---
@@ -32,6 +35,21 @@ export async function adminSellerRoutes(app: FastifyInstance) {
     return reply.send(result);
   });
 
+  app.get('/provider-accounts/:id', { preHandler: [employeeGuard] }, async (request, reply) => {
+    const uc = container.resolve<GetProviderAccountDetailUseCase>(UC_TOKENS.GetProviderAccountDetail);
+    const { id } = request.params as { id: string };
+    try {
+      const result = await uc.execute(id);
+      return reply.send(result);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Provider account not found';
+      if (message.includes('not found')) {
+        return reply.status(404).send({ error: message });
+      }
+      throw err;
+    }
+  });
+
   app.post('/provider-accounts', { preHandler: [adminGuard] }, async (request, reply) => {
     const uc = container.resolve<CreateProviderAccountUseCase>(UC_TOKENS.CreateProviderAccount);
     const body = request.body as Record<string, unknown>;
@@ -40,6 +58,7 @@ export async function adminSellerRoutes(app: FastifyInstance) {
       display_name: body.display_name as string,
       is_enabled: body.is_enabled as boolean | undefined,
       priority: body.priority as number | undefined,
+      api_profile: body.api_profile as Record<string, unknown> | undefined,
       supports_catalog: body.supports_catalog as boolean | undefined,
       supports_quote: body.supports_quote as boolean | undefined,
       supports_purchase: body.supports_purchase as boolean | undefined,
@@ -47,6 +66,7 @@ export async function adminSellerRoutes(app: FastifyInstance) {
       supports_seller: body.supports_seller as boolean | undefined,
       seller_config: body.seller_config as Record<string, unknown> | undefined,
       procurement_config: body.procurement_config as Record<string, unknown> | undefined,
+      prioritize_quote_sync: body.prioritize_quote_sync as boolean | undefined,
     });
     return reply.status(201).send(result);
   });
@@ -55,7 +75,30 @@ export async function adminSellerRoutes(app: FastifyInstance) {
     const uc = container.resolve<UpdateProviderAccountUseCase>(UC_TOKENS.UpdateProviderAccount);
     const { id } = request.params as { id: string };
     const body = request.body as Record<string, unknown>;
-    const result = await uc.execute({ id, ...body });
+
+    const CORE_KEYS = [
+      'display_name', 'is_enabled', 'priority', 'prioritize_quote_sync',
+      'supports_catalog', 'supports_quote', 'supports_purchase', 'supports_callback',
+      'supports_seller', 'health_status',
+    ] as const;
+
+    const core = body.core != null
+      ? (body.core as Record<string, unknown>)
+      : body;
+
+    const sellerConfigPatch = body.seller_config as Record<string, unknown> | undefined;
+    const procurementConfigPatch = body.procurement_config as Record<string, unknown> | undefined;
+
+    const dto: Record<string, unknown> = { id };
+
+    for (const key of CORE_KEYS) {
+      if (core[key] !== undefined) dto[key] = core[key];
+    }
+
+    if (sellerConfigPatch) dto.seller_config = sellerConfigPatch;
+    if (procurementConfigPatch) dto.procurement_config = procurementConfigPatch;
+
+    const result = await uc.execute(dto as unknown as import('../../core/use-cases/seller/seller.types.js').UpdateProviderAccountDto);
     return reply.send(result);
   });
 
@@ -64,6 +107,35 @@ export async function adminSellerRoutes(app: FastifyInstance) {
     const { id } = request.params as { id: string };
     await uc.execute(id);
     return reply.status(204).send();
+  });
+
+  // --- Provider Account Webhooks ---
+
+  app.get('/provider-accounts/:id/webhooks', { preHandler: [employeeGuard] }, async (request, reply) => {
+    const uc = container.resolve<GetWebhookStatusUseCase>(UC_TOKENS.GetWebhookStatus);
+    const { id } = request.params as { id: string };
+    try {
+      const result = await uc.execute(id);
+      return reply.send(result);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Provider account not found';
+      if (message.includes('not found')) {
+        return reply.status(404).send({ error: message });
+      }
+      throw err;
+    }
+  });
+
+  app.post('/provider-accounts/:id/webhooks', { preHandler: [adminGuard] }, async (request, reply) => {
+    const uc = container.resolve<RegisterWebhooksUseCase>(UC_TOKENS.RegisterWebhooks);
+    const { id } = request.params as { id: string };
+    try {
+      const result = await uc.execute(id);
+      return reply.send(result);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to register webhooks';
+      return reply.status(500).send({ error: message });
+    }
   });
 
   // --- Seller Listings ---

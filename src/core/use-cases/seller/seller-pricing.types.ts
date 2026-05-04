@@ -141,12 +141,12 @@ export interface GetProviderDefaultsDto {
 }
 
 export interface ProviderSellerDefaults {
-  commission_rate_percent: number | null;
-  min_price_floor_cents: number | null;
-  price_strategy: string | null;
-  price_strategy_value: number | null;
-  default_listing_type: string | null;
-  default_currency: string | null;
+  commission_rate_percent: number;
+  min_price_floor_cents: number;
+  price_strategy: string;
+  price_strategy_value: number;
+  default_listing_type: string;
+  default_currency: string;
   auto_list_new_stock: boolean;
 }
 

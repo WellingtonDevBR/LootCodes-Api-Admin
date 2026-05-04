@@ -5,6 +5,7 @@ import type { IAdminSellerPricingRepository } from '../../core/ports/admin-selle
 import type {
   CalculatePayoutDto,
   CalculatePayoutResult,
+  CompetitorItem,
   GetCompetitorsDto,
   GetCompetitorsResult,
   SuggestPriceDto,
@@ -20,9 +21,14 @@ import type {
   PricingDecisionItem,
   ProviderSellerDefaults,
 } from '../../core/use-cases/seller/seller-pricing.types.js';
+import { parseSellerConfig } from '../../core/use-cases/seller/seller.types.js';
 import { createLogger } from '../../shared/logger.js';
 
 const logger = createLogger('AdminSellerPricingRepository');
+
+function resolveSellerConfigFromAccount(account: Record<string, unknown> | null) {
+  return parseSellerConfig((account?.seller_config as Record<string, unknown>) ?? {});
+}
 
 function toPricingDecisionItem(r: Record<string, unknown>): PricingDecisionItem {
   return {
@@ -37,7 +43,7 @@ function toPricingDecisionItem(r: Record<string, unknown>): PricingDecisionItem 
     estimated_fee_cents: (r.estimated_fee_cents as number) ?? null,
     config_snapshot: (r.config_snapshot as Record<string, unknown>) ?? null,
     decision_context: (r.decision_context as Record<string, unknown>) ?? null,
-    created_at: r.created_at as string,
+    created_at: (r.decided_at as string) ?? (r.created_at as string),
   };
 }
 
@@ -59,12 +65,11 @@ export class SupabaseAdminSellerPricingRepository implements IAdminSellerPricing
       filter: { id: listing.provider_account_id as string },
     });
 
-    const sellerConfig = (account?.seller_config ?? {}) as Record<string, unknown>;
+    const parsedConfig = resolveSellerConfigFromAccount(account);
     const overrides = (listing.pricing_overrides ?? {}) as Record<string, unknown>;
 
     const commissionPercent = (overrides.commission_override_percent as number)
-      ?? (sellerConfig.commission_rate_percent as number)
-      ?? 10;
+      ?? parsedConfig.commission_rate_percent;
 
     const grossPrice = dto.price_cents;
     const feeCents = Math.round(grossPrice * commissionPercent / 100);
@@ -99,49 +104,196 @@ export class SupabaseAdminSellerPricingRepository implements IAdminSellerPricing
   async getCompetitors(dto: GetCompetitorsDto): Promise<GetCompetitorsResult> {
     logger.info('Getting competitors', { listingId: dto.listing_id });
 
-    const result = await this.db.invokeFunction<GetCompetitorsResult>('provider-procurement', {
-      action: 'seller-pricing',
-      sub_action: 'get-competitors',
-      listing_id: dto.listing_id,
+    const snapshots = await this.db.query<Record<string, unknown>>('seller_competitor_snapshots', {
+      eq: [['seller_listing_id', dto.listing_id]],
+      order: { column: 'price_cents', ascending: true },
     });
+
+    const competitors: CompetitorItem[] = snapshots.map(s => ({
+      merchant_name: (s.merchant_name as string) ?? 'Unknown',
+      price_cents: (s.price_cents as number) ?? 0,
+      currency: (s.currency as string) ?? 'EUR',
+      in_stock: (s.in_stock as boolean) ?? false,
+      is_own_offer: (s.is_own_offer as boolean) ?? false,
+    }));
+
+    const ownOffer = competitors.find(c => c.is_own_offer);
+    let ownPosition: number | null = null;
+    if (ownOffer) {
+      ownPosition = competitors.filter(c => c.in_stock).findIndex(c => c.is_own_offer) + 1;
+      if (ownPosition === 0) ownPosition = null;
+    }
 
     return {
       listing_id: dto.listing_id,
-      competitors: result.competitors ?? [],
-      own_position: result.own_position ?? null,
-      own_price_cents: result.own_price_cents ?? null,
+      competitors,
+      own_position: ownPosition,
+      own_price_cents: ownOffer?.price_cents ?? null,
     };
   }
 
   async suggestPrice(dto: SuggestPriceDto): Promise<SuggestPriceResult> {
     logger.info('Suggesting price', { listingId: dto.listing_id });
 
-    const result = await this.db.invokeFunction<SuggestPriceResult>('provider-procurement', {
-      action: 'seller-pricing',
-      sub_action: 'suggest-price',
-      listing_id: dto.listing_id,
-      effective_cost_cents: dto.effective_cost_cents,
-      listing_type: dto.listing_type,
+    const listing = await this.db.queryOne<Record<string, unknown>>('seller_listings', {
+      filter: { id: dto.listing_id },
     });
+    if (!listing) throw new Error(`Seller listing ${dto.listing_id} not found`);
+
+    const account = await this.db.queryOne<Record<string, unknown>>('provider_accounts', {
+      filter: { id: listing.provider_account_id as string },
+    });
+    const parsedConfig = resolveSellerConfigFromAccount(account);
+    const overrides = (listing.pricing_overrides ?? {}) as Record<string, unknown>;
+
+    const strategy = (overrides.price_strategy as string)
+      ?? parsedConfig.price_strategy;
+    const strategyValue = (overrides.price_strategy_value as number)
+      ?? parsedConfig.price_strategy_value;
+    const commissionPercent = (overrides.commission_override_percent as number)
+      ?? parsedConfig.commission_rate_percent;
+
+    const floor = await this.db.queryOne<Record<string, unknown>>('seller_competitor_floors', {
+      eq: [['seller_listing_id', dto.listing_id]],
+    });
+
+    const lowestCompetitor = (floor?.lowest_competitor_cents as number) ?? null;
+    const competitorCount = (floor?.competitor_count as number) ?? 0;
+
+    let suggestedCents: number;
+    let reasoning: string;
+
+    if (lowestCompetitor == null || competitorCount === 0) {
+      const markup = Math.round(dto.effective_cost_cents * 0.3);
+      suggestedCents = dto.effective_cost_cents + markup;
+      reasoning = 'No competitor data available. Using 30% markup over cost basis.';
+    } else if (strategy === 'undercut_percent' && strategyValue != null) {
+      suggestedCents = Math.round(lowestCompetitor * (1 - strategyValue / 100));
+      reasoning = `Undercut lowest competitor (${lowestCompetitor}) by ${strategyValue}%.`;
+    } else if (strategy === 'margin_target' && strategyValue != null) {
+      suggestedCents = Math.round(dto.effective_cost_cents * (1 + strategyValue / 100));
+      reasoning = `Target ${strategyValue}% margin over cost.`;
+    } else if (strategy === 'fixed' && strategyValue != null) {
+      suggestedCents = strategyValue;
+      reasoning = `Fixed price strategy.`;
+    } else {
+      suggestedCents = lowestCompetitor;
+      reasoning = `Match lowest competitor at ${lowestCompetitor}.`;
+    }
+
+    const minFloor = dto.effective_cost_cents + Math.round(dto.effective_cost_cents * 0.05);
+    if (suggestedCents < minFloor) {
+      suggestedCents = minFloor;
+      reasoning += ' Adjusted up to maintain 5% minimum margin.';
+    }
+
+    const feeCents = Math.round(suggestedCents * commissionPercent / 100);
+    const estimatedPayout = suggestedCents - feeCents;
 
     return {
       listing_id: dto.listing_id,
-      suggestion: result.suggestion ?? null,
+      suggestion: {
+        suggested_price_cents: suggestedCents,
+        strategy,
+        strategy_value: strategyValue,
+        estimated_payout_cents: estimatedPayout,
+        reasoning,
+      },
     };
   }
 
   async dryRunPricing(dto: DryRunPricingDto): Promise<DryRunPricingResult> {
     logger.info('Running pricing dry-run', { listingId: dto.listing_id });
 
-    const result = await this.db.invokeFunction<{ dry_run: DryRunPricingResult['dry_run'] }>('provider-procurement', {
-      action: 'seller-pricing',
-      sub_action: 'dry-run',
-      listing_id: dto.listing_id,
+    const listing = await this.db.queryOne<Record<string, unknown>>('seller_listings', {
+      filter: { id: dto.listing_id },
     });
+    if (!listing) throw new Error(`Seller listing ${dto.listing_id} not found`);
+
+    const account = await this.db.queryOne<Record<string, unknown>>('provider_accounts', {
+      filter: { id: listing.provider_account_id as string },
+    });
+    const parsedConfig = resolveSellerConfigFromAccount(account);
+    const overrides = (listing.pricing_overrides ?? {}) as Record<string, unknown>;
+
+    const commissionPercent = (overrides.commission_override_percent as number)
+      ?? parsedConfig.commission_rate_percent;
+    const costBasis = (overrides.cost_basis_override_cents as number)
+      ?? (listing.cost_basis_cents as number)
+      ?? null;
+
+    const currentPriceCents = (listing.price_cents as number) ?? 0;
+    const effectiveFloor = (listing.min_price_cents as number) || costBasis || 0;
+
+    const floor = await this.db.queryOne<Record<string, unknown>>('seller_competitor_floors', {
+      eq: [['seller_listing_id', dto.listing_id]],
+    });
+
+    const lowestCompetitor = (floor?.lowest_competitor_cents as number) ?? null;
+    const competitorCount = (floor?.competitor_count as number) ?? 0;
+    const ourPosition = (floor?.our_current_position as number) ?? null;
+    const priceStableSince = floor?.price_stable_since as string | null;
+
+    let targetPriceCents = currentPriceCents;
+    let wouldChange = false;
+    let isDampened = false;
+    let oscillationDetected = false;
+    let worthIt = true;
+    let skipReason: string | null = null;
+
+    if (lowestCompetitor != null && lowestCompetitor < currentPriceCents) {
+      targetPriceCents = lowestCompetitor;
+
+      if (targetPriceCents < effectiveFloor) {
+        targetPriceCents = effectiveFloor;
+        skipReason = 'Target price below floor';
+        worthIt = false;
+      }
+
+      const diff = Math.abs(targetPriceCents - currentPriceCents);
+      if (diff < 10) {
+        isDampened = true;
+        skipReason = 'Price difference too small to justify change';
+        worthIt = false;
+      } else {
+        wouldChange = true;
+      }
+    }
+
+    if (priceStableSince) {
+      const stableDuration = Date.now() - new Date(priceStableSince).getTime();
+      if (stableDuration < 5 * 60_000 && wouldChange) {
+        oscillationDetected = true;
+      }
+    }
+
+    const profitability = costBasis != null
+      ? {
+        cost_basis_cents: costBasis,
+        net_payout_cents: targetPriceCents - Math.round(targetPriceCents * commissionPercent / 100),
+        profit_cents: targetPriceCents - Math.round(targetPriceCents * commissionPercent / 100) - costBasis,
+      }
+      : null;
 
     return {
       listing_id: dto.listing_id,
-      dry_run: result.dry_run,
+      dry_run: {
+        current_price_cents: currentPriceCents,
+        target_price_cents: targetPriceCents,
+        would_change: wouldChange,
+        effective_floor_cents: effectiveFloor,
+        cost_basis_cents: costBasis,
+        competitor_count: competitorCount,
+        lowest_competitor_cents: lowestCompetitor,
+        our_position: ourPosition,
+        is_dampened: isDampened,
+        oscillation_detected: oscillationDetected,
+        worth_it: worthIt,
+        skip_reason: skipReason,
+        floor_data: floor ? { ...(floor as object) } : null,
+        config: { commission_percent: commissionPercent, strategy: parsedConfig.price_strategy },
+        profitability,
+      },
     };
   }
 
@@ -151,7 +303,7 @@ export class SupabaseAdminSellerPricingRepository implements IAdminSellerPricing
 
     const { data, total } = await this.db.queryPaginated<Record<string, unknown>>('seller_pricing_decisions', {
       eq: [['seller_listing_id', dto.listing_id]],
-      order: { column: 'created_at', ascending: false },
+      order: { column: 'decided_at', ascending: false },
       range: [offset, offset + limit - 1],
     });
 
@@ -165,7 +317,7 @@ export class SupabaseAdminSellerPricingRepository implements IAdminSellerPricing
   async getLatestDecision(dto: GetLatestDecisionDto): Promise<GetLatestDecisionResult> {
     const row = await this.db.queryOne<Record<string, unknown>>('seller_pricing_decisions', {
       eq: [['seller_listing_id', dto.listing_id]],
-      order: { column: 'created_at', ascending: false },
+      order: { column: 'decided_at', ascending: false },
       limit: 1,
     });
 
@@ -182,15 +334,15 @@ export class SupabaseAdminSellerPricingRepository implements IAdminSellerPricing
 
     if (!account) throw new Error(`Provider account ${dto.provider_account_id} not found`);
 
-    const config = (account.seller_config ?? {}) as Record<string, unknown>;
+    const parsedConfig = resolveSellerConfigFromAccount(account);
     const defaults: ProviderSellerDefaults = {
-      commission_rate_percent: (config.commission_rate_percent as number) ?? null,
-      min_price_floor_cents: (config.min_price_floor_cents as number) ?? null,
-      price_strategy: (config.price_strategy as string) ?? null,
-      price_strategy_value: (config.price_strategy_value as number) ?? null,
-      default_listing_type: (config.default_listing_type as string) ?? null,
-      default_currency: (config.default_currency as string) ?? null,
-      auto_list_new_stock: (config.auto_list_new_stock as boolean) ?? false,
+      commission_rate_percent: parsedConfig.commission_rate_percent,
+      min_price_floor_cents: parsedConfig.min_price_floor_cents,
+      price_strategy: parsedConfig.price_strategy,
+      price_strategy_value: parsedConfig.price_strategy_value,
+      default_listing_type: parsedConfig.default_listing_type,
+      default_currency: parsedConfig.default_currency,
+      auto_list_new_stock: parsedConfig.auto_list_new_stock,
     };
 
     return { provider_account_id: dto.provider_account_id, defaults };

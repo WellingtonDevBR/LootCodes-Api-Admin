@@ -8,6 +8,9 @@ import type {
   CreateProviderAccountResult,
   UpdateProviderAccountDto,
   UpdateProviderAccountResult,
+  GetProviderAccountDetailResult,
+  GetWebhookStatusResult,
+  RegisterWebhooksResult,
   CreateVariantOfferDto,
   CreateVariantOfferResult,
   UpdateVariantOfferDto,
@@ -40,9 +43,15 @@ import type {
 export interface IAdminSellerRepository {
   // Provider accounts
   listProviderAccounts(): Promise<ListProviderAccountsResult>;
+  getProviderAccountDetail(id: string): Promise<GetProviderAccountDetailResult>;
   createProviderAccount(dto: CreateProviderAccountDto): Promise<CreateProviderAccountResult>;
   updateProviderAccount(dto: UpdateProviderAccountDto): Promise<UpdateProviderAccountResult>;
   deleteProviderAccount(id: string): Promise<void>;
+
+  // Webhooks — registerWebhooks proxies to Edge Function for marketplace API calls;
+  // getWebhookStatus reads directly from the database.
+  registerWebhooks(accountId: string): Promise<RegisterWebhooksResult>;
+  getWebhookStatus(accountId: string): Promise<GetWebhookStatusResult>;
 
   // Seller listings — read
   listSellerListingsForVariant(dto: ListSellerListingsDto): Promise<ListSellerListingsResult>;
