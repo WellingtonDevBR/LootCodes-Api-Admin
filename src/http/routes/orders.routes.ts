@@ -1,9 +1,12 @@
 import type { FastifyInstance } from 'fastify';
 import { container } from '../../di/container.js';
-import { UC_TOKENS } from '../../di/tokens.js';
+import { TOKENS, UC_TOKENS } from '../../di/tokens.js';
 import { adminGuard, employeeGuard, internalSecretGuard } from '../middleware/auth.guard.js';
 import type { ListOrdersUseCase } from '../../core/use-cases/orders/list-orders.use-case.js';
 import type { GetOrderDetailUseCase } from '../../core/use-cases/orders/get-order-detail.use-case.js';
+import type { IDatabase } from '../../core/ports/database.port.js';
+
+type RateMap = Map<string, number>;
 
 interface OrderItemEmbed {
   product_id?: string;
@@ -116,7 +119,37 @@ function resolveKeyCostCurrency(raw: Record<string, unknown>): string {
   return 'USD';
 }
 
-function toSerializedOrder(raw: Record<string, unknown>) {
+async function loadCurrencyRates(db: IDatabase): Promise<RateMap> {
+  const rows = await db.query<{
+    from_currency: string;
+    to_currency: string;
+    rate: string | number;
+  }>('currency_rates', { select: 'from_currency, to_currency, rate', eq: [['is_active', true]] });
+
+  const map: RateMap = new Map();
+  for (const r of rows) {
+    const rate = typeof r.rate === 'number' ? r.rate : Number(r.rate);
+    if (!Number.isFinite(rate) || rate <= 0) continue;
+    map.set(`${r.from_currency}->${r.to_currency}`, rate);
+  }
+  return map;
+}
+
+function convertCents(
+  amountCents: number,
+  fromCurrency: string,
+  toCurrency: string,
+  rates: RateMap,
+): number {
+  if (fromCurrency === toCurrency) return amountCents;
+  const direct = rates.get(`${fromCurrency}->${toCurrency}`);
+  if (direct !== undefined) return Math.round(amountCents * direct);
+  const inverse = rates.get(`${toCurrency}->${fromCurrency}`);
+  if (inverse !== undefined && inverse > 0) return Math.round(amountCents / inverse);
+  return amountCents;
+}
+
+function toSerializedOrder(raw: Record<string, unknown>, rates: RateMap) {
   const totalAmount = (raw.total_amount as number) ?? 0;
   const currency = (raw.currency as string) ?? 'USD';
   const providerFee = (raw.provider_fee as number) ?? 0;
@@ -127,8 +160,10 @@ function toSerializedOrder(raw: Record<string, unknown>) {
   const isMarketplace = (raw.order_channel as string) === 'marketplace';
   const channel = resolveChannel(raw);
 
-  const totalCost = isMarketplace ? providerFee + keyCostCents : keyCostCents;
-  const profit = isMarketplace ? netAmount - keyCostCents : totalAmount - keyCostCents;
+  const keyCostInOrderCurrency = convertCents(keyCostCents, keyCostCurrency, currency, rates);
+
+  const totalCost = isMarketplace ? providerFee + keyCostInOrderCurrency : keyCostInOrderCurrency;
+  const profit = isMarketplace ? netAmount - keyCostInOrderCurrency : totalAmount - keyCostInOrderCurrency;
 
   const money = { amount: totalAmount, currency };
   return {
@@ -165,6 +200,8 @@ function toSerializedOrder(raw: Record<string, unknown>) {
 }
 
 export async function adminOrderRoutes(app: FastifyInstance) {
+  const getDb = () => container.resolve<IDatabase>(TOKENS.Database);
+
   app.get('/', { preHandler: [employeeGuard] }, async (request, reply) => {
     const query = request.query as {
       limit?: string;
@@ -176,15 +213,18 @@ export async function adminOrderRoutes(app: FastifyInstance) {
     const uc = container.resolve<ListOrdersUseCase>(UC_TOKENS.ListOrders);
     const limit = query.limit ? Number(query.limit) : 25;
     const offset = query.offset ? Number(query.offset) : 0;
-    const result = await uc.execute({
-      page: Math.floor(offset / limit) + 1,
-      limit,
-      status: query.status,
-      search: query.from && query.to ? `${query.from}..${query.to}` : undefined,
-    });
+    const [result, rates] = await Promise.all([
+      uc.execute({
+        page: Math.floor(offset / limit) + 1,
+        limit,
+        status: query.status,
+        search: query.from && query.to ? `${query.from}..${query.to}` : undefined,
+      }),
+      loadCurrencyRates(getDb()),
+    ]);
 
     const shaped = {
-      orders: (result.orders as Record<string, unknown>[]).map(toSerializedOrder),
+      orders: (result.orders as Record<string, unknown>[]).map(o => toSerializedOrder(o, rates)),
       total: result.total,
     };
     return reply.send(shaped);
@@ -193,13 +233,16 @@ export async function adminOrderRoutes(app: FastifyInstance) {
   app.get('/:orderId', { preHandler: [employeeGuard] }, async (request, reply) => {
     const { orderId } = request.params as { orderId: string };
     const uc = container.resolve<GetOrderDetailUseCase>(UC_TOKENS.GetOrderDetail);
-    const raw = await uc.execute(orderId) as Record<string, unknown> | null;
+    const [raw, rates] = await Promise.all([
+      uc.execute(orderId) as Promise<Record<string, unknown> | null>,
+      loadCurrencyRates(getDb()),
+    ]);
     if (!raw) return reply.code(404).send({ error: 'Order not found' });
 
     const keyCostCents = computeKeyCost(raw);
     const keyCostCurrency = resolveKeyCostCurrency(raw);
     const enriched = { ...raw, key_cost_cents: keyCostCents, key_cost_currency: keyCostCurrency };
-    const serialized = toSerializedOrder(enriched);
+    const serialized = toSerializedOrder(enriched, rates);
 
     const deliveredKeys = (raw.delivered_keys as Array<Record<string, unknown>>) ?? [];
     return reply.send({
