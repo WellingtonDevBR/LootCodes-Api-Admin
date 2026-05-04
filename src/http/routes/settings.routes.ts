@@ -29,14 +29,37 @@ import type { DeleteGenreUseCase } from '../../core/use-cases/settings/delete-ge
 
 interface IdParams { id: string }
 
+interface PlatformCurrencyConfig {
+  base_currency: string;
+  display_currency: string;
+  settlement_currency: string;
+}
+
+const DEFAULT_PLATFORM_CURRENCY: PlatformCurrencyConfig = {
+  base_currency: 'USD',
+  display_currency: 'AUD',
+  settlement_currency: 'AUD',
+};
+
+function extractAuthUserId(request: unknown): string {
+  return ((request as Record<string, { id: string }>).authUser).id;
+}
+
+async function resolvePlatformCurrency(
+  settingsUc: GetPlatformSettingsUseCase,
+): Promise<PlatformCurrencyConfig> {
+  const all = await settingsUc.execute() as Record<string, unknown>;
+  const raw = all.platform_currency as PlatformCurrencyConfig | undefined;
+  return raw ?? DEFAULT_PLATFORM_CURRENCY;
+}
+
 export async function adminSettingsRoutes(app: FastifyInstance) {
 
   // ── Platform settings (JSONB key-value) ─────────────────────────
 
   app.get('/platform-settings', { preHandler: [adminGuard] }, async (_request, reply) => {
     const uc = container.resolve<GetPlatformSettingsUseCase>(UC_TOKENS.GetPlatformSettings);
-    const result = await uc.execute();
-    return reply.send(result);
+    return reply.send(await uc.execute());
   });
 
   app.put<{ Params: { key: string }; Body: { value: unknown } }>(
@@ -44,11 +67,10 @@ export async function adminSettingsRoutes(app: FastifyInstance) {
     { preHandler: [adminGuard] },
     async (request, reply) => {
       const uc = container.resolve<UpdateSettingUseCase>(UC_TOKENS.UpdateSetting);
-      const authUser = (request as unknown as Record<string, unknown>).authUser as { id: string };
       const result = await uc.execute({
         key: request.params.key,
         value: request.body.value,
-        admin_id: authUser.id,
+        admin_id: extractAuthUserId(request),
       });
       return reply.send(result);
     },
@@ -57,9 +79,33 @@ export async function adminSettingsRoutes(app: FastifyInstance) {
   app.get('/list', { preHandler: [adminGuard] }, async (request, reply) => {
     const uc = container.resolve<ListSettingsUseCase>(UC_TOKENS.ListSettings);
     const query = request.query as { category?: string };
-    const result = await uc.execute({ category: query.category });
-    return reply.send(result);
+    return reply.send(await uc.execute({ category: query.category }));
   });
+
+  // ── Platform currency (convenience sub-resource) ───────────────
+
+  app.get('/platform-currency', { preHandler: [adminGuard] }, async (_request, reply) => {
+    const uc = container.resolve<GetPlatformSettingsUseCase>(UC_TOKENS.GetPlatformSettings);
+    return reply.send(await resolvePlatformCurrency(uc));
+  });
+
+  app.put<{ Body: Partial<PlatformCurrencyConfig> }>(
+    '/platform-currency',
+    { preHandler: [adminGuard] },
+    async (request, reply) => {
+      const settingsUc = container.resolve<GetPlatformSettingsUseCase>(UC_TOKENS.GetPlatformSettings);
+      const current = await resolvePlatformCurrency(settingsUc);
+      const updated: PlatformCurrencyConfig = { ...current, ...request.body };
+
+      const updateUc = container.resolve<UpdateSettingUseCase>(UC_TOKENS.UpdateSetting);
+      await updateUc.execute({
+        key: 'platform_currency',
+        value: updated,
+        admin_id: extractAuthUserId(request),
+      });
+      return reply.send(updated);
+    },
+  );
 
   // ── Languages ───────────────────────────────────────────────────
 

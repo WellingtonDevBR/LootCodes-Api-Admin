@@ -126,9 +126,14 @@ export const UC_TOKENS = {
   ProcessTicketRefund: Symbol.for('ProcessTicketRefundUseCase'),
 
   // Currency
-  SyncCurrency: Symbol.for('SyncCurrencyUseCase'),
-  UpdateCurrencyManual: Symbol.for('UpdateCurrencyManualUseCase'),
   GetCurrencyRates: Symbol.for('GetCurrencyRatesUseCase'),
+  AddCurrencyRate: Symbol.for('AddCurrencyRateUseCase'),
+  UpdateCurrencyRate: Symbol.for('UpdateCurrencyRateUseCase'),
+  UpdateCurrencyMargin: Symbol.for('UpdateCurrencyMarginUseCase'),
+  ToggleCurrencyActive: Symbol.for('ToggleCurrencyActiveUseCase'),
+  DeleteCurrencyRate: Symbol.for('DeleteCurrencyRateUseCase'),
+  SyncCurrency: Symbol.for('SyncCurrencyUseCase'),
+  GenerateAllPrices: Symbol.for('GenerateAllPricesUseCase'),
 
   // Procurement
   TestProviderQuote: Symbol.for('TestProviderQuoteUseCase'),

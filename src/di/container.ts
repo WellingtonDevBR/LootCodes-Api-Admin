@@ -113,9 +113,14 @@ import { ListPromoCodesUseCase } from '../core/use-cases/promo/list-promo-codes.
 import { GetPromoUsageStatsUseCase } from '../core/use-cases/promo/get-promo-usage-stats.use-case.js';
 
 // Use cases — Currency
-import { SyncCurrencyUseCase } from '../core/use-cases/currency/sync-currency.use-case.js';
-import { UpdateCurrencyManualUseCase } from '../core/use-cases/currency/update-currency-manual.use-case.js';
 import { GetCurrencyRatesUseCase } from '../core/use-cases/currency/get-currency-rates.use-case.js';
+import { AddCurrencyRateUseCase } from '../core/use-cases/currency/add-currency-rate.use-case.js';
+import { UpdateCurrencyRateUseCase } from '../core/use-cases/currency/update-currency-manual.use-case.js';
+import { UpdateCurrencyMarginUseCase } from '../core/use-cases/currency/update-currency-margin.use-case.js';
+import { ToggleCurrencyActiveUseCase } from '../core/use-cases/currency/toggle-currency-active.use-case.js';
+import { DeleteCurrencyRateUseCase } from '../core/use-cases/currency/delete-currency-rate.use-case.js';
+import { SyncCurrencyUseCase } from '../core/use-cases/currency/sync-currency.use-case.js';
+import { GenerateAllPricesUseCase } from '../core/use-cases/currency/generate-all-prices.use-case.js';
 
 // Use cases — Support
 import { ListTicketsUseCase } from '../core/use-cases/support/list-tickets.use-case.js';
@@ -359,9 +364,14 @@ container.register(UC_TOKENS.ListPromoCodes, { useClass: ListPromoCodesUseCase }
 container.register(UC_TOKENS.GetPromoUsageStats, { useClass: GetPromoUsageStatsUseCase });
 
 // Use cases — Currency
-container.register(UC_TOKENS.SyncCurrency, { useClass: SyncCurrencyUseCase });
-container.register(UC_TOKENS.UpdateCurrencyManual, { useClass: UpdateCurrencyManualUseCase });
 container.register(UC_TOKENS.GetCurrencyRates, { useClass: GetCurrencyRatesUseCase });
+container.register(UC_TOKENS.AddCurrencyRate, { useClass: AddCurrencyRateUseCase });
+container.register(UC_TOKENS.UpdateCurrencyRate, { useClass: UpdateCurrencyRateUseCase });
+container.register(UC_TOKENS.UpdateCurrencyMargin, { useClass: UpdateCurrencyMarginUseCase });
+container.register(UC_TOKENS.ToggleCurrencyActive, { useClass: ToggleCurrencyActiveUseCase });
+container.register(UC_TOKENS.DeleteCurrencyRate, { useClass: DeleteCurrencyRateUseCase });
+container.register(UC_TOKENS.SyncCurrency, { useClass: SyncCurrencyUseCase });
+container.register(UC_TOKENS.GenerateAllPrices, { useClass: GenerateAllPricesUseCase });
 
 // Use cases — Support
 container.register(UC_TOKENS.ListTickets, { useClass: ListTicketsUseCase });

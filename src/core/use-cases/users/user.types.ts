@@ -71,6 +71,7 @@ export interface CustomerRow {
   total_spent_cents: number;
   account_status: string;
   last_order_at: string | null;
+  last_seen: string | null;
 }
 
 export interface ListCustomersResult {

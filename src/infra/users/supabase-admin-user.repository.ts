@@ -95,6 +95,8 @@ export class SupabaseAdminUserRepository implements IAdminUserRepository {
     const userIds = sliced.map(p => p.user_id as string).filter(Boolean);
 
     let orderStats: Record<string, { count: number; spent: number; last: string | null }> = {};
+    let sessionLastSeen: Record<string, string> = {};
+
     if (userIds.length > 0) {
       const orders = await this.db.query<Record<string, unknown>>('orders', {
         select: 'user_id, total_amount, created_at',
@@ -108,6 +110,19 @@ export class SupabaseAdminUserRepository implements IAdminUserRepository {
         const createdAt = o.created_at as string;
         if (!stats.last || createdAt > stats.last) stats.last = createdAt;
         orderStats[uid] = stats;
+      }
+
+      const sessions = await this.db.query<Record<string, unknown>>('user_sessions', {
+        select: 'user_id, last_activity',
+        in: [['user_id', userIds]],
+        order: { column: 'last_activity', ascending: false },
+      });
+      for (const s of sessions) {
+        const uid = s.user_id as string;
+        const activity = s.last_activity as string;
+        if (!sessionLastSeen[uid] || activity > sessionLastSeen[uid]) {
+          sessionLastSeen[uid] = activity;
+        }
       }
     }
 
@@ -123,6 +138,7 @@ export class SupabaseAdminUserRepository implements IAdminUserRepository {
         total_spent_cents: stats.spent,
         account_status: (p.account_status as string) ?? 'active',
         last_order_at: stats.last,
+        last_seen: sessionLastSeen[uid] ?? null,
       };
     });
 

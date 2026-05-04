@@ -32,21 +32,21 @@ export class SupabaseAdminSettingsRepository implements IAdminSettingsRepository
 
   // ── Platform settings (JSONB key-value) ───────────────────────────
 
-  async listSettings(dto: ListSettingsDto): Promise<ListSettingsResult> {
-    const result = await this.db.rpc<{ settings: unknown[] }>(
-      'admin_list_settings',
-      { p_category: dto.category ?? null },
+  async listSettings(_dto: ListSettingsDto): Promise<ListSettingsResult> {
+    const rows = await this.db.query<{ key: string; value: unknown }>(
+      'platform_settings',
+      { select: 'key, value' },
     );
-    return { settings: result.settings ?? [] };
+    return { settings: rows };
   }
 
   async updateSetting(dto: UpdateSettingDto): Promise<UpdateSettingResult> {
     logger.info('Updating setting', { key: dto.key, adminId: dto.admin_id });
-    await this.db.rpc('admin_update_setting', {
-      p_key: dto.key,
-      p_value: dto.value,
-      p_admin_id: dto.admin_id,
-    });
+    await this.db.upsert('platform_settings', {
+      key: dto.key,
+      value: dto.value,
+      updated_at: new Date().toISOString(),
+    }, 'key');
     return { success: true };
   }
 
