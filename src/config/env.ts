@@ -17,6 +17,10 @@ const envSchema = z.object({
   SITE_URL: z.string().url().default('https://lootcodes.com'),
   SITE_NAME: z.string().default('LootCodes'),
 
+  ENCRYPTION_MASTER_KEY: z.string().min(1).optional(),
+  ENCRYPTION_MASTER_KEY_ID: z.string().optional(),
+  ENCRYPTION_MASTER_KEY_LEGACY: z.string().optional(),
+
   STRIPE_SECRET_KEY: z.string().optional(),
 
   ALGOLIA_APP_ID: z.string().optional(),
