@@ -4,6 +4,7 @@ import { TOKENS, UC_TOKENS } from './tokens.js';
 
 // Infrastructure adapters
 import { SupabaseDbAdapter } from '../infra/database/supabase-db.adapter.js';
+import { SupabaseStorageAdapter } from '../infra/storage/supabase-storage.adapter.js';
 import { SupabaseAuthAdapter } from '../infra/auth/supabase-auth.adapter.js';
 import { SupabaseAdminRoleAdapter } from '../infra/auth/supabase-admin-role.adapter.js';
 import { SupabaseIpBlocklistAdapter } from '../infra/auth/supabase-ip-blocklist.adapter.js';
@@ -31,6 +32,7 @@ import { SupabaseAdminDigisellerRepository } from '../infra/digiseller/supabase-
 import { SupabaseAdminPricingRepository } from '../infra/pricing/supabase-admin-pricing.repository.js';
 import { SupabaseAdminProductRepository } from '../infra/products/supabase-admin-product.repository.js';
 import { SupabaseAdminSellerRepository } from '../infra/seller/supabase-admin-seller.repository.js';
+import { SupabaseAdminOpportunitiesRepository } from '../infra/opportunities/supabase-admin-opportunities.repository.js';
 
 // Notification dispatcher & channels
 import { NotificationDispatcher } from '../infra/notifications/notification-dispatcher.js';
@@ -137,9 +139,21 @@ import { ListVariantInventorySourcesUseCase } from '../core/use-cases/inventory-
 import { ListLinkableInventorySourcesUseCase } from '../core/use-cases/inventory-sources/list-linkable-inventory-sources.use-case.js';
 
 // Use cases — Price Match
+import { ListPriceMatchClaimsUseCase } from '../core/use-cases/price-match/list-price-match-claims.use-case.js';
+import { GetPriceMatchClaimDetailUseCase } from '../core/use-cases/price-match/get-price-match-claim-detail.use-case.js';
+import { GetPriceMatchClaimConfidenceUseCase } from '../core/use-cases/price-match/get-price-match-claim-confidence.use-case.js';
+import { GetPriceMatchScreenshotUseCase } from '../core/use-cases/price-match/get-price-match-screenshot.use-case.js';
 import { ApprovePriceMatchUseCase } from '../core/use-cases/price-match/approve-price-match.use-case.js';
 import { RejectPriceMatchUseCase } from '../core/use-cases/price-match/reject-price-match.use-case.js';
 import { PreviewPriceMatchDiscountUseCase } from '../core/use-cases/price-match/preview-price-match-discount.use-case.js';
+import { ListPriceMatchRetailersUseCase } from '../core/use-cases/price-match/list-price-match-retailers.use-case.js';
+import { CreatePriceMatchRetailerUseCase } from '../core/use-cases/price-match/create-price-match-retailer.use-case.js';
+import { UpdatePriceMatchRetailerUseCase } from '../core/use-cases/price-match/update-price-match-retailer.use-case.js';
+import { ListPriceMatchBlockedDomainsUseCase } from '../core/use-cases/price-match/list-price-match-blocked-domains.use-case.js';
+import { CreatePriceMatchBlockedDomainUseCase } from '../core/use-cases/price-match/create-price-match-blocked-domain.use-case.js';
+import { UpdatePriceMatchBlockedDomainUseCase } from '../core/use-cases/price-match/update-price-match-blocked-domain.use-case.js';
+import { GetPriceMatchConfigUseCase } from '../core/use-cases/price-match/get-price-match-config.use-case.js';
+import { UpdatePriceMatchConfigUseCase } from '../core/use-cases/price-match/update-price-match-config.use-case.js';
 
 // Use cases — Referrals
 import { ListReferralsUseCase } from '../core/use-cases/referrals/list-referrals.use-case.js';
@@ -249,8 +263,12 @@ import { RefreshProviderPricesUseCase } from '../core/use-cases/procurement/refr
 import { ManualProviderPurchaseUseCase } from '../core/use-cases/procurement/manual-provider-purchase.use-case.js';
 import { RecoverProviderOrderUseCase } from '../core/use-cases/procurement/recover-provider-order.use-case.js';
 
+// Use cases — Opportunities
+import { ListOpportunitiesUseCase } from '../core/use-cases/opportunities/list-opportunities.use-case.js';
+
 // Core infrastructure ports
 container.register(TOKENS.Database, { useClass: SupabaseDbAdapter });
+container.register(TOKENS.Storage, { useClass: SupabaseStorageAdapter });
 container.register(TOKENS.AuthProvider, { useClass: SupabaseAuthAdapter });
 container.register(TOKENS.AdminRoleChecker, { useClass: SupabaseAdminRoleAdapter });
 container.register(TOKENS.IpBlocklist, { useClass: SupabaseIpBlocklistAdapter });
@@ -280,6 +298,7 @@ container.register(TOKENS.AdminDigisellerRepository, { useClass: SupabaseAdminDi
 container.register(TOKENS.AdminPricingRepository, { useClass: SupabaseAdminPricingRepository });
 container.register(TOKENS.AdminProductRepository, { useClass: SupabaseAdminProductRepository });
 container.register(TOKENS.AdminSellerRepository, { useClass: SupabaseAdminSellerRepository });
+container.register(TOKENS.AdminOpportunitiesRepository, { useClass: SupabaseAdminOpportunitiesRepository });
 
 // Notification dispatcher (singleton so all channels are shared)
 container.registerSingleton(TOKENS.NotificationDispatcher, NotificationDispatcher);
@@ -391,6 +410,9 @@ container.register(UC_TOKENS.RefreshProviderPrices, { useClass: RefreshProviderP
 container.register(UC_TOKENS.ManualProviderPurchase, { useClass: ManualProviderPurchaseUseCase });
 container.register(UC_TOKENS.RecoverProviderOrder, { useClass: RecoverProviderOrderUseCase });
 
+// Use cases — Opportunities
+container.register(UC_TOKENS.ListOpportunities, { useClass: ListOpportunitiesUseCase });
+
 // Use cases — Inventory Sources
 container.register(UC_TOKENS.LinkVariantInventorySource, { useClass: LinkVariantInventorySourceUseCase });
 container.register(UC_TOKENS.UnlinkVariantInventorySource, { useClass: UnlinkVariantInventorySourceUseCase });
@@ -398,9 +420,21 @@ container.register(UC_TOKENS.ListVariantInventorySources, { useClass: ListVarian
 container.register(UC_TOKENS.ListLinkableInventorySources, { useClass: ListLinkableInventorySourcesUseCase });
 
 // Use cases — Price Match
+container.register(UC_TOKENS.ListPriceMatchClaims, { useClass: ListPriceMatchClaimsUseCase });
+container.register(UC_TOKENS.GetPriceMatchClaimDetail, { useClass: GetPriceMatchClaimDetailUseCase });
+container.register(UC_TOKENS.GetPriceMatchClaimConfidence, { useClass: GetPriceMatchClaimConfidenceUseCase });
+container.register(UC_TOKENS.GetPriceMatchScreenshot, { useClass: GetPriceMatchScreenshotUseCase });
 container.register(UC_TOKENS.ApprovePriceMatch, { useClass: ApprovePriceMatchUseCase });
 container.register(UC_TOKENS.RejectPriceMatch, { useClass: RejectPriceMatchUseCase });
 container.register(UC_TOKENS.PreviewPriceMatchDiscount, { useClass: PreviewPriceMatchDiscountUseCase });
+container.register(UC_TOKENS.ListPriceMatchRetailers, { useClass: ListPriceMatchRetailersUseCase });
+container.register(UC_TOKENS.CreatePriceMatchRetailer, { useClass: CreatePriceMatchRetailerUseCase });
+container.register(UC_TOKENS.UpdatePriceMatchRetailer, { useClass: UpdatePriceMatchRetailerUseCase });
+container.register(UC_TOKENS.ListPriceMatchBlockedDomains, { useClass: ListPriceMatchBlockedDomainsUseCase });
+container.register(UC_TOKENS.CreatePriceMatchBlockedDomain, { useClass: CreatePriceMatchBlockedDomainUseCase });
+container.register(UC_TOKENS.UpdatePriceMatchBlockedDomain, { useClass: UpdatePriceMatchBlockedDomainUseCase });
+container.register(UC_TOKENS.GetPriceMatchConfig, { useClass: GetPriceMatchConfigUseCase });
+container.register(UC_TOKENS.UpdatePriceMatchConfig, { useClass: UpdatePriceMatchConfigUseCase });
 
 // Use cases — Referrals
 container.register(UC_TOKENS.ListReferrals, { useClass: ListReferralsUseCase });

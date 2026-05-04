@@ -10,6 +10,6 @@ export class PreviewPriceMatchDiscountUseCase {
   ) {}
 
   async execute(dto: PreviewPriceMatchDiscountDto): Promise<PreviewPriceMatchDiscountResult> {
-    return this.repo.previewPriceMatchDiscount(dto);
+    return this.repo.previewDiscount(dto);
   }
 }

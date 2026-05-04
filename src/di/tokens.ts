@@ -1,6 +1,7 @@
 export const TOKENS = {
   // Infrastructure (low-level)
   Database: Symbol.for('IDatabase'),
+  Storage: Symbol.for('IStorage'),
 
   // Auth
   AuthProvider: Symbol.for('IAuthProvider'),
@@ -32,6 +33,7 @@ export const TOKENS = {
   AdminPricingRepository: Symbol.for('IAdminPricingRepository'),
   AdminProductRepository: Symbol.for('IAdminProductRepository'),
   AdminSellerRepository: Symbol.for('IAdminSellerRepository'),
+  AdminOpportunitiesRepository: Symbol.for('IAdminOpportunitiesRepository'),
 
   // Shared infra
   EventBus: Symbol.for('IEventBus'),
@@ -146,9 +148,21 @@ export const UC_TOKENS = {
   RecoverProviderOrder: Symbol.for('RecoverProviderOrderUseCase'),
 
   // Price Match
+  ListPriceMatchClaims: Symbol.for('ListPriceMatchClaimsUseCase'),
+  GetPriceMatchClaimDetail: Symbol.for('GetPriceMatchClaimDetailUseCase'),
+  GetPriceMatchClaimConfidence: Symbol.for('GetPriceMatchClaimConfidenceUseCase'),
+  GetPriceMatchScreenshot: Symbol.for('GetPriceMatchScreenshotUseCase'),
   ApprovePriceMatch: Symbol.for('ApprovePriceMatchUseCase'),
   RejectPriceMatch: Symbol.for('RejectPriceMatchUseCase'),
   PreviewPriceMatchDiscount: Symbol.for('PreviewPriceMatchDiscountUseCase'),
+  ListPriceMatchRetailers: Symbol.for('ListPriceMatchRetailersUseCase'),
+  CreatePriceMatchRetailer: Symbol.for('CreatePriceMatchRetailerUseCase'),
+  UpdatePriceMatchRetailer: Symbol.for('UpdatePriceMatchRetailerUseCase'),
+  ListPriceMatchBlockedDomains: Symbol.for('ListPriceMatchBlockedDomainsUseCase'),
+  CreatePriceMatchBlockedDomain: Symbol.for('CreatePriceMatchBlockedDomainUseCase'),
+  UpdatePriceMatchBlockedDomain: Symbol.for('UpdatePriceMatchBlockedDomainUseCase'),
+  GetPriceMatchConfig: Symbol.for('GetPriceMatchConfigUseCase'),
+  UpdatePriceMatchConfig: Symbol.for('UpdatePriceMatchConfigUseCase'),
 
   // Referrals
   ListReferrals: Symbol.for('ListReferralsUseCase'),
@@ -221,6 +235,9 @@ export const UC_TOKENS = {
 
   // Digiseller
   DigisellerReconcileProfit: Symbol.for('DigisellerReconcileProfitUseCase'),
+
+  // Opportunities
+  ListOpportunities: Symbol.for('ListOpportunitiesUseCase'),
 
   // Variant Price Timeline
   GetVariantPriceTimeline: Symbol.for('GetVariantPriceTimelineUseCase'),
