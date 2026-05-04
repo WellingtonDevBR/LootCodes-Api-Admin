@@ -188,20 +188,24 @@ export class SupabaseAdminOrderRepository implements IAdminOrderRepository {
   async listOrders(dto: ListOrdersDto): Promise<ListOrdersResult> {
     const page = dto.page ?? 1;
     const limit = dto.limit ?? DEFAULT_PAGE_LIMIT;
+    const offset = (page - 1) * limit;
 
-    const result = await this.db.rpc<{ orders: unknown[]; total: number }>(
-      'admin_list_orders',
-      {
-        p_page: page,
-        p_limit: limit,
-        p_status: dto.status ?? null,
-        p_search: dto.search ?? null,
-      },
-    );
+    const queryOpts: import('../../core/ports/database.port.js').QueryOptions = {
+      select: 'id, order_number, status, total_amount, currency, delivery_email, contact_email, created_at, updated_at',
+      order: { column: 'created_at', ascending: false },
+      limit,
+    };
+
+    const eqFilters: Array<[string, unknown]> = [];
+    if (dto.status) eqFilters.push(['status', dto.status]);
+    if (eqFilters.length > 0) queryOpts.eq = eqFilters;
+
+    const allOrders = await this.db.query<Record<string, unknown>>('orders', queryOpts);
+    const sliced = allOrders.slice(offset, offset + limit);
 
     return {
-      orders: result.orders ?? [],
-      total: result.total ?? 0,
+      orders: sliced,
+      total: allOrders.length,
       page,
     };
   }

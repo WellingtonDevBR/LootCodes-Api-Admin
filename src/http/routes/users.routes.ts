@@ -6,6 +6,7 @@ import type { GetComprehensiveUserDataUseCase } from '../../core/use-cases/users
 import type { GetUserSessionsUseCase } from '../../core/use-cases/users/get-user-sessions.use-case.js';
 import type { GetUserTimelineUseCase } from '../../core/use-cases/users/get-user-timeline.use-case.js';
 import type { SearchAccountProfilesUseCase } from '../../core/use-cases/users/search-account-profiles.use-case.js';
+import type { ListCustomersUseCase } from '../../core/use-cases/users/list-customers.use-case.js';
 import type { BlockCustomerUseCase } from '../../core/use-cases/security/block-customer.use-case.js';
 import type { ForceLogoutUseCase } from '../../core/use-cases/security/force-logout.use-case.js';
 
@@ -19,6 +20,17 @@ function getAuthUser(request: FastifyRequest): AuthUser {
 }
 
 export async function adminUserRoutes(app: FastifyInstance) {
+  app.get('/customers', { preHandler: [employeeGuard] }, async (request, reply) => {
+    const query = request.query as { limit?: string; offset?: string; search?: string };
+    const uc = container.resolve<ListCustomersUseCase>(UC_TOKENS.ListCustomers);
+    const result = await uc.execute({
+      limit: query.limit ? Number(query.limit) : 25,
+      offset: query.offset ? Number(query.offset) : 0,
+      search: query.search,
+    });
+    return reply.send(result);
+  });
+
   app.get('/search', { preHandler: [employeeGuard] }, async (request, reply) => {
     const query = request.query as { q?: string; limit?: string; offset?: string };
     const uc = container.resolve<SearchAccountProfilesUseCase>(UC_TOKENS.SearchAccountProfiles);

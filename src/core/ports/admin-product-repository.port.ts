@@ -13,6 +13,8 @@ import type {
   ListFeaturedResult,
   UpdateFeaturedFlagsDto, UpdateFeaturedFlagsResult,
   ListProductVariantsDto, ListProductVariantsResult,
+  GetContentStatusDto, ContentPipelineStatus,
+  RegenerateContentDto, RegenerateContentResult,
 } from '../use-cases/products/product.types.js';
 
 export interface IAdminProductRepository {
@@ -30,4 +32,6 @@ export interface IAdminProductRepository {
   listMetadata(): Promise<ListMetadataResult>;
   listFeatured(): Promise<ListFeaturedResult>;
   updateFeaturedFlags(dto: UpdateFeaturedFlagsDto): Promise<UpdateFeaturedFlagsResult>;
+  getContentPipelineStatus(dto: GetContentStatusDto): Promise<ContentPipelineStatus>;
+  regenerateContent(dto: RegenerateContentDto): Promise<RegenerateContentResult>;
 }

@@ -67,6 +67,7 @@ export const UC_TOKENS = {
   LinkReplacementKey: Symbol.for('LinkReplacementKeyUseCase'),
   ManualSell: Symbol.for('ManualSellUseCase'),
   UpdateVariantPrice: Symbol.for('UpdateVariantPriceUseCase'),
+  GetInventoryCatalog: Symbol.for('GetInventoryCatalogUseCase'),
 
   // Inventory Sources
   LinkVariantInventorySource: Symbol.for('LinkVariantInventorySourceUseCase'),
@@ -83,6 +84,7 @@ export const UC_TOKENS = {
   DeleteUserAccount: Symbol.for('DeleteUserAccountUseCase'),
   BlockCustomer: Symbol.for('BlockCustomerUseCase'),
   ForceLogout: Symbol.for('ForceLogoutUseCase'),
+  ListCustomers: Symbol.for('ListCustomersUseCase'),
 
   // Security & Fraud
   GetSecurityConfigs: Symbol.for('GetSecurityConfigsUseCase'),
@@ -146,6 +148,7 @@ export const UC_TOKENS = {
   GetDashboardMetrics: Symbol.for('GetDashboardMetricsUseCase'),
   GetFinancialSummary: Symbol.for('GetFinancialSummaryUseCase'),
   GetTransactions: Symbol.for('GetTransactionsUseCase'),
+  GetChannelsSnapshot: Symbol.for('GetChannelsSnapshotUseCase'),
 
   // Notifications
   SendBroadcastNotification: Symbol.for('SendBroadcastNotificationUseCase'),
@@ -158,6 +161,28 @@ export const UC_TOKENS = {
   // Settings
   ListSettings: Symbol.for('ListSettingsUseCase'),
   UpdateSetting: Symbol.for('UpdateSettingUseCase'),
+  GetPlatformSettings: Symbol.for('GetPlatformSettingsUseCase'),
+  ListLanguages: Symbol.for('ListLanguagesUseCase'),
+  CreateLanguage: Symbol.for('CreateLanguageUseCase'),
+  UpdateLanguage: Symbol.for('UpdateLanguageUseCase'),
+  ListCountries: Symbol.for('ListCountriesUseCase'),
+  CreateCountry: Symbol.for('CreateCountryUseCase'),
+  UpdateCountry: Symbol.for('UpdateCountryUseCase'),
+  ListRegions: Symbol.for('ListRegionsUseCase'),
+  CreateRegion: Symbol.for('CreateRegionUseCase'),
+  UpdateRegion: Symbol.for('UpdateRegionUseCase'),
+  GetRegionExcludedCountries: Symbol.for('GetRegionExcludedCountriesUseCase'),
+  ListPlatformFamilies: Symbol.for('ListPlatformFamiliesUseCase'),
+  CreatePlatformFamily: Symbol.for('CreatePlatformFamilyUseCase'),
+  UpdatePlatformFamily: Symbol.for('UpdatePlatformFamilyUseCase'),
+  DeletePlatformFamily: Symbol.for('DeletePlatformFamilyUseCase'),
+  ListPlatforms: Symbol.for('ListPlatformsUseCase'),
+  CreatePlatform: Symbol.for('CreatePlatformUseCase'),
+  UpdatePlatform: Symbol.for('UpdatePlatformUseCase'),
+  ListGenres: Symbol.for('ListGenresUseCase'),
+  CreateGenre: Symbol.for('CreateGenreUseCase'),
+  UpdateGenre: Symbol.for('UpdateGenreUseCase'),
+  DeleteGenre: Symbol.for('DeleteGenreUseCase'),
 
   // Approval Workflow
   RequestAction: Symbol.for('RequestActionUseCase'),
@@ -182,6 +207,7 @@ export const UC_TOKENS = {
 
   // Variant Price Timeline
   GetVariantPriceTimeline: Symbol.for('GetVariantPriceTimelineUseCase'),
+  GetPricingSnapshot: Symbol.for('GetPricingSnapshotUseCase'),
 
   // Seller
   ListProviderAccounts: Symbol.for('ListProviderAccountsUseCase'),
@@ -196,4 +222,6 @@ export const UC_TOKENS = {
   DeleteProduct: Symbol.for('DeleteProductUseCase'),
   CreateVariant: Symbol.for('CreateVariantUseCase'),
   UpdateVariant: Symbol.for('UpdateVariantUseCase'),
+  GetContentStatus: Symbol.for('GetContentStatusUseCase'),
+  RegenerateContent: Symbol.for('RegenerateContentUseCase'),
 } as const;

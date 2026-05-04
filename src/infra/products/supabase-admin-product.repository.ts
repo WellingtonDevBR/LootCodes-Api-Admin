@@ -17,6 +17,8 @@ import type {
   ListFeaturedResult,
   UpdateFeaturedFlagsDto, UpdateFeaturedFlagsResult,
   ListProductVariantsDto, ListProductVariantsResult,
+  GetContentStatusDto, ContentPipelineStatus, ContentQueueStatus,
+  RegenerateContentDto, RegenerateContentResult,
 } from '../../core/use-cases/products/product.types.js';
 
 @injectable()
@@ -80,14 +82,14 @@ export class SupabaseAdminProductRepository implements IAdminProductRepository {
     const product = await this.db.insert<Record<string, unknown>>('products', {
       name: dto.name,
       product_type: dto.product_type,
-      category: dto.category ?? null,
+      category: dto.category ?? 'games',
       developer: dto.developer ?? null,
       publisher: dto.publisher ?? null,
       description: dto.description ?? null,
       short_description: dto.short_description ?? null,
       seo_title: dto.seo_title ?? null,
       seo_description: dto.seo_description ?? null,
-      tags: dto.tags ?? null,
+      tags: dto.tags ?? [],
       delivery_type: dto.delivery_type ?? 'instant',
       release_date: dto.release_date ?? null,
       image_url: dto.image_url ?? null,
@@ -96,6 +98,11 @@ export class SupabaseAdminProductRepository implements IAdminProductRepository {
       is_popular: dto.is_popular ?? false,
       is_latest_release: dto.is_latest_release ?? false,
       is_active: true,
+      platform: 'multi',
+      currency: 'USD',
+      price_usd: 0,
+      force_available: false,
+      created_by: dto.admin_id,
       created_at: now,
       updated_at: now,
     });
@@ -133,8 +140,20 @@ export class SupabaseAdminProductRepository implements IAdminProductRepository {
             platform_id: platformId,
           });
         }
+
+        await this.db.rpc('generate_variant_sku', { p_variant_id: variantId });
       }
     }
+
+    try {
+      await this.db.insert('admin_actions', {
+        admin_user_id: dto.admin_id,
+        action_type: 'product_create',
+        target_type: 'product',
+        target_id: productId,
+        details: { name: dto.name, product_type: dto.product_type },
+      });
+    } catch { /* non-blocking audit */ }
 
     return { success: true, product_id: productId };
   }
@@ -317,5 +336,116 @@ export class SupabaseAdminProductRepository implements IAdminProductRepository {
 
     await this.db.update('products', { id: dto.product_id }, data);
     return { success: true };
+  }
+
+  async getContentPipelineStatus(dto: GetContentStatusDto): Promise<ContentPipelineStatus> {
+    const aiRows = await this.db.query<Record<string, unknown>>('ai_content_generation_queue', {
+      eq: [['product_id', dto.product_id]],
+    });
+
+    const getAiStatus = (contentType: string): ContentQueueStatus => {
+      const row = aiRows.find(r => r.content_type === contentType);
+      if (!row) return 'not_queued';
+      return row.status as ContentQueueStatus;
+    };
+
+    let mediaStatus: ContentQueueStatus = 'not_queued';
+    const mediaRows = await this.db.query<Record<string, unknown>>('product_media_queue', {
+      eq: [['product_id', dto.product_id]],
+      limit: 1,
+    });
+    if (mediaRows.length > 0) {
+      mediaStatus = mediaRows[0].status as ContentQueueStatus;
+    }
+
+    return {
+      ai: {
+        description: getAiStatus('product_description'),
+        translations: getAiStatus('product_translations'),
+        platformContent: getAiStatus('platform_content'),
+      },
+      media: mediaStatus,
+    };
+  }
+
+  async regenerateContent(dto: RegenerateContentDto): Promise<RegenerateContentResult> {
+    const queued: string[] = [];
+    const now = new Date().toISOString();
+    const targets = dto.target === 'all'
+      ? ['description', 'translations', 'platform_content', 'media']
+      : [dto.target];
+
+    for (const target of targets) {
+      if (target === 'media') {
+        const existing = await this.db.query<Record<string, unknown>>('product_media_queue', {
+          eq: [['product_id', dto.product_id]],
+          limit: 1,
+        });
+        if (existing.length > 0) {
+          await this.db.update('product_media_queue', { product_id: dto.product_id }, {
+            status: 'pending',
+            attempts: 0,
+            last_error: null,
+            processed_at: null,
+          });
+        } else {
+          await this.db.insert('product_media_queue', {
+            product_id: dto.product_id,
+            status: 'pending',
+            priority: 5,
+            created_at: now,
+          });
+        }
+        queued.push('media');
+        continue;
+      }
+
+      const contentTypeMap: Record<string, string> = {
+        description: 'product_description',
+        translations: 'product_translations',
+        platform_content: 'platform_content',
+      };
+      const contentType = contentTypeMap[target];
+      if (!contentType) continue;
+
+      const existing = await this.db.query<Record<string, unknown>>('ai_content_generation_queue', {
+        eq: [['product_id', dto.product_id], ['content_type', contentType]],
+        limit: 1,
+      });
+
+      if (existing.length > 0) {
+        await this.db.update(
+          'ai_content_generation_queue',
+          { id: existing[0].id as string },
+          { status: 'pending', attempts: 0, last_error: null, processed_at: null, completed_at: null },
+        );
+      } else {
+        const product = await this.db.queryOne<Record<string, unknown>>('products', {
+          eq: [['id', dto.product_id]],
+          select: 'name',
+        });
+        await this.db.insert('ai_content_generation_queue', {
+          product_id: dto.product_id,
+          content_type: contentType,
+          status: 'pending',
+          priority: contentType === 'product_description' ? 10 : 7,
+          product_name: (product?.name as string) ?? null,
+          created_at: now,
+        });
+      }
+      queued.push(target);
+    }
+
+    try {
+      await this.db.insert('admin_actions', {
+        admin_user_id: dto.admin_id,
+        action_type: 'regenerate_content',
+        target_type: 'product',
+        target_id: dto.product_id,
+        details: { target: dto.target, queued },
+      });
+    } catch { /* non-blocking audit */ }
+
+    return { success: true, queued };
   }
 }

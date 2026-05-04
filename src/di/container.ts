@@ -68,6 +68,7 @@ import { MarkKeysFaultyUseCase } from '../core/use-cases/inventory/mark-keys-fau
 import { LinkReplacementKeyUseCase } from '../core/use-cases/inventory/link-replacement-key.use-case.js';
 import { ManualSellUseCase } from '../core/use-cases/inventory/manual-sell.use-case.js';
 import { UpdateVariantPriceUseCase } from '../core/use-cases/inventory/update-variant-price.use-case.js';
+import { GetInventoryCatalogUseCase } from '../core/use-cases/inventory/get-inventory-catalog.use-case.js';
 
 // Use cases — Users
 import { GetComprehensiveUserDataUseCase } from '../core/use-cases/users/get-comprehensive-user-data.use-case.js';
@@ -76,6 +77,7 @@ import { GetUserSessionsUseCase } from '../core/use-cases/users/get-user-session
 import { SearchAccountProfilesUseCase } from '../core/use-cases/users/search-account-profiles.use-case.js';
 import { ToggleUserRoleUseCase } from '../core/use-cases/users/toggle-user-role.use-case.js';
 import { DeleteUserAccountUseCase } from '../core/use-cases/users/delete-user-account.use-case.js';
+import { ListCustomersUseCase } from '../core/use-cases/users/list-customers.use-case.js';
 
 // Use cases — Promo Codes
 import { CreatePromoCodeUseCase } from '../core/use-cases/promo/create-promo-code.use-case.js';
@@ -129,6 +131,7 @@ import { ResolveTrustpilotReviewClaimUseCase } from '../core/use-cases/reviews/r
 import { GetDashboardMetricsUseCase } from '../core/use-cases/analytics/get-dashboard-metrics.use-case.js';
 import { GetFinancialSummaryUseCase } from '../core/use-cases/analytics/get-financial-summary.use-case.js';
 import { GetTransactionsUseCase } from '../core/use-cases/analytics/get-transactions.use-case.js';
+import { GetChannelsSnapshotUseCase } from '../core/use-cases/analytics/get-channels-snapshot.use-case.js';
 
 // Use cases — Notifications
 import { SendBroadcastNotificationUseCase } from '../core/use-cases/notifications/send-broadcast-notification.use-case.js';
@@ -141,6 +144,28 @@ import { GetAlgoliaIndexStatsUseCase } from '../core/use-cases/algolia/get-algol
 // Use cases — Settings
 import { ListSettingsUseCase } from '../core/use-cases/settings/list-settings.use-case.js';
 import { UpdateSettingUseCase } from '../core/use-cases/settings/update-setting.use-case.js';
+import { GetPlatformSettingsUseCase } from '../core/use-cases/settings/get-platform-settings.use-case.js';
+import { ListLanguagesUseCase } from '../core/use-cases/settings/list-languages.use-case.js';
+import { CreateLanguageUseCase } from '../core/use-cases/settings/create-language.use-case.js';
+import { UpdateLanguageUseCase } from '../core/use-cases/settings/update-language.use-case.js';
+import { ListCountriesUseCase } from '../core/use-cases/settings/list-countries.use-case.js';
+import { CreateCountryUseCase } from '../core/use-cases/settings/create-country.use-case.js';
+import { UpdateCountryUseCase } from '../core/use-cases/settings/update-country.use-case.js';
+import { ListRegionsUseCase } from '../core/use-cases/settings/list-regions.use-case.js';
+import { CreateRegionUseCase } from '../core/use-cases/settings/create-region.use-case.js';
+import { UpdateRegionUseCase } from '../core/use-cases/settings/update-region.use-case.js';
+import { GetRegionExcludedCountriesUseCase } from '../core/use-cases/settings/get-region-excluded-countries.use-case.js';
+import { ListPlatformFamiliesUseCase } from '../core/use-cases/settings/list-platform-families.use-case.js';
+import { CreatePlatformFamilyUseCase } from '../core/use-cases/settings/create-platform-family.use-case.js';
+import { UpdatePlatformFamilyUseCase } from '../core/use-cases/settings/update-platform-family.use-case.js';
+import { DeletePlatformFamilyUseCase } from '../core/use-cases/settings/delete-platform-family.use-case.js';
+import { ListPlatformsUseCase } from '../core/use-cases/settings/list-platforms.use-case.js';
+import { CreatePlatformUseCase } from '../core/use-cases/settings/create-platform.use-case.js';
+import { UpdatePlatformUseCase } from '../core/use-cases/settings/update-platform.use-case.js';
+import { ListGenresUseCase } from '../core/use-cases/settings/list-genres.use-case.js';
+import { CreateGenreUseCase } from '../core/use-cases/settings/create-genre.use-case.js';
+import { UpdateGenreUseCase } from '../core/use-cases/settings/update-genre.use-case.js';
+import { DeleteGenreUseCase } from '../core/use-cases/settings/delete-genre.use-case.js';
 
 // Use cases — Approvals
 import { RequestActionUseCase } from '../core/use-cases/approvals/request-action.use-case.js';
@@ -165,6 +190,7 @@ import { DigisellerReconcileProfitUseCase } from '../core/use-cases/digiseller/r
 
 // Use cases — Pricing
 import { GetVariantPriceTimelineUseCase } from '../core/use-cases/pricing/get-variant-price-timeline.use-case.js';
+import { GetPricingSnapshotUseCase } from '../core/use-cases/pricing/get-pricing-snapshot.use-case.js';
 
 // Use cases — Seller
 import { ListProviderAccountsUseCase } from '../core/use-cases/seller/list-provider-accounts.use-case.js';
@@ -179,6 +205,8 @@ import { UpdateProductUseCase } from '../core/use-cases/products/update-product.
 import { DeleteProductUseCase } from '../core/use-cases/products/delete-product.use-case.js';
 import { CreateVariantUseCase } from '../core/use-cases/products/create-variant.use-case.js';
 import { UpdateVariantUseCase } from '../core/use-cases/products/update-variant.use-case.js';
+import { GetContentStatusUseCase } from '../core/use-cases/products/get-content-status.use-case.js';
+import { RegenerateContentUseCase } from '../core/use-cases/products/regenerate-content.use-case.js';
 
 // Use cases — Procurement
 import { TestProviderQuoteUseCase } from '../core/use-cases/procurement/test-provider-quote.use-case.js';
@@ -258,6 +286,7 @@ container.register(UC_TOKENS.MarkKeysFaulty, { useClass: MarkKeysFaultyUseCase }
 container.register(UC_TOKENS.LinkReplacementKey, { useClass: LinkReplacementKeyUseCase });
 container.register(UC_TOKENS.ManualSell, { useClass: ManualSellUseCase });
 container.register(UC_TOKENS.UpdateVariantPrice, { useClass: UpdateVariantPriceUseCase });
+container.register(UC_TOKENS.GetInventoryCatalog, { useClass: GetInventoryCatalogUseCase });
 
 // Use cases — Users
 container.register(UC_TOKENS.GetComprehensiveUserData, { useClass: GetComprehensiveUserDataUseCase });
@@ -266,6 +295,7 @@ container.register(UC_TOKENS.GetUserSessions, { useClass: GetUserSessionsUseCase
 container.register(UC_TOKENS.SearchAccountProfiles, { useClass: SearchAccountProfilesUseCase });
 container.register(UC_TOKENS.ToggleUserRole, { useClass: ToggleUserRoleUseCase });
 container.register(UC_TOKENS.DeleteUserAccount, { useClass: DeleteUserAccountUseCase });
+container.register(UC_TOKENS.ListCustomers, { useClass: ListCustomersUseCase });
 
 // Use cases — Promo Codes
 container.register(UC_TOKENS.CreatePromoCode, { useClass: CreatePromoCodeUseCase });
@@ -329,6 +359,7 @@ container.register(UC_TOKENS.ResolveTrustpilotReviewClaim, { useClass: ResolveTr
 container.register(UC_TOKENS.GetDashboardMetrics, { useClass: GetDashboardMetricsUseCase });
 container.register(UC_TOKENS.GetFinancialSummary, { useClass: GetFinancialSummaryUseCase });
 container.register(UC_TOKENS.GetTransactions, { useClass: GetTransactionsUseCase });
+container.register(UC_TOKENS.GetChannelsSnapshot, { useClass: GetChannelsSnapshotUseCase });
 
 // Use cases — Notifications
 container.register(UC_TOKENS.SendBroadcastNotification, { useClass: SendBroadcastNotificationUseCase });
@@ -341,6 +372,28 @@ container.register(UC_TOKENS.GetAlgoliaIndexStats, { useClass: GetAlgoliaIndexSt
 // Use cases — Settings
 container.register(UC_TOKENS.ListSettings, { useClass: ListSettingsUseCase });
 container.register(UC_TOKENS.UpdateSetting, { useClass: UpdateSettingUseCase });
+container.register(UC_TOKENS.GetPlatformSettings, { useClass: GetPlatformSettingsUseCase });
+container.register(UC_TOKENS.ListLanguages, { useClass: ListLanguagesUseCase });
+container.register(UC_TOKENS.CreateLanguage, { useClass: CreateLanguageUseCase });
+container.register(UC_TOKENS.UpdateLanguage, { useClass: UpdateLanguageUseCase });
+container.register(UC_TOKENS.ListCountries, { useClass: ListCountriesUseCase });
+container.register(UC_TOKENS.CreateCountry, { useClass: CreateCountryUseCase });
+container.register(UC_TOKENS.UpdateCountry, { useClass: UpdateCountryUseCase });
+container.register(UC_TOKENS.ListRegions, { useClass: ListRegionsUseCase });
+container.register(UC_TOKENS.CreateRegion, { useClass: CreateRegionUseCase });
+container.register(UC_TOKENS.UpdateRegion, { useClass: UpdateRegionUseCase });
+container.register(UC_TOKENS.GetRegionExcludedCountries, { useClass: GetRegionExcludedCountriesUseCase });
+container.register(UC_TOKENS.ListPlatformFamilies, { useClass: ListPlatformFamiliesUseCase });
+container.register(UC_TOKENS.CreatePlatformFamily, { useClass: CreatePlatformFamilyUseCase });
+container.register(UC_TOKENS.UpdatePlatformFamily, { useClass: UpdatePlatformFamilyUseCase });
+container.register(UC_TOKENS.DeletePlatformFamily, { useClass: DeletePlatformFamilyUseCase });
+container.register(UC_TOKENS.ListPlatforms, { useClass: ListPlatformsUseCase });
+container.register(UC_TOKENS.CreatePlatform, { useClass: CreatePlatformUseCase });
+container.register(UC_TOKENS.UpdatePlatform, { useClass: UpdatePlatformUseCase });
+container.register(UC_TOKENS.ListGenres, { useClass: ListGenresUseCase });
+container.register(UC_TOKENS.CreateGenre, { useClass: CreateGenreUseCase });
+container.register(UC_TOKENS.UpdateGenre, { useClass: UpdateGenreUseCase });
+container.register(UC_TOKENS.DeleteGenre, { useClass: DeleteGenreUseCase });
 
 // Use cases — Approvals
 container.register(UC_TOKENS.RequestAction, { useClass: RequestActionUseCase });
@@ -365,6 +418,7 @@ container.register(UC_TOKENS.DigisellerReconcileProfit, { useClass: DigisellerRe
 
 // Use cases — Pricing
 container.register(UC_TOKENS.GetVariantPriceTimeline, { useClass: GetVariantPriceTimelineUseCase });
+container.register(UC_TOKENS.GetPricingSnapshot, { useClass: GetPricingSnapshotUseCase });
 
 // Use cases — Seller
 container.register(UC_TOKENS.ListProviderAccounts, { useClass: ListProviderAccountsUseCase });
@@ -379,5 +433,7 @@ container.register(UC_TOKENS.UpdateProduct, { useClass: UpdateProductUseCase });
 container.register(UC_TOKENS.DeleteProduct, { useClass: DeleteProductUseCase });
 container.register(UC_TOKENS.CreateVariant, { useClass: CreateVariantUseCase });
 container.register(UC_TOKENS.UpdateVariant, { useClass: UpdateVariantUseCase });
+container.register(UC_TOKENS.GetContentStatus, { useClass: GetContentStatusUseCase });
+container.register(UC_TOKENS.RegenerateContent, { useClass: RegenerateContentUseCase });
 
 export { container };

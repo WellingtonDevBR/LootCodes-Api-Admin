@@ -9,6 +9,9 @@ import type {
   GetFinancialSummaryResult,
   GetTransactionsDto,
   GetTransactionsResult,
+  GetChannelsSnapshotDto,
+  GetChannelsSnapshotResult,
+  ChannelRow,
 } from '../../core/use-cases/analytics/analytics.types.js';
 import { createLogger } from '../../shared/logger.js';
 
@@ -49,20 +52,57 @@ export class SupabaseAdminAnalyticsRepository implements IAdminAnalyticsReposito
   }
 
   async getTransactions(dto: GetTransactionsDto): Promise<GetTransactionsResult> {
-    const result = await this.db.rpc<{ transactions: unknown[]; total: number }>(
-      'admin_list_transactions',
-      {
-        p_page: dto.page ?? 1,
-        p_limit: dto.limit ?? DEFAULT_PAGE_LIMIT,
-        p_type: dto.type ?? null,
-        p_status: dto.status ?? null,
-        p_search: dto.search ?? null,
-      },
-    );
+    const limit = dto.limit ?? DEFAULT_PAGE_LIMIT;
+    const page = dto.page ?? 1;
+    const offset = (page - 1) * limit;
+
+    const queryOpts: import('../../core/ports/database.port.js').QueryOptions = {
+      select: 'id, type, status, amount, currency, description, created_at, order_id',
+      order: { column: 'created_at', ascending: false },
+      limit: limit + offset,
+    };
+
+    const eqFilters: Array<[string, unknown]> = [];
+    if (dto.type) eqFilters.push(['type', dto.type]);
+    if (dto.status) eqFilters.push(['status', dto.status]);
+    if (eqFilters.length > 0) queryOpts.eq = eqFilters;
+
+    const transactions = await this.db.query<Record<string, unknown>>('transactions', queryOpts);
 
     return {
-      transactions: result.transactions ?? [],
-      total: result.total ?? 0,
+      transactions: transactions.slice(offset, offset + limit),
+      total: transactions.length,
     };
+  }
+
+  async getChannelsSnapshot(dto: GetChannelsSnapshotDto): Promise<GetChannelsSnapshotResult> {
+    logger.info('Fetching channels snapshot', { from: dto.from, to: dto.to });
+
+    const orders = await this.db.query<Record<string, unknown>>('orders', {
+      select: 'id, total_amount, created_at, order_channel',
+      order: { column: 'created_at', ascending: false },
+      limit: 5000,
+    });
+
+    const channelMap = new Map<string, { order_count: number; revenue_cents: number }>();
+    for (const o of orders) {
+      const channel = (o.order_channel as string) ?? 'direct';
+      const created = o.created_at as string;
+      if (dto.from && created < dto.from) continue;
+      if (dto.to && created > dto.to) continue;
+      const entry = channelMap.get(channel) ?? { order_count: 0, revenue_cents: 0 };
+      entry.order_count += 1;
+      entry.revenue_cents += (o.total_amount as number) ?? 0;
+      channelMap.set(channel, entry);
+    }
+
+    const channels: ChannelRow[] = [...channelMap.entries()].map(([channel, stats]) => ({
+      channel,
+      order_count: stats.order_count,
+      revenue_cents: stats.revenue_cents,
+      period: `${dto.from ?? 'all'}_${dto.to ?? 'now'}`,
+    }));
+
+    return { channels };
   }
 }

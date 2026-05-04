@@ -30,7 +30,7 @@ export interface CreateProductDto {
   short_description?: string;
   seo_title?: string;
   seo_description?: string;
-  tags?: string;
+  tags?: string[];
   delivery_type?: string;
   release_date?: string;
   image_url?: string;
@@ -68,7 +68,7 @@ export interface UpdateProductDto {
   short_description?: string;
   seo_title?: string;
   seo_description?: string;
-  tags?: string;
+  tags?: string[];
   delivery_type?: string;
   release_date?: string;
   image_url?: string;
@@ -189,4 +189,30 @@ export interface ListProductVariantsDto {
 
 export interface ListProductVariantsResult {
   variants: unknown[];
+}
+
+export type ContentQueueStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'not_queued';
+
+export interface ContentPipelineStatus {
+  ai: {
+    description: ContentQueueStatus;
+    translations: ContentQueueStatus;
+    platformContent: ContentQueueStatus;
+  };
+  media: ContentQueueStatus;
+}
+
+export interface GetContentStatusDto {
+  product_id: string;
+}
+
+export interface RegenerateContentDto {
+  product_id: string;
+  target: 'description' | 'translations' | 'platform_content' | 'media' | 'all';
+  admin_id: string;
+}
+
+export interface RegenerateContentResult {
+  success: boolean;
+  queued: string[];
 }

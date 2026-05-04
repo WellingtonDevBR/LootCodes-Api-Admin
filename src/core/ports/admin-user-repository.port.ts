@@ -11,6 +11,8 @@ import type {
   ToggleUserRoleResult,
   DeleteUserAccountDto,
   DeleteUserAccountResult,
+  ListCustomersDto,
+  ListCustomersResult,
 } from '../use-cases/users/user.types.js';
 
 export interface IAdminUserRepository {
@@ -20,4 +22,5 @@ export interface IAdminUserRepository {
   searchAccountProfiles(dto: SearchAccountProfilesDto): Promise<SearchAccountProfilesResult>;
   toggleUserRole(dto: ToggleUserRoleDto): Promise<ToggleUserRoleResult>;
   deleteUserAccount(dto: DeleteUserAccountDto): Promise<DeleteUserAccountResult>;
+  listCustomers(dto: ListCustomersDto): Promise<ListCustomersResult>;
 }

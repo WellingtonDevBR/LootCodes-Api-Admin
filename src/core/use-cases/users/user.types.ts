@@ -55,3 +55,25 @@ export interface DeleteUserAccountDto {
 export interface DeleteUserAccountResult {
   success: boolean;
 }
+
+export interface ListCustomersDto {
+  limit?: number;
+  offset?: number;
+  search?: string;
+}
+
+export interface CustomerRow {
+  id: string;
+  email: string;
+  name: string | null;
+  joined: string;
+  orders_count: number;
+  total_spent_cents: number;
+  account_status: string;
+  last_order_at: string | null;
+}
+
+export interface ListCustomersResult {
+  customers: CustomerRow[];
+  total: number;
+}

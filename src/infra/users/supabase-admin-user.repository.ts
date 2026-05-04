@@ -15,6 +15,9 @@ import type {
   ToggleUserRoleResult,
   DeleteUserAccountDto,
   DeleteUserAccountResult,
+  ListCustomersDto,
+  ListCustomersResult,
+  CustomerRow,
 } from '../../core/use-cases/users/user.types.js';
 
 @injectable()
@@ -76,5 +79,56 @@ export class SupabaseAdminUserRepository implements IAdminUserRepository {
       p_reason: dto.reason,
     });
     return { success: true };
+  }
+
+  async listCustomers(dto: ListCustomersDto): Promise<ListCustomersResult> {
+    const limit = dto.limit ?? 25;
+    const offset = dto.offset ?? 0;
+
+    const profiles = await this.db.query<Record<string, unknown>>('profiles', {
+      select: 'id, user_id, full_name, username, created_at, account_status',
+      order: { column: 'created_at', ascending: false },
+      limit: limit + offset,
+    });
+
+    const sliced = profiles.slice(offset, offset + limit);
+    const userIds = sliced.map(p => p.user_id as string).filter(Boolean);
+
+    let orderStats: Record<string, { count: number; spent: number; last: string | null }> = {};
+    if (userIds.length > 0) {
+      const orders = await this.db.query<Record<string, unknown>>('orders', {
+        select: 'user_id, total_amount, created_at',
+        in: [['user_id', userIds]],
+      });
+      for (const o of orders) {
+        const uid = o.user_id as string;
+        const stats = orderStats[uid] ?? { count: 0, spent: 0, last: null };
+        stats.count += 1;
+        stats.spent += (o.total_amount as number) ?? 0;
+        const createdAt = o.created_at as string;
+        if (!stats.last || createdAt > stats.last) stats.last = createdAt;
+        orderStats[uid] = stats;
+      }
+    }
+
+    const customers: CustomerRow[] = sliced.map(p => {
+      const uid = (p.user_id as string) ?? (p.id as string);
+      const stats = orderStats[uid] ?? { count: 0, spent: 0, last: null };
+      return {
+        id: uid,
+        email: (p.username as string) ?? '',
+        name: (p.full_name as string) ?? null,
+        joined: (p.created_at as string) ?? '',
+        orders_count: stats.count,
+        total_spent_cents: stats.spent,
+        account_status: (p.account_status as string) ?? 'active',
+        last_order_at: stats.last,
+      };
+    });
+
+    return {
+      customers,
+      total: profiles.length,
+    };
   }
 }

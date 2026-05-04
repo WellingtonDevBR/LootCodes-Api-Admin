@@ -9,6 +9,8 @@ import type { UpdateProductUseCase } from '../../core/use-cases/products/update-
 import type { DeleteProductUseCase } from '../../core/use-cases/products/delete-product.use-case.js';
 import type { CreateVariantUseCase } from '../../core/use-cases/products/create-variant.use-case.js';
 import type { UpdateVariantUseCase } from '../../core/use-cases/products/update-variant.use-case.js';
+import type { GetContentStatusUseCase } from '../../core/use-cases/products/get-content-status.use-case.js';
+import type { RegenerateContentUseCase } from '../../core/use-cases/products/regenerate-content.use-case.js';
 
 export async function adminProductRoutes(app: FastifyInstance) {
   // GET /api/admin/products — list with search, filters, pagination
@@ -168,6 +170,26 @@ export async function adminProductRoutes(app: FastifyInstance) {
     const result = await repo.toggleVariantActive({
       variant_id: variantId,
       is_active: body.is_active,
+      admin_id: adminId,
+    });
+    return reply.send(result);
+  });
+
+  app.get('/:productId/content-status', { preHandler: [employeeGuard] }, async (request, reply) => {
+    const uc = container.resolve<GetContentStatusUseCase>(UC_TOKENS.GetContentStatus);
+    const { productId } = request.params as { productId: string };
+    const result = await uc.execute({ product_id: productId });
+    return reply.send(result);
+  });
+
+  app.post('/:productId/regenerate-content', { preHandler: [adminGuard] }, async (request, reply) => {
+    const uc = container.resolve<RegenerateContentUseCase>(UC_TOKENS.RegenerateContent);
+    const { productId } = request.params as { productId: string };
+    const body = request.body as { target: string };
+    const adminId = (request as unknown as Record<string, string>).adminUserId ?? 'unknown';
+    const result = await uc.execute({
+      product_id: productId,
+      target: body.target as 'description' | 'translations' | 'platform_content' | 'media' | 'all',
       admin_id: adminId,
     });
     return reply.send(result);

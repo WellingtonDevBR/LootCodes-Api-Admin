@@ -10,7 +10,11 @@ export class SupabaseAuthAdapter implements IAuthProvider {
   private getClient(): SupabaseClient {
     if (this.client) return this.client;
     const env = getEnv();
-    this.client = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY);
+    this.client = createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
+      global: {
+        headers: { apikey: env.SUPABASE_ANON_KEY },
+      },
+    });
     return this.client;
   }
 

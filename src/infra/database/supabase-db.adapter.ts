@@ -17,6 +17,7 @@ export class SupabaseDbAdapter implements IDatabase {
 
   async query<T = unknown>(table: string, options?: QueryOptions): Promise<T[]> {
     let q = this.getClient().from(table).select(options?.select ?? '*');
+    if (options?.filter) for (const [col, val] of Object.entries(options.filter)) q = q.eq(col, val as string);
     if (options?.eq) for (const [col, val] of options.eq) q = q.eq(col, val as string);
     if (options?.neq) for (const [col, val] of options.neq) q = q.neq(col, val as string);
     if (options?.in) for (const [col, vals] of options.in) q = q.in(col, vals as string[]);
@@ -29,6 +30,7 @@ export class SupabaseDbAdapter implements IDatabase {
 
   async queryOne<T = unknown>(table: string, options?: QueryOptions): Promise<T | null> {
     let q = this.getClient().from(table).select(options?.select ?? '*');
+    if (options?.filter) for (const [col, val] of Object.entries(options.filter)) q = q.eq(col, val as string);
     if (options?.eq) for (const [col, val] of options.eq) q = q.eq(col, val as string);
     if (options?.neq) for (const [col, val] of options.neq) q = q.neq(col, val as string);
     if (options?.in) for (const [col, vals] of options.in) q = q.in(col, vals as string[]);
