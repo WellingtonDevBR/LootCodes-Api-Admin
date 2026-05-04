@@ -29,4 +29,5 @@ export interface IDatabase {
   upsert<T = unknown>(table: string, data: Record<string, unknown>, onConflict?: string): Promise<T>;
   delete(table: string, filter: Record<string, unknown>): Promise<number>;
   rpc<T = unknown>(functionName: string, params?: Record<string, unknown>): Promise<T>;
+  invokeFunction<T = unknown>(functionName: string, body: Record<string, unknown>): Promise<T>;
 }

@@ -112,4 +112,10 @@ export class SupabaseDbAdapter implements IDatabase {
     if (error) throw new InternalError(`RPC ${functionName} failed: ${error.message}`);
     return data as T;
   }
+
+  async invokeFunction<T = unknown>(functionName: string, body: Record<string, unknown>): Promise<T> {
+    const { data, error } = await this.getClient().functions.invoke(functionName, { body });
+    if (error) throw new InternalError(`Edge Function ${functionName} failed: ${error.message}`);
+    return data as T;
+  }
 }
