@@ -1,6 +1,6 @@
 import { injectable, inject } from 'tsyringe';
 import { TOKENS } from '../../di/tokens.js';
-import type { IDatabase } from '../../core/ports/database.port.js';
+import type { IDatabase, QueryOptions } from '../../core/ports/database.port.js';
 import type { IAdminProductRepository } from '../../core/ports/admin-product-repository.port.js';
 import type {
   ListProductsDto, ListProductsResult,
@@ -27,6 +27,26 @@ export class SupabaseAdminProductRepository implements IAdminProductRepository {
     @inject(TOKENS.Database) private db: IDatabase,
   ) {}
 
+  private async batchedQuery<T>(
+    table: string,
+    column: string,
+    ids: string[],
+    options: Omit<QueryOptions, 'in'>,
+    batchSize = 200,
+  ): Promise<T[]> {
+    if (ids.length === 0) return [];
+    if (ids.length <= batchSize) {
+      return this.db.query<T>(table, { ...options, in: [[column, ids]] });
+    }
+    const results: T[] = [];
+    for (let i = 0; i < ids.length; i += batchSize) {
+      const chunk = ids.slice(i, i + batchSize);
+      const rows = await this.db.query<T>(table, { ...options, in: [[column, chunk]] });
+      results.push(...rows);
+    }
+    return results;
+  }
+
   async listProducts(dto: ListProductsDto): Promise<ListProductsResult> {
     const limit = dto.limit ?? 50;
     const offset = dto.offset ?? 0;
@@ -49,35 +69,62 @@ export class SupabaseAdminProductRepository implements IAdminProductRepository {
         })
       : allProducts;
 
-    const total = filtered.length;
-    const paginated = filtered.slice(offset, offset + limit);
+    const productIds = filtered.map(p => p.id as string);
 
-    const enriched = await Promise.all(
-      paginated.map(async (p) => {
-        const productId = p.id as string;
-        const variants = await this.db.query<Record<string, unknown>>('product_variants', {
-          eq: [['product_id', productId]],
-          select: 'id',
-        });
-        const variantCount = variants.length;
-
-        let totalStock = 0;
-        if (variantCount > 0) {
-          const variantIds = variants.map((v) => v.id as string);
-          for (const vid of variantIds) {
-            const keys = await this.db.query<Record<string, unknown>>('product_keys', {
-              eq: [['variant_id', vid], ['key_state', 'available']],
-              select: 'id',
-            });
-            totalStock += keys.length;
-          }
-        }
-
-        return { ...p, variant_count: variantCount, total_stock: totalStock };
-      }),
+    const allVariants = await this.batchedQuery<{ id: string; product_id: string }>(
+      'product_variants', 'product_id', productIds, { select: 'id, product_id' },
     );
 
-    return { products: enriched, total };
+    const variantsByProduct = new Map<string, string[]>();
+    for (const v of allVariants) {
+      const arr = variantsByProduct.get(v.product_id) ?? [];
+      arr.push(v.id);
+      variantsByProduct.set(v.product_id, arr);
+    }
+
+    const allVariantIds = allVariants.map(v => v.id);
+
+    const [availableKeys, activeListings] = await Promise.all([
+      this.batchedQuery<{ variant_id: string }>('product_keys', 'variant_id', allVariantIds, { select: 'variant_id', eq: [['key_state', 'available']] }),
+      this.batchedQuery<{ variant_id: string }>('seller_listings', 'variant_id', allVariantIds, { select: 'variant_id', eq: [['status', 'active']] }),
+    ]);
+
+    const stockByVariant = new Map<string, number>();
+    for (const k of availableKeys) {
+      stockByVariant.set(k.variant_id, (stockByVariant.get(k.variant_id) ?? 0) + 1);
+    }
+
+    const listingVariants = new Set(activeListings.map(l => l.variant_id));
+
+    type EnrichedProduct = Record<string, unknown> & {
+      variant_count: number;
+      total_stock: number;
+      linked_channel_count: number;
+    };
+
+    const enriched: EnrichedProduct[] = filtered.map(p => {
+      const pid = p.id as string;
+      const variantIds = variantsByProduct.get(pid) ?? [];
+      let totalStock = 0;
+      let channelCount = 0;
+      for (const vid of variantIds) {
+        totalStock += stockByVariant.get(vid) ?? 0;
+        if (listingVariants.has(vid)) channelCount++;
+      }
+      return { ...p, variant_count: variantIds.length, total_stock: totalStock, linked_channel_count: channelCount };
+    });
+
+    enriched.sort((a, b) => {
+      const aTier = a.total_stock > 0 ? 0 : a.linked_channel_count > 0 ? 1 : 2;
+      const bTier = b.total_stock > 0 ? 0 : b.linked_channel_count > 0 ? 1 : 2;
+      if (aTier !== bTier) return aTier - bTier;
+      return ((a.name as string) ?? '').localeCompare((b.name as string) ?? '');
+    });
+
+    const total = enriched.length;
+    const paginated = enriched.slice(offset, offset + limit);
+
+    return { products: paginated, total };
   }
 
   async getProduct(dto: GetProductDto): Promise<GetProductResult> {
@@ -112,13 +159,25 @@ export class SupabaseAdminProductRepository implements IAdminProductRepository {
           regionName = region ? (region.name as string) : null;
         }
 
-        const keys = await this.db.query<Record<string, unknown>>('product_keys', {
-          eq: [['variant_id', variantId]],
-          select: 'key_state',
-        });
-        const stockAvailable = keys.filter((k) => k.key_state === 'available').length;
-        const stockReserved = keys.filter((k) => k.key_state === 'assigned' || k.key_state === 'seller_reserved').length;
-        const stockSold = keys.filter((k) => k.key_state === 'revealed' || k.key_state === 'used' || k.key_state === 'seller_provisioned').length;
+        const [availableResult, reservedResult, soldResult] = await Promise.all([
+          this.db.queryPaginated('product_keys', {
+            eq: [['variant_id', variantId], ['key_state', 'available']],
+            select: 'id', limit: 1,
+          }),
+          this.db.queryPaginated('product_keys', {
+            eq: [['variant_id', variantId]],
+            in: [['key_state', ['assigned', 'seller_reserved']]],
+            select: 'id', limit: 1,
+          }),
+          this.db.queryPaginated('product_keys', {
+            eq: [['variant_id', variantId]],
+            in: [['key_state', ['revealed', 'used', 'seller_provisioned']]],
+            select: 'id', limit: 1,
+          }),
+        ]);
+        const stockAvailable = availableResult.total;
+        const stockReserved = reservedResult.total;
+        const stockSold = soldResult.total;
 
         return {
           ...v,

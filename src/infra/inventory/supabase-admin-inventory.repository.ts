@@ -1,6 +1,6 @@
 import { injectable, inject } from 'tsyringe';
 import { TOKENS } from '../../di/tokens.js';
-import type { IDatabase } from '../../core/ports/database.port.js';
+import type { IDatabase, QueryOptions } from '../../core/ports/database.port.js';
 import type { IAdminInventoryRepository } from '../../core/ports/admin-inventory-repository.port.js';
 import type {
   EmitInventoryStockChangedDto,
@@ -165,6 +165,26 @@ export class SupabaseAdminInventoryRepository implements IAdminInventoryReposito
     return { success: true };
   }
 
+  private async batchedQuery<T>(
+    table: string,
+    column: string,
+    ids: string[],
+    options: Omit<QueryOptions, 'in'>,
+    batchSize = 200,
+  ): Promise<T[]> {
+    if (ids.length === 0) return [];
+    if (ids.length <= batchSize) {
+      return this.db.query<T>(table, { ...options, in: [[column, ids]] });
+    }
+    const results: T[] = [];
+    for (let i = 0; i < ids.length; i += batchSize) {
+      const chunk = ids.slice(i, i + batchSize);
+      const rows = await this.db.query<T>(table, { ...options, in: [[column, chunk]] });
+      results.push(...rows);
+    }
+    return results;
+  }
+
   async getInventoryCatalog(dto: GetInventoryCatalogDto): Promise<GetInventoryCatalogResult> {
     const limit = dto.limit ?? 5000;
     const offset = dto.offset ?? 0;
@@ -181,37 +201,27 @@ export class SupabaseAdminInventoryRepository implements IAdminInventoryReposito
 
     const [products, regions, availableKeys, soldKeys, variantPlatforms, providerOffers, providerAccounts] = await Promise.all([
       productIds.length
-        ? this.db.query<Record<string, unknown>>('products', { select: 'id, name, category', in: [['id', productIds]] })
+        ? this.batchedQuery<Record<string, unknown>>('products', 'id', productIds, { select: 'id, name, category' })
         : [],
       regionIds.length
-        ? this.db.query<Record<string, unknown>>('product_regions', { select: 'id, name, code', in: [['id', regionIds]] })
+        ? this.batchedQuery<Record<string, unknown>>('product_regions', 'id', regionIds, { select: 'id, name, code' })
         : [],
-      variantIds.length
-        ? this.db.query<Record<string, unknown>>('product_keys', {
-            select: 'variant_id',
-            in: [['variant_id', variantIds]],
-            eq: [['key_state', 'available']],
-          })
-        : [],
-      variantIds.length
-        ? this.db.query<Record<string, unknown>>('product_keys', {
-            select: 'variant_id',
-            in: [['variant_id', variantIds]],
-            eq: [['is_used', true]],
-          })
-        : [],
-      variantIds.length
-        ? this.db.query<Record<string, unknown>>('variant_platforms', {
-            select: 'variant_id, platform_id',
-            in: [['variant_id', variantIds]],
-          })
-        : [],
-      variantIds.length
-        ? this.db.query<Record<string, unknown>>('provider_variant_offers', {
-            select: 'variant_id, provider_account_id',
-            in: [['variant_id', variantIds]],
-          })
-        : [],
+      this.batchedQuery<Record<string, unknown>>(
+        'product_keys', 'variant_id', variantIds,
+        { select: 'variant_id', eq: [['key_state', 'available']] },
+      ),
+      this.batchedQuery<Record<string, unknown>>(
+        'product_keys', 'variant_id', variantIds,
+        { select: 'variant_id', eq: [['is_used', true]] },
+      ),
+      this.batchedQuery<Record<string, unknown>>(
+        'variant_platforms', 'variant_id', variantIds,
+        { select: 'variant_id, platform_id' },
+      ),
+      this.batchedQuery<Record<string, unknown>>(
+        'provider_variant_offers', 'variant_id', variantIds,
+        { select: 'variant_id, provider_account_id' },
+      ),
       this.db.query<Record<string, unknown>>('provider_accounts', {
         select: 'id, display_name, supports_seller',
       }),
