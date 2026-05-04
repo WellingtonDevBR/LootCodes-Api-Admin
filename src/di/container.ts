@@ -32,7 +32,9 @@ import { SupabaseAdminDigisellerRepository } from '../infra/digiseller/supabase-
 import { SupabaseAdminPricingRepository } from '../infra/pricing/supabase-admin-pricing.repository.js';
 import { SupabaseAdminProductRepository } from '../infra/products/supabase-admin-product.repository.js';
 import { SupabaseAdminSellerRepository } from '../infra/seller/supabase-admin-seller.repository.js';
+import { SupabaseAdminSellerPricingRepository } from '../infra/seller/supabase-admin-seller-pricing.repository.js';
 import { SupabaseAdminOpportunitiesRepository } from '../infra/opportunities/supabase-admin-opportunities.repository.js';
+import { SupabaseAdminAlertsRepository } from '../infra/alerts/supabase-admin-alerts.repository.js';
 
 // Notification dispatcher & channels
 import { NotificationDispatcher } from '../infra/notifications/notification-dispatcher.js';
@@ -241,6 +243,24 @@ import { GetVariantOffersUseCase } from '../core/use-cases/seller/get-variant-of
 import { CreateVariantOfferUseCase } from '../core/use-cases/seller/create-variant-offer.use-case.js';
 import { UpdateVariantOfferUseCase } from '../core/use-cases/seller/update-variant-offer.use-case.js';
 import { DeleteVariantOfferUseCase } from '../core/use-cases/seller/delete-variant-offer.use-case.js';
+import { CreateSellerListingUseCase } from '../core/use-cases/seller/create-seller-listing.use-case.js';
+import { UpdateSellerListingPriceUseCase } from '../core/use-cases/seller/update-seller-listing-price.use-case.js';
+import { ToggleSellerListingSyncUseCase } from '../core/use-cases/seller/toggle-seller-listing-sync.use-case.js';
+import { UpdateSellerListingMinPriceUseCase } from '../core/use-cases/seller/update-seller-listing-min-price.use-case.js';
+import { UpdateSellerListingOverridesUseCase } from '../core/use-cases/seller/update-seller-listing-overrides.use-case.js';
+import { SetSellerListingVisibilityUseCase } from '../core/use-cases/seller/set-seller-listing-visibility.use-case.js';
+import { DeactivateSellerListingUseCase } from '../core/use-cases/seller/deactivate-seller-listing.use-case.js';
+import { DeleteSellerListingUseCase } from '../core/use-cases/seller/delete-seller-listing.use-case.js';
+import { RecoverSellerListingHealthUseCase } from '../core/use-cases/seller/recover-seller-listing-health.use-case.js';
+import { SyncSellerStockUseCase } from '../core/use-cases/seller/sync-seller-stock.use-case.js';
+import { FetchRemoteStockUseCase } from '../core/use-cases/seller/fetch-remote-stock.use-case.js';
+import { CalculatePayoutUseCase } from '../core/use-cases/seller/calculate-payout.use-case.js';
+import { GetCompetitorsUseCase } from '../core/use-cases/seller/get-competitors.use-case.js';
+import { SuggestPriceUseCase } from '../core/use-cases/seller/suggest-price.use-case.js';
+import { DryRunPricingUseCase } from '../core/use-cases/seller/dry-run-pricing.use-case.js';
+import { GetDecisionHistoryUseCase } from '../core/use-cases/seller/get-decision-history.use-case.js';
+import { GetLatestDecisionUseCase } from '../core/use-cases/seller/get-latest-decision.use-case.js';
+import { GetProviderDefaultsUseCase } from '../core/use-cases/seller/get-provider-defaults.use-case.js';
 
 // Use cases — Products
 import { ListProductsUseCase } from '../core/use-cases/products/list-products.use-case.js';
@@ -265,6 +285,11 @@ import { RecoverProviderOrderUseCase } from '../core/use-cases/procurement/recov
 
 // Use cases — Opportunities
 import { ListOpportunitiesUseCase } from '../core/use-cases/opportunities/list-opportunities.use-case.js';
+
+// Use cases — Alerts
+import { ListAlertsUseCase } from '../core/use-cases/alerts/list-alerts.use-case.js';
+import { DismissAlertUseCase } from '../core/use-cases/alerts/dismiss-alert.use-case.js';
+import { DismissAllAlertsUseCase } from '../core/use-cases/alerts/dismiss-all-alerts.use-case.js';
 
 // Core infrastructure ports
 container.register(TOKENS.Database, { useClass: SupabaseDbAdapter });
@@ -298,7 +323,9 @@ container.register(TOKENS.AdminDigisellerRepository, { useClass: SupabaseAdminDi
 container.register(TOKENS.AdminPricingRepository, { useClass: SupabaseAdminPricingRepository });
 container.register(TOKENS.AdminProductRepository, { useClass: SupabaseAdminProductRepository });
 container.register(TOKENS.AdminSellerRepository, { useClass: SupabaseAdminSellerRepository });
+container.register(TOKENS.AdminSellerPricingRepository, { useClass: SupabaseAdminSellerPricingRepository });
 container.register(TOKENS.AdminOpportunitiesRepository, { useClass: SupabaseAdminOpportunitiesRepository });
+container.register(TOKENS.AdminAlertsRepository, { useClass: SupabaseAdminAlertsRepository });
 
 // Notification dispatcher (singleton so all channels are shared)
 container.registerSingleton(TOKENS.NotificationDispatcher, NotificationDispatcher);
@@ -413,6 +440,11 @@ container.register(UC_TOKENS.RecoverProviderOrder, { useClass: RecoverProviderOr
 // Use cases — Opportunities
 container.register(UC_TOKENS.ListOpportunities, { useClass: ListOpportunitiesUseCase });
 
+// Use cases — Alerts
+container.register(UC_TOKENS.ListAlerts, { useClass: ListAlertsUseCase });
+container.register(UC_TOKENS.DismissAlert, { useClass: DismissAlertUseCase });
+container.register(UC_TOKENS.DismissAllAlerts, { useClass: DismissAllAlertsUseCase });
+
 // Use cases — Inventory Sources
 container.register(UC_TOKENS.LinkVariantInventorySource, { useClass: LinkVariantInventorySourceUseCase });
 container.register(UC_TOKENS.UnlinkVariantInventorySource, { useClass: UnlinkVariantInventorySourceUseCase });
@@ -522,6 +554,24 @@ container.register(UC_TOKENS.GetVariantOffers, { useClass: GetVariantOffersUseCa
 container.register(UC_TOKENS.CreateVariantOffer, { useClass: CreateVariantOfferUseCase });
 container.register(UC_TOKENS.UpdateVariantOffer, { useClass: UpdateVariantOfferUseCase });
 container.register(UC_TOKENS.DeleteVariantOffer, { useClass: DeleteVariantOfferUseCase });
+container.register(UC_TOKENS.CreateSellerListing, { useClass: CreateSellerListingUseCase });
+container.register(UC_TOKENS.UpdateSellerListingPrice, { useClass: UpdateSellerListingPriceUseCase });
+container.register(UC_TOKENS.ToggleSellerListingSync, { useClass: ToggleSellerListingSyncUseCase });
+container.register(UC_TOKENS.UpdateSellerListingMinPrice, { useClass: UpdateSellerListingMinPriceUseCase });
+container.register(UC_TOKENS.UpdateSellerListingOverrides, { useClass: UpdateSellerListingOverridesUseCase });
+container.register(UC_TOKENS.SetSellerListingVisibility, { useClass: SetSellerListingVisibilityUseCase });
+container.register(UC_TOKENS.DeactivateSellerListing, { useClass: DeactivateSellerListingUseCase });
+container.register(UC_TOKENS.DeleteSellerListing, { useClass: DeleteSellerListingUseCase });
+container.register(UC_TOKENS.RecoverSellerListingHealth, { useClass: RecoverSellerListingHealthUseCase });
+container.register(UC_TOKENS.SyncSellerStock, { useClass: SyncSellerStockUseCase });
+container.register(UC_TOKENS.FetchRemoteStock, { useClass: FetchRemoteStockUseCase });
+container.register(UC_TOKENS.CalculatePayout, { useClass: CalculatePayoutUseCase });
+container.register(UC_TOKENS.GetCompetitors, { useClass: GetCompetitorsUseCase });
+container.register(UC_TOKENS.SuggestPrice, { useClass: SuggestPriceUseCase });
+container.register(UC_TOKENS.DryRunPricing, { useClass: DryRunPricingUseCase });
+container.register(UC_TOKENS.GetDecisionHistory, { useClass: GetDecisionHistoryUseCase });
+container.register(UC_TOKENS.GetLatestDecision, { useClass: GetLatestDecisionUseCase });
+container.register(UC_TOKENS.GetProviderDefaults, { useClass: GetProviderDefaultsUseCase });
 
 // Use cases — Products
 container.register(UC_TOKENS.ListProducts, { useClass: ListProductsUseCase });

@@ -772,4 +772,62 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
   app.patch('/keys/update-affected', { preHandler: [employeeGuard] }, async (_request, reply) => {
     return reply.send({ message: 'Not implemented yet' });
   });
+
+  app.get('/variant-context/:variantId', { preHandler: [employeeGuard] }, async (request, reply) => {
+    const { variantId } = request.params as { variantId: string };
+    const db = container.resolve<import('../../core/ports/database.port.js').IDatabase>(TOKENS.Database);
+
+    const variant = await db.queryOne<Record<string, unknown>>('product_variants', {
+      select: 'id, sku, price_usd, product_id, region_id',
+      filter: { id: variantId },
+    });
+
+    if (!variant) {
+      return reply.status(404).send({ error: 'Variant not found' });
+    }
+
+    const [product, variantPlatforms, availableKeys] = await Promise.all([
+      db.queryOne<Record<string, unknown>>('products', {
+        select: 'name',
+        filter: { id: variant.product_id as string },
+      }),
+      db.query<Record<string, unknown>>('variant_platforms', {
+        select: 'platform_id',
+        filter: { variant_id: variantId },
+      }),
+      db.query<Record<string, unknown>>('product_keys', {
+        select: 'id',
+        filter: { variant_id: variantId },
+        eq: [['key_state', 'available']],
+      }),
+    ]);
+
+    const platformIds = variantPlatforms.map(vp => vp.platform_id as string);
+    const platforms = platformIds.length
+      ? await db.query<Record<string, unknown>>('product_platforms', {
+          select: 'id, name',
+          in: [['id', platformIds]],
+        })
+      : [];
+    const platformNames = platforms.map(p => p.name as string);
+
+    let regionName: string | null = null;
+    if (variant.region_id) {
+      const region = await db.queryOne<Record<string, unknown>>('product_regions', {
+        select: 'name',
+        filter: { id: variant.region_id as string },
+      });
+      regionName = (region?.name as string) ?? null;
+    }
+
+    return reply.send({
+      id: variant.id as string,
+      product_name: (product?.name as string) ?? 'Unknown',
+      platform_names: platformNames,
+      region_name: regionName,
+      sku: variant.sku as string,
+      stock_available: availableKeys.length,
+      price_usd: variant.price_usd as number,
+    });
+  });
 }

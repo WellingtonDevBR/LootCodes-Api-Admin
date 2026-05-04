@@ -11,6 +11,17 @@ import type { GetVariantOffersUseCase } from '../../core/use-cases/seller/get-va
 import type { CreateVariantOfferUseCase } from '../../core/use-cases/seller/create-variant-offer.use-case.js';
 import type { UpdateVariantOfferUseCase } from '../../core/use-cases/seller/update-variant-offer.use-case.js';
 import type { DeleteVariantOfferUseCase } from '../../core/use-cases/seller/delete-variant-offer.use-case.js';
+import type { CreateSellerListingUseCase } from '../../core/use-cases/seller/create-seller-listing.use-case.js';
+import type { UpdateSellerListingPriceUseCase } from '../../core/use-cases/seller/update-seller-listing-price.use-case.js';
+import type { ToggleSellerListingSyncUseCase } from '../../core/use-cases/seller/toggle-seller-listing-sync.use-case.js';
+import type { UpdateSellerListingMinPriceUseCase } from '../../core/use-cases/seller/update-seller-listing-min-price.use-case.js';
+import type { UpdateSellerListingOverridesUseCase } from '../../core/use-cases/seller/update-seller-listing-overrides.use-case.js';
+import type { SetSellerListingVisibilityUseCase } from '../../core/use-cases/seller/set-seller-listing-visibility.use-case.js';
+import type { DeactivateSellerListingUseCase } from '../../core/use-cases/seller/deactivate-seller-listing.use-case.js';
+import type { DeleteSellerListingUseCase } from '../../core/use-cases/seller/delete-seller-listing.use-case.js';
+import type { RecoverSellerListingHealthUseCase } from '../../core/use-cases/seller/recover-seller-listing-health.use-case.js';
+import type { SyncSellerStockUseCase } from '../../core/use-cases/seller/sync-seller-stock.use-case.js';
+import type { FetchRemoteStockUseCase } from '../../core/use-cases/seller/fetch-remote-stock.use-case.js';
 
 export async function adminSellerRoutes(app: FastifyInstance) {
   // --- Provider Accounts ---
@@ -102,5 +113,145 @@ export async function adminSellerRoutes(app: FastifyInstance) {
     const { id } = request.params as { id: string };
     await uc.execute(id);
     return reply.status(204).send();
+  });
+
+  // --- Seller Listing Mutations ---
+
+  app.post('/listings', { preHandler: [adminGuard] }, async (request, reply) => {
+    const uc = container.resolve<CreateSellerListingUseCase>(UC_TOKENS.CreateSellerListing);
+    const body = request.body as Record<string, unknown>;
+    const admin_id = (request as unknown as Record<string, unknown>).adminId as string;
+    const result = await uc.execute({
+      variant_id: body.variant_id as string,
+      provider_account_id: body.provider_account_id as string,
+      price_cents: body.price_cents as number,
+      currency: body.currency as string,
+      listing_type: body.listing_type as 'key_upload' | 'declared_stock',
+      external_product_id: body.external_product_id as string | undefined,
+      auto_sync_stock: body.auto_sync_stock as boolean | undefined,
+      auto_sync_price: body.auto_sync_price as boolean | undefined,
+      admin_id,
+    });
+    return reply.status(201).send(result);
+  });
+
+  app.patch('/listings/:id/price', { preHandler: [adminGuard] }, async (request, reply) => {
+    const uc = container.resolve<UpdateSellerListingPriceUseCase>(UC_TOKENS.UpdateSellerListingPrice);
+    const { id } = request.params as { id: string };
+    const body = request.body as Record<string, unknown>;
+    const admin_id = (request as unknown as Record<string, unknown>).adminId as string;
+    const result = await uc.execute({
+      listing_id: id,
+      price_cents: body.price_cents as number,
+      pricing_mode: body.pricing_mode as 'gross' | 'net' | undefined,
+      admin_id,
+    });
+    return reply.send(result);
+  });
+
+  app.patch('/listings/:id/sync', { preHandler: [adminGuard] }, async (request, reply) => {
+    const uc = container.resolve<ToggleSellerListingSyncUseCase>(UC_TOKENS.ToggleSellerListingSync);
+    const { id } = request.params as { id: string };
+    const body = request.body as Record<string, unknown>;
+    const admin_id = (request as unknown as Record<string, unknown>).adminId as string;
+    const result = await uc.execute({
+      listing_id: id,
+      sync_stock: body.sync_stock as boolean | undefined,
+      sync_price: body.sync_price as boolean | undefined,
+      admin_id,
+    });
+    return reply.send(result);
+  });
+
+  app.patch('/listings/:id/min-price', { preHandler: [adminGuard] }, async (request, reply) => {
+    const uc = container.resolve<UpdateSellerListingMinPriceUseCase>(UC_TOKENS.UpdateSellerListingMinPrice);
+    const { id } = request.params as { id: string };
+    const body = request.body as Record<string, unknown>;
+    const admin_id = (request as unknown as Record<string, unknown>).adminId as string;
+    const result = await uc.execute({
+      listing_id: id,
+      mode: body.mode as 'auto' | 'manual',
+      override_cents: body.override_cents as number | undefined,
+      admin_id,
+    });
+    return reply.send(result);
+  });
+
+  app.patch('/listings/:id/overrides', { preHandler: [adminGuard] }, async (request, reply) => {
+    const uc = container.resolve<UpdateSellerListingOverridesUseCase>(UC_TOKENS.UpdateSellerListingOverrides);
+    const { id } = request.params as { id: string };
+    const body = request.body as Record<string, unknown>;
+    const admin_id = (request as unknown as Record<string, unknown>).adminId as string;
+    const result = await uc.execute({
+      listing_id: id,
+      overrides: body.overrides as Record<string, unknown>,
+      admin_id,
+    });
+    return reply.send(result);
+  });
+
+  app.patch('/listings/:id/visibility', { preHandler: [adminGuard] }, async (request, reply) => {
+    const uc = container.resolve<SetSellerListingVisibilityUseCase>(UC_TOKENS.SetSellerListingVisibility);
+    const { id } = request.params as { id: string };
+    const body = request.body as Record<string, unknown>;
+    const admin_id = (request as unknown as Record<string, unknown>).adminId as string;
+    const result = await uc.execute({
+      listing_id: id,
+      visibility: body.visibility as 'all' | 'retail' | 'business',
+      admin_id,
+    });
+    return reply.send(result);
+  });
+
+  app.post('/listings/:id/deactivate', { preHandler: [adminGuard] }, async (request, reply) => {
+    const uc = container.resolve<DeactivateSellerListingUseCase>(UC_TOKENS.DeactivateSellerListing);
+    const { id } = request.params as { id: string };
+    const admin_id = (request as unknown as Record<string, unknown>).adminId as string;
+    const result = await uc.execute({ listing_id: id, admin_id });
+    return reply.send(result);
+  });
+
+  app.delete('/listings/:id', { preHandler: [adminGuard] }, async (request, reply) => {
+    const uc = container.resolve<DeleteSellerListingUseCase>(UC_TOKENS.DeleteSellerListing);
+    const { id } = request.params as { id: string };
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const admin_id = (request as unknown as Record<string, unknown>).adminId as string;
+    await uc.execute({
+      listing_id: id,
+      deactivate_first: body.deactivate_first as boolean | undefined,
+      admin_id,
+    });
+    return reply.status(204).send();
+  });
+
+  app.post('/listings/:id/recover-health', { preHandler: [adminGuard] }, async (request, reply) => {
+    const uc = container.resolve<RecoverSellerListingHealthUseCase>(UC_TOKENS.RecoverSellerListingHealth);
+    const { id } = request.params as { id: string };
+    const body = request.body as Record<string, unknown>;
+    const admin_id = (request as unknown as Record<string, unknown>).adminId as string;
+    const result = await uc.execute({
+      listing_id: id,
+      reset_metrics: body.reset_metrics as boolean | undefined,
+      clear_pause_message: body.clear_pause_message as boolean | undefined,
+      resume_active: body.resume_active as boolean | undefined,
+      admin_id,
+    });
+    return reply.send(result);
+  });
+
+  app.post('/listings/:id/sync-stock', { preHandler: [adminGuard] }, async (request, reply) => {
+    const uc = container.resolve<SyncSellerStockUseCase>(UC_TOKENS.SyncSellerStock);
+    const { id } = request.params as { id: string };
+    const admin_id = (request as unknown as Record<string, unknown>).adminId as string;
+    const result = await uc.execute({ listing_id: id, admin_id });
+    return reply.send(result);
+  });
+
+  app.post('/listings/:id/remote-stock', { preHandler: [employeeGuard] }, async (request, reply) => {
+    const uc = container.resolve<FetchRemoteStockUseCase>(UC_TOKENS.FetchRemoteStock);
+    const { id } = request.params as { id: string };
+    const admin_id = (request as unknown as Record<string, unknown>).adminId as string;
+    const result = await uc.execute({ listing_id: id, admin_id });
+    return reply.send(result);
   });
 }

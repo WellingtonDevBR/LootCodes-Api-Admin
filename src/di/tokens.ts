@@ -33,7 +33,9 @@ export const TOKENS = {
   AdminPricingRepository: Symbol.for('IAdminPricingRepository'),
   AdminProductRepository: Symbol.for('IAdminProductRepository'),
   AdminSellerRepository: Symbol.for('IAdminSellerRepository'),
+  AdminSellerPricingRepository: Symbol.for('IAdminSellerPricingRepository'),
   AdminOpportunitiesRepository: Symbol.for('IAdminOpportunitiesRepository'),
+  AdminAlertsRepository: Symbol.for('IAdminAlertsRepository'),
 
   // Shared infra
   EventBus: Symbol.for('IEventBus'),
@@ -239,6 +241,11 @@ export const UC_TOKENS = {
   // Opportunities
   ListOpportunities: Symbol.for('ListOpportunitiesUseCase'),
 
+  // Alerts
+  ListAlerts: Symbol.for('ListAlertsUseCase'),
+  DismissAlert: Symbol.for('DismissAlertUseCase'),
+  DismissAllAlerts: Symbol.for('DismissAllAlertsUseCase'),
+
   // Variant Price Timeline
   GetVariantPriceTimeline: Symbol.for('GetVariantPriceTimelineUseCase'),
   GetPricingSnapshot: Symbol.for('GetPricingSnapshotUseCase'),
@@ -253,6 +260,24 @@ export const UC_TOKENS = {
   CreateVariantOffer: Symbol.for('CreateVariantOfferUseCase'),
   UpdateVariantOffer: Symbol.for('UpdateVariantOfferUseCase'),
   DeleteVariantOffer: Symbol.for('DeleteVariantOfferUseCase'),
+  CreateSellerListing: Symbol.for('CreateSellerListingUseCase'),
+  UpdateSellerListingPrice: Symbol.for('UpdateSellerListingPriceUseCase'),
+  ToggleSellerListingSync: Symbol.for('ToggleSellerListingSyncUseCase'),
+  UpdateSellerListingMinPrice: Symbol.for('UpdateSellerListingMinPriceUseCase'),
+  UpdateSellerListingOverrides: Symbol.for('UpdateSellerListingOverridesUseCase'),
+  SetSellerListingVisibility: Symbol.for('SetSellerListingVisibilityUseCase'),
+  DeactivateSellerListing: Symbol.for('DeactivateSellerListingUseCase'),
+  DeleteSellerListing: Symbol.for('DeleteSellerListingUseCase'),
+  RecoverSellerListingHealth: Symbol.for('RecoverSellerListingHealthUseCase'),
+  SyncSellerStock: Symbol.for('SyncSellerStockUseCase'),
+  FetchRemoteStock: Symbol.for('FetchRemoteStockUseCase'),
+  CalculatePayout: Symbol.for('CalculatePayoutUseCase'),
+  GetCompetitors: Symbol.for('GetCompetitorsUseCase'),
+  SuggestPrice: Symbol.for('SuggestPriceUseCase'),
+  DryRunPricing: Symbol.for('DryRunPricingUseCase'),
+  GetDecisionHistory: Symbol.for('GetDecisionHistoryUseCase'),
+  GetLatestDecision: Symbol.for('GetLatestDecisionUseCase'),
+  GetProviderDefaults: Symbol.for('GetProviderDefaultsUseCase'),
 
   // Products
   ListProducts: Symbol.for('ListProductsUseCase'),
