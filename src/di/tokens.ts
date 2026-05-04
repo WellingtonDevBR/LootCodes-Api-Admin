@@ -36,6 +36,7 @@ export const TOKENS = {
   // Shared infra
   EventBus: Symbol.for('IEventBus'),
   EmailSender: Symbol.for('IEmailSender'),
+  NotificationDispatcher: Symbol.for('INotificationDispatcher'),
 } as const;
 
 export const UC_TOKENS = {

@@ -133,7 +133,7 @@ export async function adminSettingsRoutes(app: FastifyInstance) {
     },
   );
 
-  app.put<{ Params: IdParams; Body: { name?: string; code?: string; is_global?: boolean; restrictions?: string; excluded_country_codes?: string[] } }>(
+  app.put<{ Params: IdParams; Body: { name?: string; code?: string; is_global?: boolean; restrictions?: string; excluded_country_ids?: string[] } }>(
     '/regions/:id',
     { preHandler: [adminGuard] },
     async (request, reply) => {

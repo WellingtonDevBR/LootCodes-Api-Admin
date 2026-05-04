@@ -4,15 +4,23 @@ export interface QueryOptions {
   eq?: Array<[string, unknown]>;
   neq?: Array<[string, unknown]>;
   in?: Array<[string, unknown[]]>;
+  ilike?: Array<[string, string]>;
   order?: { column: string; ascending?: boolean };
   limit?: number;
+  range?: [number, number];
   single?: boolean;
   maybeSingle?: boolean;
+}
+
+export interface PaginatedResult<T> {
+  data: T[];
+  total: number;
 }
 
 export interface IDatabase {
   query<T = unknown>(table: string, options?: QueryOptions): Promise<T[]>;
   queryOne<T = unknown>(table: string, options?: QueryOptions): Promise<T | null>;
+  queryPaginated<T = unknown>(table: string, options?: QueryOptions): Promise<PaginatedResult<T>>;
   insert<T = unknown>(table: string, data: Record<string, unknown>): Promise<T>;
   update<T = unknown>(table: string, filter: Record<string, unknown>, data: Record<string, unknown>): Promise<T[]>;
   upsert<T = unknown>(table: string, data: Record<string, unknown>, onConflict?: string): Promise<T>;

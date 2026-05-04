@@ -45,7 +45,6 @@ export interface Platform {
   slug: string;
   icon_url: string | null;
   default_instructions: string | null;
-  display_order: number | null;
   family_id: string | null;
   redemption_url_template: string | null;
   key_display_label: string | null;
@@ -100,7 +99,7 @@ export interface UpdateRegionDto {
   code?: string;
   is_global?: boolean;
   restrictions?: string;
-  excluded_country_codes?: string[];
+  excluded_country_ids?: string[];
 }
 
 // ── DTOs — Platform Families ────────────────────────────────────────

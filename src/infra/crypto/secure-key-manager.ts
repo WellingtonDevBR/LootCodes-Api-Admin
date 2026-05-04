@@ -90,6 +90,34 @@ export class SecureKeyManager {
     return out;
   }
 
+  static async encrypt(
+    plaintext: string,
+  ): Promise<{ encrypted: string; iv: string; salt: string; keyId: string }> {
+    const masterKey = process.env.ENCRYPTION_MASTER_KEY;
+    if (!masterKey) {
+      throw new MasterKeyConfigError('ENCRYPTION_MASTER_KEY is not configured.');
+    }
+
+    const keyId = process.env.ENCRYPTION_MASTER_KEY_ID?.trim() || DEFAULT_PRIMARY_KEY_ID;
+    const enc = new TextEncoder();
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+
+    const derivedKey = await this.deriveKey(masterKey, salt, ENCRYPT_ITERATIONS);
+    const encryptedBuffer = await crypto.subtle.encrypt(
+      { name: 'AES-GCM', iv },
+      derivedKey,
+      enc.encode(plaintext),
+    );
+
+    return {
+      encrypted: Buffer.from(encryptedBuffer).toString('base64'),
+      iv: Buffer.from(iv).toString('base64'),
+      salt: Buffer.from(salt).toString('base64'),
+      keyId,
+    };
+  }
+
   static async decrypt(
     encryptedData: string,
     iv: string,

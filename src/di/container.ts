@@ -32,6 +32,15 @@ import { SupabaseAdminPricingRepository } from '../infra/pricing/supabase-admin-
 import { SupabaseAdminProductRepository } from '../infra/products/supabase-admin-product.repository.js';
 import { SupabaseAdminSellerRepository } from '../infra/seller/supabase-admin-seller.repository.js';
 
+// Notification dispatcher & channels
+import { NotificationDispatcher } from '../infra/notifications/notification-dispatcher.js';
+import { AdminAlertChannel } from '../infra/notifications/channels/admin-alert.channel.js';
+import { BrowserPushChannel } from '../infra/notifications/channels/browser-push.channel.js';
+import { EmailChannel } from '../infra/notifications/channels/email.channel.js';
+import { SlackChannel } from '../infra/notifications/channels/slack.channel.js';
+import type { INotificationDispatcher } from '../core/ports/notification-channel.port.js';
+import type { IDatabase } from '../core/ports/database.port.js';
+
 // Use cases — Orders & Fulfillment
 import { FulfillVerifiedOrderUseCase } from '../core/use-cases/orders/fulfill-verified-order.use-case.js';
 import { ManualFulfillUseCase } from '../core/use-cases/orders/manual-fulfill.use-case.js';
@@ -249,6 +258,17 @@ container.register(TOKENS.AdminDigisellerRepository, { useClass: SupabaseAdminDi
 container.register(TOKENS.AdminPricingRepository, { useClass: SupabaseAdminPricingRepository });
 container.register(TOKENS.AdminProductRepository, { useClass: SupabaseAdminProductRepository });
 container.register(TOKENS.AdminSellerRepository, { useClass: SupabaseAdminSellerRepository });
+
+// Notification dispatcher (singleton so all channels are shared)
+container.registerSingleton(TOKENS.NotificationDispatcher, NotificationDispatcher);
+
+// Wire notification channels into the dispatcher
+const notificationDispatcher = container.resolve<INotificationDispatcher>(TOKENS.NotificationDispatcher);
+const notificationDb = container.resolve<IDatabase>(TOKENS.Database);
+notificationDispatcher.register(new AdminAlertChannel(notificationDb));
+notificationDispatcher.register(new BrowserPushChannel(notificationDb));
+notificationDispatcher.register(new EmailChannel(notificationDb));
+notificationDispatcher.register(new SlackChannel(notificationDb));
 
 // Use cases — Orders & Fulfillment
 container.register(UC_TOKENS.FulfillVerifiedOrder, { useClass: FulfillVerifiedOrderUseCase });

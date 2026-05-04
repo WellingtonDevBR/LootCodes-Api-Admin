@@ -129,12 +129,12 @@ export class SupabaseAdminSettingsRepository implements IAdminSettingsRepository
     const data = buildPartialUpdate(dto as Record<string, unknown>, ['name', 'code', 'is_global', 'restrictions']);
     const rows = await this.db.update<Region>('product_regions', { id }, data);
 
-    if (dto.excluded_country_codes !== undefined) {
+    if (dto.excluded_country_ids !== undefined) {
       await this.db.delete('region_country_exclusions', { region_id: id });
-      for (const code of dto.excluded_country_codes) {
+      for (const countryId of dto.excluded_country_ids) {
         await this.db.insert('region_country_exclusions', {
           region_id: id,
-          country_code: code,
+          country_id: countryId,
         });
       }
     }
@@ -180,7 +180,7 @@ export class SupabaseAdminSettingsRepository implements IAdminSettingsRepository
 
   async listPlatforms(): Promise<Platform[]> {
     return this.db.query<Platform>('product_platforms', {
-      select: 'id, name, code, slug, icon_url, default_instructions, display_order, family_id, redemption_url_template, key_display_label',
+      select: 'id, name, code, slug, icon_url, default_instructions, family_id, redemption_url_template, key_display_label',
       order: { column: 'name', ascending: true },
     });
   }
