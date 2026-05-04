@@ -191,7 +191,7 @@ export class SupabaseAdminOrderRepository implements IAdminOrderRepository {
     const offset = (page - 1) * limit;
 
     const queryOpts: import('../../core/ports/database.port.js').QueryOptions = {
-      select: 'id, order_number, status, total_amount, currency, delivery_email, contact_email, guest_email, created_at, updated_at, order_channel, payment_provider, provider_fee, net_amount, marketplace_pricing, quantity, order_items(product_id, variant_id, quantity, unit_price, total_price, products(name), product_variants(face_value, platforms(name), product_regions(name)))',
+      select: 'id, order_number, status, total_amount, currency, delivery_email, contact_email, guest_email, created_at, updated_at, order_channel, payment_provider, provider_fee, net_amount, marketplace_pricing, quantity, order_items(product_id, variant_id, quantity, unit_price, total_price, products(name), product_variants(face_value, sku, product_regions(name)))',
       order: { column: 'created_at', ascending: false },
       limit,
     };
@@ -247,7 +247,7 @@ export class SupabaseAdminOrderRepository implements IAdminOrderRepository {
 
   async getOrderDetail(orderId: string): Promise<unknown> {
     const order = await this.db.queryOne<Record<string, unknown>>('orders', {
-      select: 'id, order_number, status, total_amount, currency, delivery_email, contact_email, guest_email, customer_full_name, created_at, updated_at, order_channel, payment_provider, payment_method, provider_fee, net_amount, marketplace_pricing, quantity, ip_address, ip_country, billing_country_code, notes, admin_notes, refund_amount, refund_reason, refunded_at, discount_amount_cents, subtotal_cents, order_items(id, product_id, variant_id, quantity, unit_price, total_price, status, products(name), product_variants(face_value, sku, platforms(name), product_regions(name)))',
+      select: 'id, order_number, status, total_amount, currency, delivery_email, contact_email, guest_email, customer_full_name, created_at, updated_at, order_channel, payment_provider, payment_method, provider_fee, net_amount, marketplace_pricing, quantity, ip_address, ip_country, billing_country_code, notes, admin_notes, refund_amount, refund_reason, refunded_at, discount_amount_cents, subtotal_cents, order_items(id, product_id, variant_id, quantity, unit_price, total_price, status, products(name), product_variants(face_value, sku, product_regions(name)))',
       eq: [['id', orderId]],
     });
 
@@ -258,6 +258,30 @@ export class SupabaseAdminOrderRepository implements IAdminOrderRepository {
       eq: [['order_id', orderId]],
     });
 
-    return { ...order, delivered_keys: keys };
+    const orderItems = order.order_items as Array<Record<string, unknown>> | undefined;
+    const variantIds = (orderItems ?? [])
+      .map(i => i.variant_id as string)
+      .filter(Boolean);
+
+    let variantPlatformMap = new Map<string, string[]>();
+    if (variantIds.length > 0) {
+      const vpRows = await this.db.query<{ variant_id: string; product_platforms: { name: string } }>(
+        'variant_platforms',
+        { select: 'variant_id, product_platforms(name)', in: [['variant_id', variantIds]] },
+      );
+      for (const vp of vpRows) {
+        const existing = variantPlatformMap.get(vp.variant_id) ?? [];
+        const name = (vp.product_platforms as unknown as { name: string })?.name;
+        if (name) existing.push(name);
+        variantPlatformMap.set(vp.variant_id, existing);
+      }
+    }
+
+    const enrichedItems = (orderItems ?? []).map(item => ({
+      ...item,
+      platform_names: variantPlatformMap.get(item.variant_id as string) ?? [],
+    }));
+
+    return { ...order, order_items: enrichedItems, delivered_keys: keys };
   }
 }

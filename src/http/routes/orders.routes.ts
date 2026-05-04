@@ -12,10 +12,11 @@ interface OrderItemEmbed {
   unit_price?: number;
   total_price?: number;
   products?: { name?: string } | null;
+  platform_names?: string[];
   product_variants?: {
     face_value?: string;
-    platforms?: { name?: string }[] | null;
-    product_regions?: { name?: string }[] | null;
+    sku?: string;
+    product_regions?: { name?: string } | { name?: string }[] | null;
   } | null;
 }
 
@@ -77,14 +78,16 @@ function serializeOrderItems(raw: Record<string, unknown>): unknown[] {
   if (!orderItems || orderItems.length === 0) return [];
   return orderItems.map(item => {
     const variant = item.product_variants;
-    const platformNames = variant?.platforms?.map(p => p.name).filter(Boolean) ?? [];
-    const regionName = variant?.product_regions?.map(r => r.name).filter(Boolean)[0] ?? null;
+    const regions = variant?.product_regions;
+    const regionName = Array.isArray(regions)
+      ? (regions[0]?.name ?? null)
+      : (regions as { name?: string } | null)?.name ?? null;
     return {
       productId: item.product_id ?? null,
       variantId: item.variant_id ?? null,
       productName: item.products?.name ?? '',
       faceValue: variant?.face_value ?? null,
-      platforms: platformNames,
+      platforms: item.platform_names ?? [],
       region: regionName,
       quantity: item.quantity ?? 1,
       unitPrice: item.unit_price ?? 0,
