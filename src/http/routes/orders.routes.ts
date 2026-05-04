@@ -5,6 +5,18 @@ import { adminGuard, employeeGuard, internalSecretGuard } from '../middleware/au
 import type { ListOrdersUseCase } from '../../core/use-cases/orders/list-orders.use-case.js';
 import type { GetOrderDetailUseCase } from '../../core/use-cases/orders/get-order-detail.use-case.js';
 
+interface OrderItemEmbed {
+  product_id?: string;
+  products?: { name?: string } | null;
+}
+
+function extractProductName(raw: Record<string, unknown>): string {
+  const orderItems = raw.order_items as OrderItemEmbed[] | undefined;
+  if (!orderItems || orderItems.length === 0) return '';
+  const firstItem = orderItems[0];
+  return firstItem?.products?.name ?? '';
+}
+
 function toSerializedOrder(raw: Record<string, unknown>) {
   const totalAmount = (raw.total_amount as number) ?? 0;
   const currency = (raw.currency as string) ?? 'USD';
@@ -16,7 +28,7 @@ function toSerializedOrder(raw: Record<string, unknown>) {
       orderNumber: (raw.order_number as string) ?? null,
       channel: (raw.order_channel as string) ?? 'direct',
       status: raw.status as string,
-      productName: '',
+      productName: extractProductName(raw),
       sku: (raw.order_number as string) ?? '',
       qty: 1,
       revenue: money,

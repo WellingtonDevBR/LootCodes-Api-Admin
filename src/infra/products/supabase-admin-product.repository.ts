@@ -28,39 +28,56 @@ export class SupabaseAdminProductRepository implements IAdminProductRepository {
   ) {}
 
   async listProducts(dto: ListProductsDto): Promise<ListProductsResult> {
-    const limit = dto.limit ?? 20;
+    const limit = dto.limit ?? 50;
     const offset = dto.offset ?? 0;
 
     const eq: Array<[string, unknown]> = [];
     if (dto.product_type) eq.push(['product_type', dto.product_type]);
     if (dto.is_active !== undefined) eq.push(['is_active', dto.is_active]);
 
-    const products = await this.db.query('products', {
+    const allProducts = await this.db.query<Record<string, unknown>>('products', {
       eq,
-      order: { column: 'created_at', ascending: false },
-      limit,
+      order: { column: 'name', ascending: true },
     });
 
     const filtered = dto.search
-      ? products.filter((p) => {
-          const record = p as Record<string, unknown>;
-          const name = typeof record.name === 'string' ? record.name : '';
-          return name.toLowerCase().includes(dto.search!.toLowerCase());
-        })
-      : products;
-
-    const allProducts = await this.db.query('products', { eq });
-    const total = dto.search
       ? allProducts.filter((p) => {
-          const record = p as Record<string, unknown>;
-          const name = typeof record.name === 'string' ? record.name : '';
-          return name.toLowerCase().includes(dto.search!.toLowerCase());
-        }).length
-      : allProducts.length;
+          const name = typeof p.name === 'string' ? p.name : '';
+          const slug = typeof p.slug === 'string' ? p.slug : '';
+          const q = dto.search!.toLowerCase();
+          return name.toLowerCase().includes(q) || slug.toLowerCase().includes(q);
+        })
+      : allProducts;
 
-    const paginated = dto.search ? filtered.slice(offset, offset + limit) : products;
+    const total = filtered.length;
+    const paginated = filtered.slice(offset, offset + limit);
 
-    return { products: paginated, total };
+    const enriched = await Promise.all(
+      paginated.map(async (p) => {
+        const productId = p.id as string;
+        const variants = await this.db.query<Record<string, unknown>>('product_variants', {
+          eq: [['product_id', productId]],
+          select: 'id',
+        });
+        const variantCount = variants.length;
+
+        let totalStock = 0;
+        if (variantCount > 0) {
+          const variantIds = variants.map((v) => v.id as string);
+          for (const vid of variantIds) {
+            const keys = await this.db.query<Record<string, unknown>>('product_keys', {
+              eq: [['variant_id', vid], ['key_state', 'available']],
+              select: 'id',
+            });
+            totalStock += keys.length;
+          }
+        }
+
+        return { ...p, variant_count: variantCount, total_stock: totalStock };
+      }),
+    );
+
+    return { products: enriched, total };
   }
 
   async getProduct(dto: GetProductDto): Promise<GetProductResult> {
@@ -68,10 +85,52 @@ export class SupabaseAdminProductRepository implements IAdminProductRepository {
       eq: [['id', dto.product_id]],
     });
 
-    const variants = await this.db.query('product_variants', {
+    const rawVariants = await this.db.query<Record<string, unknown>>('product_variants', {
       eq: [['product_id', dto.product_id]],
       order: { column: 'created_at', ascending: true },
     });
+
+    const allPlatforms = await this.db.query<Record<string, unknown>>('product_platforms', {});
+    const allRegions = await this.db.query<Record<string, unknown>>('product_regions', {});
+
+    const variants = await Promise.all(
+      rawVariants.map(async (v) => {
+        const variantId = v.id as string;
+
+        const vp = await this.db.query<Record<string, unknown>>('variant_platforms', {
+          eq: [['variant_id', variantId]],
+        });
+        const platformIds = vp.map((row) => row.platform_id as string);
+        const platformNames = platformIds
+          .map((pid) => allPlatforms.find((p) => p.id === pid))
+          .filter(Boolean)
+          .map((p) => (p as Record<string, unknown>).name as string);
+
+        let regionName: string | null = null;
+        if (v.region_id) {
+          const region = allRegions.find((r) => r.id === v.region_id);
+          regionName = region ? (region.name as string) : null;
+        }
+
+        const keys = await this.db.query<Record<string, unknown>>('product_keys', {
+          eq: [['variant_id', variantId]],
+          select: 'key_state',
+        });
+        const stockAvailable = keys.filter((k) => k.key_state === 'available').length;
+        const stockReserved = keys.filter((k) => k.key_state === 'assigned' || k.key_state === 'seller_reserved').length;
+        const stockSold = keys.filter((k) => k.key_state === 'revealed' || k.key_state === 'used' || k.key_state === 'seller_provisioned').length;
+
+        return {
+          ...v,
+          platform_ids: platformIds,
+          platform_names: platformNames,
+          region_name: regionName,
+          stock_available: stockAvailable,
+          stock_reserved: stockReserved,
+          stock_sold: stockSold,
+        };
+      }),
+    );
 
     return { product, variants };
   }
@@ -143,6 +202,17 @@ export class SupabaseAdminProductRepository implements IAdminProductRepository {
 
         await this.db.rpc('generate_variant_sku', { p_variant_id: variantId });
       }
+    }
+
+    if (!dto.image_url) {
+      try {
+        await this.db.insert('product_media_queue', {
+          product_id: productId,
+          status: 'pending',
+          priority: 5,
+          created_at: now,
+        });
+      } catch { /* non-blocking — media queue may not exist yet */ }
     }
 
     try {

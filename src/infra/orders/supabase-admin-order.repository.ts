@@ -191,7 +191,7 @@ export class SupabaseAdminOrderRepository implements IAdminOrderRepository {
     const offset = (page - 1) * limit;
 
     const queryOpts: import('../../core/ports/database.port.js').QueryOptions = {
-      select: 'id, order_number, status, total_amount, currency, delivery_email, contact_email, created_at, updated_at',
+      select: 'id, order_number, status, total_amount, currency, delivery_email, contact_email, created_at, updated_at, order_channel, order_items(product_id, products(name))',
       order: { column: 'created_at', ascending: false },
       limit,
     };

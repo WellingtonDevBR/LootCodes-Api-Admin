@@ -147,20 +147,56 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
     return reply.send({ keys: mapped, total, page, pageSize });
   });
 
-  // GET /api/admin/inventory/variants/:variantId/keys — list keys for variant
   app.get('/variants/:variantId/keys', { preHandler: [employeeGuard] }, async (request, reply) => {
-    const repo = container.resolve<{ listVariantKeys: (dto: unknown) => Promise<unknown> }>(
-      Symbol.for('IAdminProductRepository'),
-    );
     const { variantId } = request.params as { variantId: string };
-    const query = request.query as Record<string, string | undefined>;
-    const result = await repo.listVariantKeys({
-      variant_id: variantId,
-      status: query.status,
-      limit: query.limit ? parseInt(query.limit, 10) : undefined,
-      offset: query.offset ? parseInt(query.offset, 10) : undefined,
+    const query = request.query as { status?: string; limit?: string; offset?: string };
+
+    if (!UUID_RE.test(variantId)) {
+      return reply.code(400).send({ error: 'Invalid variant ID' });
+    }
+
+    const db = container.resolve<import('../../core/ports/database.port.js').IDatabase>(
+      TOKENS.Database,
+    );
+
+    const limit = Math.min(500, Math.max(1, Number(query.limit) || 50));
+    const offset = Math.max(0, Number(query.offset) || 0);
+
+    const eqFilters: Array<[string, unknown]> = [['variant_id', variantId]];
+    if (query.status && VALID_KEY_STATES.has(query.status)) {
+      eqFilters.push(['key_state', query.status]);
+    }
+
+    const { data: keys, total } = await db.queryPaginated<Record<string, unknown>>('product_keys', {
+      select: 'id, key_state, is_used, created_at, used_at, order_id, sales_blocked_at, marked_faulty_at',
+      eq: eqFilters,
+      order: { column: 'created_at', ascending: false },
+      range: [offset, offset + limit - 1],
     });
-    return reply.send(result);
+
+    let available = 0;
+    let reserved = 0;
+    let sold = 0;
+
+    const mapped = keys.map(k => {
+      const status = mapKeyState(k.key_state as string | null, k.is_used as boolean);
+      if (status === 'available') available++;
+      else if (status === 'reserved') reserved++;
+      else sold++;
+
+      return {
+        id: k.id as string,
+        masked_value: '••••••••',
+        status,
+        created_at: (k.created_at as string) ?? '',
+        sold_at: (k.used_at as string) || null,
+        order_id: (k.order_id as string) || null,
+        is_sales_blocked: !!(k.sales_blocked_at),
+        is_faulty: !!(k.marked_faulty_at),
+      };
+    });
+
+    return reply.send({ keys: mapped, total, available, reserved, sold });
   });
 
   app.post('/keys/upload', {
