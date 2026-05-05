@@ -227,7 +227,7 @@ export class SupabaseAdminInventoryRepository implements IAdminInventoryReposito
       }),
       this.batchedQuery<Record<string, unknown>>(
         'seller_listings', 'variant_id', variantIds,
-        { select: 'variant_id, declared_stock', eq: [['status', 'active']] },
+        { select: 'variant_id, declared_stock, provider_account_id', eq: [['status', 'active']] },
       ),
     ]);
 
@@ -276,16 +276,23 @@ export class SupabaseAdminInventoryRepository implements IAdminInventoryReposito
       const provider = providerMap.get(offer.provider_account_id as string);
       if (!provider) continue;
       const provId = provider.id as string;
-      // Providers that support_seller are purchasers (they buy from us)
       if (provider.supports_seller) {
         const arr = purchaserIdsMap.get(vid) ?? [];
-        arr.push(provId);
+        if (!arr.includes(provId)) arr.push(provId);
         purchaserIdsMap.set(vid, arr);
       }
-      // All providers with offers are suppliers (we can buy from them)
       const arr = supplierIdsMap.get(vid) ?? [];
-      arr.push(provId);
+      if (!arr.includes(provId)) arr.push(provId);
       supplierIdsMap.set(vid, arr);
+    }
+    // Seller listings also represent purchasers (marketplaces buying from us)
+    for (const sl of sellerListings) {
+      const vid = sl.variant_id as string;
+      const provId = sl.provider_account_id as string;
+      if (!provId) continue;
+      const arr = purchaserIdsMap.get(vid) ?? [];
+      if (!arr.includes(provId)) arr.push(provId);
+      purchaserIdsMap.set(vid, arr);
     }
 
     const rows: InventoryCatalogRow[] = sliced.map(v => {
