@@ -106,6 +106,25 @@ export interface KinguinSubscription {
   blockedEndpoints: string[];
 }
 
+// ─── Buyer Product Search ──────────────────────────────────────────────
+
+export interface KinguinBuyerProduct {
+  kinguinId: number;
+  productId: string;
+  name: string;
+  platform: string;
+  price: number;
+  qty: number;
+  isPreorder: boolean;
+  regionId: number | null;
+  regionalLimitations?: string;
+}
+
+export interface KinguinBuyerSearchResponse {
+  results: KinguinBuyerProduct[];
+  item_count: number;
+}
+
 // ─── Declared Stock Cap ────────────────────────────────────────────────
 
 /** Kinguin allows at most 20 declared units per offer update. */

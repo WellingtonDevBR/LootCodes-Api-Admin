@@ -22,6 +22,8 @@ import type {
   ISellerCompetitionAdapter,
   ISellerPricingAdapter,
   ISellerBatchPriceAdapter,
+  IProductSearchAdapter,
+  ProductSearchResult,
   CreateListingParams,
   CreateListingResult,
   UpdateListingParams,
@@ -70,7 +72,8 @@ export class G2AAdapter
     ISellerStockSyncAdapter,
     ISellerCompetitionAdapter,
     ISellerPricingAdapter,
-    ISellerBatchPriceAdapter
+    ISellerBatchPriceAdapter,
+    IProductSearchAdapter
 {
   readonly pricingModel = 'gross' as const;
 
@@ -411,6 +414,30 @@ export class G2AAdapter
       failed,
       errors: errors.length > 0 ? errors : undefined,
     };
+  }
+
+  // ─── IProductSearchAdapter ──────────────────────────────────────────
+
+  async searchProducts(query: string, limit = 20): Promise<ProductSearchResult[]> {
+    try {
+      const res = await this.httpRequest<G2AProductListResponse>({
+        method: 'GET',
+        path: `/v1/products?search=${encodeURIComponent(query)}&limit=${limit}`,
+      });
+
+      return (res.docs ?? []).map((p) => ({
+        externalProductId: String(p.id),
+        productName: p.name,
+        platform: p.platform ?? null,
+        region: null,
+        priceCents: floatToCents(p.minPrice),
+        currency: 'EUR',
+        available: p.availableToBuy && p.qty > 0,
+      }));
+    } catch (err) {
+      logger.warn('G2A product search failed', err as Error);
+      return [];
+    }
   }
 
   // ─── Private Helpers ────────────────────────────────────────────────

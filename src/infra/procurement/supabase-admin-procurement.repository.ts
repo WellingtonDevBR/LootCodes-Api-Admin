@@ -1,6 +1,7 @@
 import { injectable, inject } from 'tsyringe';
 import { TOKENS } from '../../di/tokens.js';
 import type { IDatabase } from '../../core/ports/database.port.js';
+import type { IMarketplaceAdapterRegistry } from '../../core/ports/marketplace-adapter.port.js';
 import type { IAdminProcurementRepository } from '../../core/ports/admin-procurement-repository.port.js';
 import type {
   TestProviderQuoteDto,
@@ -26,6 +27,7 @@ import type {
   LinkCatalogProductResult,
   LiveSearchProvidersDto,
   LiveSearchProvidersResult,
+  LiveSearchProviderGroup,
 } from '../../core/use-cases/procurement/procurement.types.js';
 import { createLogger } from '../../shared/logger.js';
 
@@ -37,6 +39,7 @@ const DEFAULT_SEARCH_LIMIT = 20;
 export class SupabaseAdminProcurementRepository implements IAdminProcurementRepository {
   constructor(
     @inject(TOKENS.Database) private db: IDatabase,
+    @inject(TOKENS.MarketplaceAdapterRegistry) private registry: IMarketplaceAdapterRegistry,
   ) {}
 
   async testProviderQuote(dto: TestProviderQuoteDto): Promise<TestProviderQuoteResult> {
@@ -263,38 +266,120 @@ export class SupabaseAdminProcurementRepository implements IAdminProcurementRepo
   }
 
   async liveSearchProviders(dto: LiveSearchProvidersDto): Promise<LiveSearchProvidersResult> {
-    logger.info('Live searching marketplace APIs', { query: dto.query, maxResults: dto.max_results });
+    const maxResults = dto.max_results ?? 10;
+    const excludeSet = new Set(dto.exclude_provider_codes ?? []);
 
-    const result = await this.db.invokeFunction<Record<string, unknown>>(
-      'provider-procurement',
-      {
-        action: 'search',
-        query: dto.query,
-        max_results: dto.max_results ?? 10,
-        exclude_provider_codes: dto.exclude_provider_codes ?? [],
-      },
-    );
+    const allProviders = this.registry.getSupportedProviders()
+      .filter((code) => !excludeSet.has(code));
 
-    const rawProviders = (result?.providers ?? result?.results ?? []) as Array<Record<string, unknown>>;
-    const providers = rawProviders.map((group) => {
-      const code = (group.provider_code ?? group.providerCode ?? 'unknown') as string;
-      const rawOffers = (group.offers ?? []) as Array<Record<string, unknown>>;
-      return {
-        provider_code: code,
-        offers: rawOffers.map((o) => ({
-          provider_code: (o.provider_code ?? code) as string,
-          external_product_id: (o.external_product_id ?? o.external_offer_id ?? '') as string,
-          product_name: (o.product_name ?? o.name ?? '') as string,
-          platform: (o.platform ?? null) as string | null,
-          region: (o.region ?? null) as string | null,
-          price_cents: (o.price_cents ?? 0) as number,
-          currency: (o.currency ?? 'EUR') as string,
-          available: (o.available ?? true) as boolean,
-          thumbnail: (o.thumbnail ?? null) as string | null,
-        })),
-      };
+    logger.info('Live searching marketplace APIs + local catalog', {
+      query: dto.query,
+      maxResults,
+      providers: allProviders,
     });
 
+    const liveProviders: string[] = [];
+    const catalogOnlyProviders: string[] = [];
+
+    for (const code of allProviders) {
+      if (this.registry.hasCapability(code, 'product_search')) {
+        liveProviders.push(code);
+      } else {
+        catalogOnlyProviders.push(code);
+      }
+    }
+
+    const livePromises = liveProviders.map(async (providerCode): Promise<LiveSearchProviderGroup> => {
+      const adapter = this.registry.getProductSearchAdapter(providerCode)!;
+      try {
+        const results = await adapter.searchProducts(dto.query, maxResults);
+        return {
+          provider_code: providerCode,
+          offers: results.map((r) => ({
+            provider_code: providerCode,
+            external_product_id: r.externalProductId,
+            product_name: r.productName,
+            platform: r.platform,
+            region: r.region,
+            price_cents: r.priceCents,
+            currency: r.currency,
+            available: r.available,
+            thumbnail: null,
+          })),
+        };
+      } catch (err) {
+        logger.warn(`Live search failed for provider ${providerCode}`, err as Error);
+        return { provider_code: providerCode, offers: [] };
+      }
+    });
+
+    let catalogPromise: Promise<LiveSearchProviderGroup[]> = Promise.resolve([]);
+    if (catalogOnlyProviders.length > 0) {
+      catalogPromise = this.searchLocalCatalogGrouped(dto.query, catalogOnlyProviders, maxResults);
+    }
+
+    const [liveResults, catalogResults] = await Promise.all([
+      Promise.allSettled(livePromises),
+      catalogPromise,
+    ]);
+
+    const providers: LiveSearchProviderGroup[] = [];
+
+    for (const result of liveResults) {
+      if (result.status === 'fulfilled') {
+        providers.push(result.value);
+      }
+    }
+
+    for (const group of catalogResults) {
+      providers.push(group);
+    }
+
     return { providers };
+  }
+
+  private async searchLocalCatalogGrouped(
+    query: string,
+    providerCodes: string[],
+    maxPerProvider: number,
+  ): Promise<LiveSearchProviderGroup[]> {
+    try {
+      const { data } = await this.db.queryPaginated<CatalogProductRow>(
+        'provider_product_catalog',
+        {
+          select: 'id, provider_code, external_product_id, product_name, platform, region, min_price_cents, currency, qty, available_to_buy, thumbnail',
+          ilike: [['product_name', `%${query}%`]],
+          in: [['provider_code', providerCodes]],
+          order: { column: 'product_name', ascending: true },
+          range: [0, providerCodes.length * maxPerProvider - 1],
+        },
+      );
+
+      const grouped = new Map<string, LiveSearchProviderGroup>();
+      for (const row of data) {
+        let group = grouped.get(row.provider_code);
+        if (!group) {
+          group = { provider_code: row.provider_code, offers: [] };
+          grouped.set(row.provider_code, group);
+        }
+        if (group.offers.length >= maxPerProvider) continue;
+        group.offers.push({
+          provider_code: row.provider_code,
+          external_product_id: row.external_product_id,
+          product_name: row.product_name,
+          platform: row.platform ?? null,
+          region: row.region ?? null,
+          price_cents: row.min_price_cents ?? 0,
+          currency: row.currency ?? 'EUR',
+          available: row.available_to_buy ?? true,
+          thumbnail: row.thumbnail ?? null,
+        });
+      }
+
+      return [...grouped.values()];
+    } catch (err) {
+      logger.warn('Local catalog search failed for live search fallback', err as Error);
+      return [];
+    }
   }
 }

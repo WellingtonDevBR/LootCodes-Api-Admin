@@ -55,11 +55,11 @@ export async function bootstrapMarketplaceAdapters(
   try {
     const accounts = await db.query<ProviderAccountRow>('provider_accounts', {
       select: 'id, provider_code, api_profile, seller_config',
-      eq: [['supports_seller', true]],
+      eq: [['is_enabled', true]],
     });
 
     if (accounts.length === 0) {
-      logger.info('No seller-enabled provider accounts found — skipping adapter registration');
+      logger.info('No enabled provider accounts found — skipping adapter registration');
       return;
     }
 
@@ -261,7 +261,18 @@ function buildKinguinAdapter(
     }
   }
 
-  return new KinguinMarketplaceAdapter(httpClient, webhookClient);
+  let buyerClient: MarketplaceHttpClient | undefined;
+  const buyerApiKey = secrets['KINGUIN_BUYER_API_KEY'];
+  const buyerBaseUrl = profileStr(profile, 'buyer_base_url');
+  if (buyerApiKey && buyerBaseUrl) {
+    buyerClient = new MarketplaceHttpClient({
+      baseUrl: buyerBaseUrl.replace(/\/$/, ''),
+      providerCode: 'kinguin',
+      headers: async () => ({ 'X-Api-Key': buyerApiKey }),
+    });
+  }
+
+  return new KinguinMarketplaceAdapter(httpClient, webhookClient, buyerClient);
 }
 
 function buildDigisellerAdapter(

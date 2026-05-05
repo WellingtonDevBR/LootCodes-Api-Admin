@@ -173,6 +173,22 @@ export interface ISellerGlobalStockAdapter {
   updateAllStockStatus(enabled: boolean): Promise<{ success: boolean }>;
 }
 
+// ─── Product Search ──────────────────────────────────────────────────
+
+export interface ProductSearchResult {
+  externalProductId: string;
+  productName: string;
+  platform: string | null;
+  region: string | null;
+  priceCents: number;
+  currency: string;
+  available: boolean;
+}
+
+export interface IProductSearchAdapter {
+  searchProducts(query: string, limit?: number): Promise<ProductSearchResult[]>;
+}
+
 // ─── Adapter Registry ────────────────────────────────────────────────
 
 export type MarketplaceCapability =
@@ -185,7 +201,8 @@ export type MarketplaceCapability =
   | 'callback_setup'
   | 'batch_price'
   | 'batch_declared_stock'
-  | 'global_stock';
+  | 'global_stock'
+  | 'product_search';
 
 export interface IMarketplaceAdapterRegistry {
   registerAdapter(providerCode: string, adapter: unknown): void;
@@ -199,6 +216,7 @@ export interface IMarketplaceAdapterRegistry {
   getBatchPriceAdapter(providerCode: string): ISellerBatchPriceAdapter | null;
   getBatchDeclaredStockAdapter(providerCode: string): ISellerBatchDeclaredStockAdapter | null;
   getGlobalStockAdapter(providerCode: string): ISellerGlobalStockAdapter | null;
+  getProductSearchAdapter(providerCode: string): IProductSearchAdapter | null;
   hasCapability(providerCode: string, capability: MarketplaceCapability): boolean;
   getSupportedProviders(): string[];
 }

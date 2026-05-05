@@ -505,9 +505,32 @@ export class EnebaAdapter
     return data.P_enableDeclaredStockKeyReplacements.success;
   }
 
-  // ─── Queries (exposed for routes that need raw data) ──────────────
+  // ─── IProductSearchAdapter ─────────────────────────────────────────
 
   async searchProducts(
+    query: string,
+    limit = 20,
+  ): Promise<import('../../../core/ports/marketplace-adapter.port.js').ProductSearchResult[]> {
+    const data = await this.searchProductsRaw(query, limit);
+    return (data.S_products?.edges ?? []).map((edge) => {
+      const p = edge.node;
+      const drm = p.drm?.slug ?? null;
+      const regionCodes = (p.regions ?? []).map((r) => r.code);
+      return {
+        externalProductId: p.id,
+        productName: p.name,
+        platform: drm,
+        region: regionCodes.length > 0 ? regionCodes.join(', ') : null,
+        priceCents: 0,
+        currency: 'EUR',
+        available: true,
+      };
+    });
+  }
+
+  // ─── Queries (exposed for routes that need raw data) ──────────────
+
+  async searchProductsRaw(
     search: string,
     first = 50,
     after?: string,

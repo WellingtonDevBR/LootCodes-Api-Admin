@@ -20,6 +20,8 @@ import type {
   ISellerPricingAdapter,
   ISellerBatchPriceAdapter,
   ISellerCallbackSetupAdapter,
+  IProductSearchAdapter,
+  ProductSearchResult,
   CreateListingParams,
   CreateListingResult,
   UpdateListingParams,
@@ -45,6 +47,7 @@ import type {
   KinguinSubscription,
   KinguinSubscriptionRequest,
   KinguinStockItem,
+  KinguinBuyerSearchResponse,
 } from './types.js';
 import { KINGUIN_MAX_DECLARED_STOCK } from './types.js';
 import { createLogger } from '../../../shared/logger.js';
@@ -62,11 +65,13 @@ export class KinguinMarketplaceAdapter
     ISellerStockSyncAdapter,
     ISellerPricingAdapter,
     ISellerBatchPriceAdapter,
-    ISellerCallbackSetupAdapter
+    ISellerCallbackSetupAdapter,
+    IProductSearchAdapter
 {
   constructor(
     private readonly httpClient: MarketplaceHttpClient,
     private readonly webhookHttpClient?: MarketplaceHttpClient,
+    private readonly buyerHttpClient?: MarketplaceHttpClient,
   ) {}
 
   // ─── ISellerListingAdapter ───────────────────────────────────────────
@@ -245,6 +250,36 @@ export class KinguinMarketplaceAdapter
       feeCents,
       netPayoutCents: result.priceIWTR,
     };
+  }
+
+  // ─── IProductSearchAdapter ────────────────────────────────────────────
+
+  async searchProducts(query: string, limit = 10): Promise<ProductSearchResult[]> {
+    if (!this.buyerHttpClient) {
+      logger.info('Kinguin product search skipped — no buyer API credentials');
+      return [];
+    }
+
+    if (query.length < 3) return [];
+
+    try {
+      const result = await this.buyerHttpClient.get<KinguinBuyerSearchResponse>(
+        `/v1/products?name=${encodeURIComponent(query)}&limit=${limit}`,
+      );
+
+      return (result.results ?? []).map((p) => ({
+        externalProductId: p.productId,
+        productName: p.name,
+        platform: p.platform ?? null,
+        region: p.regionalLimitations ?? null,
+        priceCents: Math.round(p.price * 100),
+        currency: 'EUR',
+        available: p.qty > 0 && !p.isPreorder,
+      }));
+    } catch (err) {
+      logger.warn('Kinguin product search failed', err as Error);
+      return [];
+    }
   }
 
   private async calculateCommission(

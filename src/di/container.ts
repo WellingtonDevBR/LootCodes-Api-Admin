@@ -625,7 +625,7 @@ container.register(UC_TOKENS.RemoveCallback, { useClass: RemoveCallbackUseCase }
 container.register(UC_TOKENS.ExpireReservations, { useClass: ExpireReservationsUseCase });
 
 // Infrastructure — Marketplace & Seller Services
-container.register(TOKENS.MarketplaceAdapterRegistry, { useClass: MarketplaceAdapterRegistry });
+container.registerSingleton(TOKENS.MarketplaceAdapterRegistry, MarketplaceAdapterRegistry);
 container.register(TOKENS.KeyDecryption, { useClass: KeyDecryptionService });
 container.register(TOKENS.ListingHealth, { useClass: ListingHealthService });
 container.register(TOKENS.VariantUnavailability, { useClass: VariantUnavailabilityService });

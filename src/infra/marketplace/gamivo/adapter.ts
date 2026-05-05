@@ -19,6 +19,8 @@ import type {
   ISellerDeclaredStockAdapter,
   ISellerPricingAdapter,
   ISellerCallbackSetupAdapter,
+  IProductSearchAdapter,
+  ProductSearchResult,
   CreateListingParams,
   CreateListingResult,
   UpdateListingParams,
@@ -38,6 +40,7 @@ import type {
   GamivoCalculatePriceResponse,
   GamivoCreateOfferRequest,
   GamivoEditOfferRequest,
+  GamivoSearchProduct,
 } from './types.js';
 import {
   GAMIVO_OFFER_STATUS_ACTIVE,
@@ -57,7 +60,8 @@ export class GamivoMarketplaceAdapter
     ISellerListingAdapter,
     ISellerDeclaredStockAdapter,
     ISellerPricingAdapter,
-    ISellerCallbackSetupAdapter
+    ISellerCallbackSetupAdapter,
+    IProductSearchAdapter
 {
   constructor(private readonly httpClient: MarketplaceHttpClient) {}
 
@@ -231,6 +235,30 @@ export class GamivoMarketplaceAdapter
         url: 'configured-via-gamivo-support',
       }],
     };
+  }
+
+  // ─── IProductSearchAdapter ────────────────────────────────────────────
+
+  async searchProducts(query: string, limit = 10): Promise<ProductSearchResult[]> {
+    try {
+      const filters = JSON.stringify({ name: query });
+      const products = await this.httpClient.get<GamivoSearchProduct[]>(
+        `/api/public/v1/products/list-by-criteria/0/${limit}?filters=${encodeURIComponent(filters)}`,
+      );
+
+      return (products ?? []).map((p) => ({
+        externalProductId: String(p.id),
+        productName: p.name,
+        platform: p.platform ?? null,
+        region: p.region ?? null,
+        priceCents: floatToCents(p.lowest_price),
+        currency: 'EUR',
+        available: true,
+      }));
+    } catch (err) {
+      logger.warn('Gamivo product search failed', err as Error);
+      return [];
+    }
   }
 
   // ─── Private helpers ─────────────────────────────────────────────────

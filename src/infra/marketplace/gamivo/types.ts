@@ -66,6 +66,18 @@ export interface GamivoEditOfferRequest {
   is_preorder?: boolean;
 }
 
+// ─── Product Search ────────────────────────────────────────────────────
+
+export interface GamivoSearchProduct {
+  id: number;
+  name: string;
+  slug: string;
+  platform?: string;
+  region?: string;
+  lowest_price?: number;
+  cover?: string;
+}
+
 // ─── Callbacks ─────────────────────────────────────────────────────────
 
 export interface GamivoCallbackRegistration {

@@ -23,6 +23,7 @@ import type {
   ISellerBatchPriceAdapter,
   ISellerBatchDeclaredStockAdapter,
   ISellerGlobalStockAdapter,
+  IProductSearchAdapter,
   MarketplaceCapability,
 } from '../../core/ports/marketplace-adapter.port.js';
 import { createLogger } from '../../shared/logger.js';
@@ -39,7 +40,8 @@ export type AnyMarketplaceAdapter = Partial<
   ISellerCallbackSetupAdapter &
   ISellerBatchPriceAdapter &
   ISellerBatchDeclaredStockAdapter &
-  ISellerGlobalStockAdapter
+  ISellerGlobalStockAdapter &
+  IProductSearchAdapter
 >;
 
 type CapabilityCheckFn = (adapter: AnyMarketplaceAdapter) => boolean;
@@ -55,6 +57,7 @@ const CAPABILITY_CHECKS: Record<MarketplaceCapability, CapabilityCheckFn> = {
   batch_price: (a) => typeof a.batchUpdatePrices === 'function',
   batch_declared_stock: (a) => typeof a.batchUpdateDeclaredStock === 'function',
   global_stock: (a) => typeof a.updateAllStockStatus === 'function',
+  product_search: (a) => typeof a.searchProducts === 'function',
 };
 
 @injectable()
@@ -108,6 +111,10 @@ export class MarketplaceAdapterRegistry implements IMarketplaceAdapterRegistry {
 
   getGlobalStockAdapter(providerCode: string): ISellerGlobalStockAdapter | null {
     return this.getTypedAdapter<ISellerGlobalStockAdapter>(providerCode, 'global_stock');
+  }
+
+  getProductSearchAdapter(providerCode: string): IProductSearchAdapter | null {
+    return this.getTypedAdapter<IProductSearchAdapter>(providerCode, 'product_search');
   }
 
   hasCapability(providerCode: string, capability: MarketplaceCapability): boolean {
