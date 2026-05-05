@@ -36,12 +36,12 @@ export class SupabaseAdminProductRepository implements IAdminProductRepository {
   ): Promise<T[]> {
     if (ids.length === 0) return [];
     if (ids.length <= batchSize) {
-      return this.db.query<T>(table, { ...options, in: [[column, ids]] });
+      return this.db.queryAll<T>(table, { ...options, in: [[column, ids]] });
     }
     const results: T[] = [];
     for (let i = 0; i < ids.length; i += batchSize) {
       const chunk = ids.slice(i, i + batchSize);
-      const rows = await this.db.query<T>(table, { ...options, in: [[column, chunk]] });
+      const rows = await this.db.queryAll<T>(table, { ...options, in: [[column, chunk]] });
       results.push(...rows);
     }
     return results;
@@ -55,10 +55,9 @@ export class SupabaseAdminProductRepository implements IAdminProductRepository {
     if (dto.product_type) eq.push(['product_type', dto.product_type]);
     if (dto.is_active !== undefined) eq.push(['is_active', dto.is_active]);
 
-    const allProducts = await this.db.query<Record<string, unknown>>('products', {
+    const allProducts = await this.db.queryAll<Record<string, unknown>>('products', {
       eq,
       order: { column: 'name', ascending: true },
-      limit: 10000,
     });
 
     const filtered = dto.search
@@ -73,7 +72,7 @@ export class SupabaseAdminProductRepository implements IAdminProductRepository {
     const productIds = filtered.map(p => p.id as string);
 
     const allVariants = await this.batchedQuery<{ id: string; product_id: string }>(
-      'product_variants', 'product_id', productIds, { select: 'id, product_id', limit: 10000 },
+      'product_variants', 'product_id', productIds, { select: 'id, product_id' },
     );
 
     const variantsByProduct = new Map<string, string[]>();
@@ -86,8 +85,8 @@ export class SupabaseAdminProductRepository implements IAdminProductRepository {
     const allVariantIds = allVariants.map(v => v.id);
 
     const [availableKeys, activeListings] = await Promise.all([
-      this.batchedQuery<{ variant_id: string }>('product_keys', 'variant_id', allVariantIds, { select: 'variant_id', eq: [['key_state', 'available']], limit: 50000 }),
-      this.batchedQuery<{ variant_id: string }>('seller_listings', 'variant_id', allVariantIds, { select: 'variant_id', eq: [['status', 'active']], limit: 10000 }),
+      this.batchedQuery<{ variant_id: string }>('product_keys', 'variant_id', allVariantIds, { select: 'variant_id', eq: [['key_state', 'available']] }),
+      this.batchedQuery<{ variant_id: string }>('seller_listings', 'variant_id', allVariantIds, { select: 'variant_id', eq: [['status', 'active']] }),
     ]);
 
     const stockByVariant = new Map<string, number>();

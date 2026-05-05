@@ -22,6 +22,12 @@ export interface PaginatedResult<T> {
 
 export interface IDatabase {
   query<T = unknown>(table: string, options?: QueryOptions): Promise<T[]>;
+  /**
+   * Fetches ALL rows matching `options` by paginating through PostgREST
+   * in chunks (default 1000). Use instead of `query` when the result
+   * set may exceed the PostgREST `max-rows` server cap.
+   */
+  queryAll<T = unknown>(table: string, options?: Omit<QueryOptions, 'range' | 'limit'>): Promise<T[]>;
   queryOne<T = unknown>(table: string, options?: QueryOptions): Promise<T | null>;
   queryPaginated<T = unknown>(table: string, options?: QueryOptions): Promise<PaginatedResult<T>>;
   insert<T = unknown>(table: string, data: Record<string, unknown>): Promise<T>;

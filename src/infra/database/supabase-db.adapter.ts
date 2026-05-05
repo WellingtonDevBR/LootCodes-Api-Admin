@@ -39,6 +39,22 @@ export class SupabaseDbAdapter implements IDatabase {
     return (data ?? []) as T[];
   }
 
+  async queryAll<T = unknown>(table: string, options?: Omit<QueryOptions, 'range' | 'limit'>): Promise<T[]> {
+    const PAGE = 1000;
+    const all: T[] = [];
+    let offset = 0;
+    for (;;) {
+      const page = await this.query<T>(table, {
+        ...options,
+        range: [offset, offset + PAGE - 1],
+      } as QueryOptions);
+      all.push(...page);
+      if (page.length < PAGE) break;
+      offset += PAGE;
+    }
+    return all;
+  }
+
   async queryPaginated<T = unknown>(table: string, options?: QueryOptions): Promise<PaginatedResult<T>> {
     const q = this.getClient().from(table).select(options?.select ?? '*', { count: 'exact' });
     const query = this.applyFilters(q, options) as ReturnType<ReturnType<SupabaseClient['from']>['select']>;

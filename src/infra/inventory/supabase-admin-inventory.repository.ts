@@ -169,17 +169,17 @@ export class SupabaseAdminInventoryRepository implements IAdminInventoryReposito
     table: string,
     column: string,
     ids: string[],
-    options: Omit<QueryOptions, 'in'>,
+    options: Omit<QueryOptions, 'in' | 'range' | 'limit'>,
     batchSize = 200,
   ): Promise<T[]> {
     if (ids.length === 0) return [];
     if (ids.length <= batchSize) {
-      return this.db.query<T>(table, { ...options, in: [[column, ids]] });
+      return this.db.queryAll<T>(table, { ...options, in: [[column, ids]] });
     }
     const results: T[] = [];
     for (let i = 0; i < ids.length; i += batchSize) {
       const chunk = ids.slice(i, i + batchSize);
-      const rows = await this.db.query<T>(table, { ...options, in: [[column, chunk]] });
+      const rows = await this.db.queryAll<T>(table, { ...options, in: [[column, chunk]] });
       results.push(...rows);
     }
     return results;
@@ -189,10 +189,9 @@ export class SupabaseAdminInventoryRepository implements IAdminInventoryReposito
     const limit = dto.limit ?? 5000;
     const offset = dto.offset ?? 0;
 
-    const variants = await this.db.query<Record<string, unknown>>('product_variants', {
+    const variants = await this.db.queryAll<Record<string, unknown>>('product_variants', {
       select: 'id, sku, price_usd, is_active, product_id, region_id, default_cost_cents, default_cost_currency, face_value',
       order: { column: 'created_at', ascending: false },
-      limit: 10000,
     });
 
     const sliced = variants.slice(offset, offset + limit);
@@ -209,27 +208,26 @@ export class SupabaseAdminInventoryRepository implements IAdminInventoryReposito
         : [],
       this.batchedQuery<Record<string, unknown>>(
         'product_keys', 'variant_id', variantIds,
-        { select: 'variant_id', eq: [['key_state', 'available']], limit: 50000 },
+        { select: 'variant_id', eq: [['key_state', 'available']] },
       ),
       this.batchedQuery<Record<string, unknown>>(
         'product_keys', 'variant_id', variantIds,
-        { select: 'variant_id', eq: [['is_used', true]], limit: 50000 },
+        { select: 'variant_id', eq: [['is_used', true]] },
       ),
       this.batchedQuery<Record<string, unknown>>(
         'variant_platforms', 'variant_id', variantIds,
-        { select: 'variant_id, platform_id', limit: 10000 },
+        { select: 'variant_id, platform_id' },
       ),
       this.batchedQuery<Record<string, unknown>>(
         'provider_variant_offers', 'variant_id', variantIds,
-        { select: 'variant_id, provider_account_id', limit: 10000 },
+        { select: 'variant_id, provider_account_id' },
       ),
-      this.db.query<Record<string, unknown>>('provider_accounts', {
+      this.db.queryAll<Record<string, unknown>>('provider_accounts', {
         select: 'id, display_name, supports_seller',
-        limit: 1000,
       }),
       this.batchedQuery<Record<string, unknown>>(
         'seller_listings', 'variant_id', variantIds,
-        { select: 'variant_id, declared_stock', eq: [['status', 'active']], limit: 10000 },
+        { select: 'variant_id, declared_stock', eq: [['status', 'active']] },
       ),
     ]);
 
