@@ -116,6 +116,12 @@ class CircuitBreaker {
   }
 
   getState(): CircuitState { return this.state; }
+
+  reset(): void {
+    this.state = 'closed';
+    this.failureCount = 0;
+    this.lastFailureTime = 0;
+  }
 }
 
 // ─── Rate Limiter ────────────────────────────────────────────────────
@@ -315,6 +321,10 @@ export class MarketplaceHttpClient {
   }
 
   getCircuitState(): string { return this.cb.getState(); }
+
+  resetCircuitBreaker(): void {
+    this.cb.reset();
+  }
 }
 
 // ─── Token Cache ─────────────────────────────────────────────────────

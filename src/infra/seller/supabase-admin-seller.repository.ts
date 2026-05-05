@@ -575,6 +575,7 @@ export class SupabaseAdminSellerRepository implements IAdminSellerRepository {
       declared_stock: stockCount,
       last_synced_at: now,
       updated_at: now,
+      error_message: null,
     });
 
     return {

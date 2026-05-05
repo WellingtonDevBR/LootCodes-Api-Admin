@@ -177,6 +177,7 @@ export interface GetVariantContextDto {
 export interface GetVariantContextResult {
   id: string;
   product_name: string;
+  edition: string | null;
   platform_names: string[];
   region_name: string | null;
   sku: string;

@@ -335,7 +335,7 @@ export class SupabaseAdminInventoryRepository implements IAdminInventoryReposito
 
   async getVariantContext(dto: GetVariantContextDto): Promise<GetVariantContextResult> {
     const variant = await this.db.queryOne<Record<string, unknown>>('product_variants', {
-      select: 'id, sku, price_usd, product_id, region_id',
+      select: 'id, sku, price_usd, product_id, region_id, face_value',
       filter: { id: dto.variant_id },
     });
 
@@ -377,6 +377,7 @@ export class SupabaseAdminInventoryRepository implements IAdminInventoryReposito
     return {
       id: variant.id as string,
       product_name: (product?.name as string) ?? 'Unknown',
+      edition: typeof variant.face_value === 'string' ? variant.face_value : null,
       platform_names: platforms.map(p => p.name as string),
       region_name: regionName,
       sku: variant.sku as string,

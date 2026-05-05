@@ -55,11 +55,14 @@ export async function bootstrapMarketplaceAdapters(
   try {
     const accounts = await db.query<ProviderAccountRow>('provider_accounts', {
       select: 'id, provider_code, api_profile, seller_config',
-      eq: [['is_enabled', true]],
+      eq: [
+        ['is_enabled', true],
+        ['supports_seller', true],
+      ],
     });
 
     if (accounts.length === 0) {
-      logger.info('No enabled provider accounts found — skipping adapter registration');
+      logger.info('No enabled seller provider accounts found — skipping adapter registration');
       return;
     }
 

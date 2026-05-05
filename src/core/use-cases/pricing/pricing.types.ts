@@ -3,15 +3,27 @@ export interface GetVariantPriceTimelineResult { timeline: unknown[] }
 
 export interface GetPricingSnapshotDto { limit?: number; offset?: number }
 
-export interface PricingSnapshotRow {
-  variant_id: string;
-  provider_code: string | null;
-  provider_name: string | null;
-  price_cents: number;
-  currency: string;
-  min_price_cents: number | null;
-  commission_rate: number | null;
-  status: string;
+export interface PricingChannelPrice {
+  cents: number;
+  currency?: string;
 }
 
-export interface GetPricingSnapshotResult { listings: PricingSnapshotRow[] }
+export interface PricingChannelFee {
+  channel: string;
+  feePercent: number;
+}
+
+export interface PricingSnapshotListing {
+  productId: string;
+  name: string;
+  sku: string;
+  costBestCents: number;
+  costCurrency: string;
+  stock: number;
+  prices: Record<string, PricingChannelPrice>;
+}
+
+export interface GetPricingSnapshotResult {
+  listings: PricingSnapshotListing[];
+  fees: PricingChannelFee[];
+}

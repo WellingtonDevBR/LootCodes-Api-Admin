@@ -152,20 +152,135 @@ export interface ListingDeactivationResult {
 // ─── Digiseller Form Delivery ────────────────────────────────────────
 
 export interface DigisellerDeliveryDto {
-  uniqueCode: string;
-  productId: string;
-  quantity: number;
   providerAccountId: string;
   providerCode: string;
-  buyerEmail?: string;
+  /** Raw payload from Digiseller Supplier API POST */
+  payload: DigisellerFormDeliveryPayload;
+}
+
+/**
+ * Raw Digiseller form-delivery webhook payload.
+ * Field names vary between test and live modes.
+ */
+export interface DigisellerFormDeliveryPayload {
+  id?: string | number;
+  id_goods?: number;
+  product_id?: number;
+  inv?: string | number;
+  invoice_id?: string | number;
+  unique_code?: string;
+  email?: string;
+  amount?: string | number;
+  currency?: string;
+  type_curr?: string;
+  profit?: number;
+  unit_cnt?: number;
+  sign?: string;
+  options?: Array<{ id: string; type: string; user_data: string }>;
+  [key: string]: unknown;
 }
 
 export interface DigisellerDeliveryResult {
   success: boolean;
   keys?: string[];
+  productId?: string | number;
+  invoiceId?: string | number;
+  errorMessage?: string;
 }
 
-// ─── Inventory Callback (G2A check) ─────────────────────────────────
+// ─── Digiseller Quantity Check ───────────────────────────────────────
+
+export interface DigisellerQuantityCheckDto {
+  providerAccountId: string;
+  productId: string;
+  requestedCount: number;
+  sign: string | null;
+  isTestEnvelope: boolean;
+  rawBody: string | null;
+}
+
+export interface DigisellerQuantityCheckResult {
+  productId: string;
+  count: number;
+  error?: string;
+}
+
+// ─── G2A Dropshipping Contract ──────────────────────────────────────
+
+export interface G2AReservationDto {
+  items: G2AReservationRequestItem[];
+  providerAccountId: string;
+}
+
+export interface G2AReservationRequestItem {
+  product_id: number;
+  quantity: number;
+  additional_data?: Record<string, unknown>;
+}
+
+export interface G2AStockInventoryItem {
+  id: string;
+  value: string;
+  kind: 'text' | 'image' | 'account';
+}
+
+export interface G2AStockItem {
+  product_id: number;
+  inventory_size: number;
+  inventory: G2AStockInventoryItem[];
+}
+
+export interface G2AReservationResponse {
+  reservation_id: string;
+  stock: G2AStockItem[];
+}
+
+export interface G2AOrderDto {
+  reservation_id: string;
+  g2a_order_id: number;
+  providerAccountId: string;
+}
+
+export interface G2AOrderCreatedResponse {
+  order_id: string;
+  stock: G2AStockItem[];
+}
+
+export interface G2ARenewReservationDto {
+  externalReservationId: string;
+  providerAccountId: string;
+}
+
+export interface G2ACancelReservationDto {
+  externalReservationId: string;
+}
+
+export interface G2AGetInventoryDto {
+  orderId: string;
+}
+
+export interface G2AReturnInventoryDto {
+  orderId: string;
+  itemIds: string[];
+}
+
+export interface G2ANotificationItem {
+  notification_type: 'auction_deactivated';
+  date: string;
+  data: { product_id: number; offer_id?: string };
+}
+
+export interface G2ANotificationsDto {
+  notifications: G2ANotificationItem[];
+  providerAccountId: string;
+}
+
+export interface G2AContractError {
+  code: string;
+  message: string;
+}
+
+// ─── Inventory Callback (generic check) ─────────────────────────────
 
 export interface InventoryCallbackDto {
   externalListingId: string;

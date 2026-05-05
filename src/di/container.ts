@@ -292,7 +292,15 @@ import { HandleKeyUploadOrderUseCase } from '../core/use-cases/seller-webhook/ha
 import { HandleMarketplaceRefundUseCase } from '../core/use-cases/seller-webhook/handle-marketplace-refund.use-case.js';
 import { HandleListingDeactivationUseCase } from '../core/use-cases/seller-webhook/handle-listing-deactivation.use-case.js';
 import { HandleDigisellerDeliveryUseCase } from '../core/use-cases/seller-webhook/handle-digiseller-delivery.use-case.js';
+import { HandleDigisellerQuantityCheckUseCase } from '../core/use-cases/seller-webhook/handle-digiseller-quantity-check.use-case.js';
 import { HandleInventoryCallbackUseCase } from '../core/use-cases/seller-webhook/handle-inventory-callback.use-case.js';
+import { HandleG2AReservationUseCase } from '../core/use-cases/seller-webhook/handle-g2a-reservation.use-case.js';
+import { HandleG2AOrderUseCase } from '../core/use-cases/seller-webhook/handle-g2a-order.use-case.js';
+import { HandleG2ARenewReservationUseCase } from '../core/use-cases/seller-webhook/handle-g2a-renew-reservation.use-case.js';
+import { HandleG2ACancelReservationUseCase } from '../core/use-cases/seller-webhook/handle-g2a-cancel-reservation.use-case.js';
+import { HandleG2AGetInventoryUseCase } from '../core/use-cases/seller-webhook/handle-g2a-get-inventory.use-case.js';
+import { HandleG2AReturnInventoryUseCase } from '../core/use-cases/seller-webhook/handle-g2a-return-inventory.use-case.js';
+import { HandleG2ANotificationsUseCase } from '../core/use-cases/seller-webhook/handle-g2a-notifications.use-case.js';
 
 // Use cases — Products
 import { ListProductsUseCase } from '../core/use-cases/products/list-products.use-case.js';
@@ -625,7 +633,7 @@ container.register(UC_TOKENS.RemoveCallback, { useClass: RemoveCallbackUseCase }
 container.register(UC_TOKENS.ExpireReservations, { useClass: ExpireReservationsUseCase });
 
 // Infrastructure — Marketplace & Seller Services
-container.registerSingleton(TOKENS.MarketplaceAdapterRegistry, MarketplaceAdapterRegistry);
+container.register(TOKENS.MarketplaceAdapterRegistry, { useClass: MarketplaceAdapterRegistry });
 container.register(TOKENS.KeyDecryption, { useClass: KeyDecryptionService });
 container.register(TOKENS.ListingHealth, { useClass: ListingHealthService });
 container.register(TOKENS.VariantUnavailability, { useClass: VariantUnavailabilityService });
@@ -647,7 +655,15 @@ container.register(UC_TOKENS.HandleKeyUploadOrder, { useClass: HandleKeyUploadOr
 container.register(UC_TOKENS.HandleMarketplaceRefund, { useClass: HandleMarketplaceRefundUseCase });
 container.register(UC_TOKENS.HandleListingDeactivation, { useClass: HandleListingDeactivationUseCase });
 container.register(UC_TOKENS.HandleDigisellerDelivery, { useClass: HandleDigisellerDeliveryUseCase });
+container.register(UC_TOKENS.HandleDigisellerQuantityCheck, { useClass: HandleDigisellerQuantityCheckUseCase });
 container.register(UC_TOKENS.HandleInventoryCallback, { useClass: HandleInventoryCallbackUseCase });
+container.register(UC_TOKENS.HandleG2AReservation, { useClass: HandleG2AReservationUseCase });
+container.register(UC_TOKENS.HandleG2AOrder, { useClass: HandleG2AOrderUseCase });
+container.register(UC_TOKENS.HandleG2ARenewReservation, { useClass: HandleG2ARenewReservationUseCase });
+container.register(UC_TOKENS.HandleG2ACancelReservation, { useClass: HandleG2ACancelReservationUseCase });
+container.register(UC_TOKENS.HandleG2AGetInventory, { useClass: HandleG2AGetInventoryUseCase });
+container.register(UC_TOKENS.HandleG2AReturnInventory, { useClass: HandleG2AReturnInventoryUseCase });
+container.register(UC_TOKENS.HandleG2ANotifications, { useClass: HandleG2ANotificationsUseCase });
 
 // Use cases — Products
 container.register(UC_TOKENS.ListProducts, { useClass: ListProductsUseCase });

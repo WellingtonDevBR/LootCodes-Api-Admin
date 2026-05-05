@@ -319,7 +319,15 @@ export const UC_TOKENS = {
   HandleMarketplaceRefund: Symbol.for('HandleMarketplaceRefundUseCase'),
   HandleListingDeactivation: Symbol.for('HandleListingDeactivationUseCase'),
   HandleDigisellerDelivery: Symbol.for('HandleDigisellerDeliveryUseCase'),
+  HandleDigisellerQuantityCheck: Symbol.for('HandleDigisellerQuantityCheckUseCase'),
   HandleInventoryCallback: Symbol.for('HandleInventoryCallbackUseCase'),
+  HandleG2AReservation: Symbol.for('HandleG2AReservationUseCase'),
+  HandleG2AOrder: Symbol.for('HandleG2AOrderUseCase'),
+  HandleG2ARenewReservation: Symbol.for('HandleG2ARenewReservationUseCase'),
+  HandleG2ACancelReservation: Symbol.for('HandleG2ACancelReservationUseCase'),
+  HandleG2AGetInventory: Symbol.for('HandleG2AGetInventoryUseCase'),
+  HandleG2AReturnInventory: Symbol.for('HandleG2AReturnInventoryUseCase'),
+  HandleG2ANotifications: Symbol.for('HandleG2ANotificationsUseCase'),
 
   // Products
   ListProducts: Symbol.for('ListProductsUseCase'),

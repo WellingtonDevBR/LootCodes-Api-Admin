@@ -2,12 +2,12 @@
  * Per-provider marketplace authentication middleware.
  *
  * Each marketplace uses a different authentication scheme:
- *   - Eneba:     Bearer token → seller_config.callback_auth_token
- *   - Kinguin:   X-Auth-Token header → seller_config.callback_auth_token
- *   - Kinguin (buyer): X-Event-Secret → api_profile.buyer_webhook_secret
- *   - G2A:       Client-id/secret in body or query → env vars
- *   - Gamivo:    Bearer token → seller_config.callback_auth_token
- *   - Digiseller: X-Callback-Secret header or ?secret= query → seller_config.callback_auth_token
+ *   - Eneba:     Bearer token -> seller_config.callback_auth_token
+ *   - Kinguin:   X-Auth-Token header -> seller_config.callback_auth_token
+ *   - Kinguin (buyer): X-Event-Secret -> api_profile.buyer_webhook_secret
+ *   - G2A:       Bearer token -> seller_config.g2a_callback_auth_token
+ *   - Gamivo:    Bearer token -> seller_config.callback_auth_token
+ *   - Digiseller: X-Callback-Secret header or ?secret= query -> seller_config.callback_auth_token
  *
  * Uses timing-safe comparison to prevent timing attacks.
  */

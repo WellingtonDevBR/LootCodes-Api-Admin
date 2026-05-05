@@ -2,7 +2,22 @@ import { injectable, inject } from 'tsyringe';
 import { TOKENS } from '../../../di/tokens.js';
 import type { IDatabase } from '../../ports/database.port.js';
 import type { ISellerPricingService } from '../../ports/seller-pricing.port.js';
+import type { CompetitorPrice } from '../../ports/marketplace-adapter.port.js';
 import type { CompetitorItem, GetCompetitorsDto, GetCompetitorsResult } from './seller-pricing.types.js';
+
+function stampOwnership(
+  competitors: CompetitorPrice[],
+  ourExternalListingId: string | null | undefined,
+): CompetitorPrice[] {
+  const ours = ourExternalListingId?.trim();
+  if (!ours) return competitors;
+  return competitors.map((row) => {
+    const id = row.externalListingId?.trim();
+    if (id && id === ours) return { ...row, isOwnOffer: true };
+    if (row.isOwnOffer === true) return row;
+    return { ...row, isOwnOffer: false as const };
+  });
+}
 
 @injectable()
 export class GetCompetitorsUseCase {
@@ -24,12 +39,14 @@ export class GetCompetitorsUseCase {
     });
     const providerCode = (account?.provider_code as string) ?? '';
     const externalProductId = (listing.external_product_id as string) ?? '';
+    const externalListingId = (listing.external_listing_id as string) ?? '';
 
     let competitors: CompetitorItem[];
 
     if (providerCode && externalProductId) {
       try {
-        const live = await this.pricingService.getCompetitors(providerCode, externalProductId);
+        let live = await this.pricingService.getCompetitors(providerCode, externalProductId);
+        live = stampOwnership(live, externalListingId);
         competitors = live.map((c) => ({
           merchant_name: c.merchantName,
           price_cents: c.priceCents,
@@ -45,10 +62,11 @@ export class GetCompetitorsUseCase {
     }
 
     const ownOffer = competitors.find((c) => c.is_own_offer);
+    const inStockSorted = competitors.filter((c) => c.in_stock);
     let ownPosition: number | null = null;
     if (ownOffer) {
-      ownPosition = competitors.filter((c) => c.in_stock).findIndex((c) => c.is_own_offer) + 1;
-      if (ownPosition === 0) ownPosition = null;
+      const idx = inStockSorted.findIndex((c) => c.is_own_offer);
+      ownPosition = idx >= 0 ? idx + 1 : null;
     }
 
     return {

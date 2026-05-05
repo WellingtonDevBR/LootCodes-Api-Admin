@@ -335,6 +335,13 @@ export async function adminSellerRoutes(app: FastifyInstance) {
     return reply.send(result);
   });
 
+  app.post('/listings/:id/clear-error', { preHandler: [adminGuard] }, async (request, reply) => {
+    const db = container.resolve<IDatabase>(TOKENS.Database);
+    const { id } = request.params as { id: string };
+    await db.update('seller_listings', { id }, { error_message: null });
+    return reply.send({ ok: true });
+  });
+
   // ─── Monitoring Endpoints ────────────────────────────────────────────
 
   app.get('/webhook-events', { preHandler: [employeeGuard] }, async (request, reply) => {
