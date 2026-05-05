@@ -73,7 +73,8 @@ export interface CompetitorPrice {
   priceCents: number;
   currency: string;
   inStock: boolean;
-  isOwnOffer: boolean;
+  isOwnOffer: boolean | null;
+  externalListingId?: string;
 }
 
 export interface CreateListingParams {

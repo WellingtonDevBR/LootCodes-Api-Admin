@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
+import crypto from 'node:crypto';
 import { container } from '../../di/container.js';
-import { UC_TOKENS } from '../../di/tokens.js';
+import { TOKENS, UC_TOKENS } from '../../di/tokens.js';
 import { adminGuard, employeeGuard } from '../middleware/auth.guard.js';
 import type { CalculatePayoutUseCase } from '../../core/use-cases/seller/calculate-payout.use-case.js';
 import type { GetCompetitorsUseCase } from '../../core/use-cases/seller/get-competitors.use-case.js';
@@ -9,6 +10,8 @@ import type { DryRunPricingUseCase } from '../../core/use-cases/seller/dry-run-p
 import type { GetDecisionHistoryUseCase } from '../../core/use-cases/seller/get-decision-history.use-case.js';
 import type { GetLatestDecisionUseCase } from '../../core/use-cases/seller/get-latest-decision.use-case.js';
 import type { GetProviderDefaultsUseCase } from '../../core/use-cases/seller/get-provider-defaults.use-case.js';
+import type { ISellerAutoPricingService, ISellerStockSyncService } from '../../core/ports/seller-pricing.port.js';
+import { getRegisteredJobs } from '../../infra/scheduler/cron-registry.js';
 
 export async function adminSellerPricingRoutes(app: FastifyInstance) {
   app.post('/payout', { preHandler: [employeeGuard] }, async (request, reply) => {
@@ -72,5 +75,33 @@ export async function adminSellerPricingRoutes(app: FastifyInstance) {
     const { accountId } = request.params as { accountId: string };
     const result = await uc.execute({ provider_account_id: accountId });
     return reply.send(result);
+  });
+
+  // ─── Manual Trigger Endpoints ─────────────────────────────────────
+
+  app.post('/refresh-prices', { preHandler: [adminGuard] }, async (request, reply) => {
+    const requestId = `manual-prices-${crypto.randomUUID().slice(0, 8)}`;
+    const service = container.resolve<ISellerAutoPricingService>(TOKENS.SellerAutoPricingService);
+    const result = await service.refreshAllPrices(requestId);
+    return reply.send({ requestId, ...result });
+  });
+
+  app.post('/refresh-cost-bases', { preHandler: [adminGuard] }, async (request, reply) => {
+    const requestId = `manual-costs-${crypto.randomUUID().slice(0, 8)}`;
+    const service = container.resolve<ISellerAutoPricingService>(TOKENS.SellerAutoPricingService);
+    const result = await service.refreshAllCostBases(requestId);
+    return reply.send({ requestId, ...result });
+  });
+
+  app.post('/refresh-stock', { preHandler: [adminGuard] }, async (request, reply) => {
+    const requestId = `manual-stock-${crypto.randomUUID().slice(0, 8)}`;
+    const service = container.resolve<ISellerStockSyncService>(TOKENS.SellerStockSyncService);
+    const result = await service.refreshAllStock(requestId);
+    return reply.send({ requestId, ...result });
+  });
+
+  app.get('/cron-status', { preHandler: [employeeGuard] }, async (_request, reply) => {
+    const jobs = getRegisteredJobs();
+    return reply.send({ jobs, count: jobs.length });
   });
 }

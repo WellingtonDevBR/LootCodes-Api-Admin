@@ -25,6 +25,7 @@ export interface IDatabase {
   queryOne<T = unknown>(table: string, options?: QueryOptions): Promise<T | null>;
   queryPaginated<T = unknown>(table: string, options?: QueryOptions): Promise<PaginatedResult<T>>;
   insert<T = unknown>(table: string, data: Record<string, unknown>): Promise<T>;
+  insertMany(table: string, rows: Record<string, unknown>[]): Promise<number>;
   update<T = unknown>(table: string, filter: Record<string, unknown>, data: Record<string, unknown>): Promise<T[]>;
   upsert<T = unknown>(table: string, data: Record<string, unknown>, onConflict?: string): Promise<T>;
   delete(table: string, filter: Record<string, unknown>): Promise<number>;

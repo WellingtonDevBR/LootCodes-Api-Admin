@@ -204,16 +204,6 @@ export class SellerKeyOperationsService implements ISellerKeyOperationsPort {
     const productKeyIds = provisionsToReturn.map((p) => p.product_key_id);
     const RESTOCKABLE_STATES = ['seller_provisioned', 'seller_reserved', 'seller_uploaded'];
 
-    await this.db.update<{ id: string }>('product_keys',
-      { id: productKeyIds[0] },
-      {
-        key_state: 'available',
-        is_assigned: false,
-        order_id: null,
-        allowed_seller_provider_account_ids: null,
-      },
-    );
-
     let keysRestocked = 0;
     for (const keyId of productKeyIds) {
       try {

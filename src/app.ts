@@ -39,6 +39,7 @@ import { adminSellerPricingRoutes } from './http/routes/seller-pricing.routes.js
 import { adminOpportunitiesRoutes } from './http/routes/opportunities.routes.js';
 import { adminAlertsRoutes } from './http/routes/alerts.routes.js';
 import { sellerWebhookRoutes } from './http/routes/seller-webhook.routes.js';
+import { registerCronJobs } from './infra/scheduler/cron-registry.js';
 
 export async function buildApp(): Promise<FastifyInstance> {
   const env = loadEnv();
@@ -124,6 +125,8 @@ export async function buildApp(): Promise<FastifyInstance> {
   Sentry.setupFastifyErrorHandler(app);
 
   app.setErrorHandler(errorHandler);
+
+  await registerCronJobs(app);
 
   return app;
 }

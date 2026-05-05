@@ -1,4 +1,4 @@
-import type { SellerListingType } from './seller.types.js';
+import type { SellerListingType, SellerPriceStrategy } from './seller.types.js';
 
 // --- Create Listing ---
 
@@ -71,6 +71,8 @@ export interface SellerListingPricingOverrides {
   min_profit_percent?: number | null;
   cost_basis_override_cents?: number | null;
   cost_basis_override_currency?: string | null;
+  price_strategy?: SellerPriceStrategy | null;
+  price_strategy_value?: number | null;
 }
 
 export interface UpdateSellerListingOverridesDto {

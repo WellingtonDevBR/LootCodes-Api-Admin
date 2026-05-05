@@ -68,6 +68,15 @@ export class SupabaseDbAdapter implements IDatabase {
     return result as T;
   }
 
+  async insertMany(table: string, rows: Record<string, unknown>[]): Promise<number> {
+    if (rows.length === 0) return 0;
+    const { error } = await this.getClient()
+      .from(table)
+      .insert(rows);
+    if (error) throw new InternalError(`Bulk insert failed on ${table}: ${error.message}`);
+    return rows.length;
+  }
+
   async update<T = unknown>(
     table: string,
     filter: Record<string, unknown>,
