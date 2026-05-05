@@ -190,7 +190,7 @@ export class SupabaseAdminInventoryRepository implements IAdminInventoryReposito
     const offset = dto.offset ?? 0;
 
     const variants = await this.db.query<Record<string, unknown>>('product_variants', {
-      select: 'id, sku, price_usd, is_active, product_id, region_id, default_cost_cents, default_cost_currency',
+      select: 'id, sku, price_usd, is_active, product_id, region_id, default_cost_cents, default_cost_currency, face_value',
       order: { column: 'created_at', ascending: false },
       limit: 10000,
     });
@@ -200,7 +200,7 @@ export class SupabaseAdminInventoryRepository implements IAdminInventoryReposito
     const productIds = [...new Set(sliced.map(v => v.product_id as string))];
     const regionIds = [...new Set(sliced.map(v => v.region_id as string).filter(Boolean))];
 
-    const [products, regions, availableKeys, soldKeys, variantPlatforms, providerOffers, providerAccounts] = await Promise.all([
+    const [products, regions, availableKeys, soldKeys, variantPlatforms, providerOffers, providerAccounts, sellerListings] = await Promise.all([
       productIds.length
         ? this.batchedQuery<Record<string, unknown>>('products', 'id', productIds, { select: 'id, name, category' })
         : [],
@@ -227,6 +227,10 @@ export class SupabaseAdminInventoryRepository implements IAdminInventoryReposito
         select: 'id, display_name, supports_seller',
         limit: 1000,
       }),
+      this.batchedQuery<Record<string, unknown>>(
+        'seller_listings', 'variant_id', variantIds,
+        { select: 'variant_id, declared_stock', eq: [['status', 'active']], limit: 10000 },
+      ),
     ]);
 
     const productMap = new Map(products.map(p => [p.id as string, p]));
@@ -242,6 +246,15 @@ export class SupabaseAdminInventoryRepository implements IAdminInventoryReposito
     for (const k of soldKeys) {
       const vid = k.variant_id as string;
       stockSoldMap.set(vid, (stockSoldMap.get(vid) ?? 0) + 1);
+    }
+
+    const declaredStockMap = new Map<string, number>();
+    for (const sl of sellerListings) {
+      const vid = sl.variant_id as string;
+      const ds = typeof sl.declared_stock === 'number' ? sl.declared_stock : 0;
+      if (ds > 0) {
+        declaredStockMap.set(vid, Math.max(declaredStockMap.get(vid) ?? 0, ds));
+      }
     }
 
     // Platform names per variant
@@ -283,14 +296,17 @@ export class SupabaseAdminInventoryRepository implements IAdminInventoryReposito
       const vid = v.id as string;
       const defaultCostCents = typeof v.default_cost_cents === 'number' ? v.default_cost_cents : null;
       const defaultCostCurrency = typeof v.default_cost_currency === 'string' ? v.default_cost_currency : null;
+      const keysAvailable = stockAvailableMap.get(vid) ?? 0;
+      const declared = declaredStockMap.get(vid) ?? 0;
       return {
         product_id: (v.product_id as string) ?? '',
         product_name: (product?.name as string) ?? '',
         variant_id: vid,
         sku: (v.sku as string) ?? null,
+        face_value: typeof v.face_value === 'string' ? v.face_value : null,
         region_name: (region?.code as string) ?? (region?.name as string) ?? null,
         platform_name: variantPlatformMap.get(vid) ?? null,
-        stock_available: stockAvailableMap.get(vid) ?? 0,
+        stock_available: Math.max(keysAvailable, declared),
         stock_reserved: 0,
         stock_sold: stockSoldMap.get(vid) ?? 0,
         price_usd: (v.price_usd as number) ?? 0,

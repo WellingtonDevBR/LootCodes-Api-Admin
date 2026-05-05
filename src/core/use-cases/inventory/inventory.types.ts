@@ -142,6 +142,7 @@ export interface InventoryCatalogRow {
   product_name: string;
   variant_id: string;
   sku: string | null;
+  face_value: string | null;
   region_name: string | null;
   platform_name: string | null;
   stock_available: number;
