@@ -152,6 +152,8 @@ export interface InventoryCatalogRow {
   category: string | null;
   supplier_ids: string[];
   purchaser_ids: string[];
+  default_cost_cents: number | null;
+  default_cost_currency: string | null;
 }
 
 export interface ProviderAccountInfo {

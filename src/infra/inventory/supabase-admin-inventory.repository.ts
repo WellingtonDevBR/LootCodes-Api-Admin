@@ -190,8 +190,9 @@ export class SupabaseAdminInventoryRepository implements IAdminInventoryReposito
     const offset = dto.offset ?? 0;
 
     const variants = await this.db.query<Record<string, unknown>>('product_variants', {
-      select: 'id, sku, price_usd, is_active, product_id, region_id',
+      select: 'id, sku, price_usd, is_active, product_id, region_id, default_cost_cents, default_cost_currency',
       order: { column: 'created_at', ascending: false },
+      limit: 10000,
     });
 
     const sliced = variants.slice(offset, offset + limit);
@@ -208,22 +209,23 @@ export class SupabaseAdminInventoryRepository implements IAdminInventoryReposito
         : [],
       this.batchedQuery<Record<string, unknown>>(
         'product_keys', 'variant_id', variantIds,
-        { select: 'variant_id', eq: [['key_state', 'available']] },
+        { select: 'variant_id', eq: [['key_state', 'available']], limit: 50000 },
       ),
       this.batchedQuery<Record<string, unknown>>(
         'product_keys', 'variant_id', variantIds,
-        { select: 'variant_id', eq: [['is_used', true]] },
+        { select: 'variant_id', eq: [['is_used', true]], limit: 50000 },
       ),
       this.batchedQuery<Record<string, unknown>>(
         'variant_platforms', 'variant_id', variantIds,
-        { select: 'variant_id, platform_id' },
+        { select: 'variant_id, platform_id', limit: 10000 },
       ),
       this.batchedQuery<Record<string, unknown>>(
         'provider_variant_offers', 'variant_id', variantIds,
-        { select: 'variant_id, provider_account_id' },
+        { select: 'variant_id, provider_account_id', limit: 10000 },
       ),
       this.db.query<Record<string, unknown>>('provider_accounts', {
         select: 'id, display_name, supports_seller',
+        limit: 1000,
       }),
     ]);
 
@@ -279,6 +281,8 @@ export class SupabaseAdminInventoryRepository implements IAdminInventoryReposito
       const product = productMap.get(v.product_id as string);
       const region = regionMap.get(v.region_id as string);
       const vid = v.id as string;
+      const defaultCostCents = typeof v.default_cost_cents === 'number' ? v.default_cost_cents : null;
+      const defaultCostCurrency = typeof v.default_cost_currency === 'string' ? v.default_cost_currency : null;
       return {
         product_id: (v.product_id as string) ?? '',
         product_name: (product?.name as string) ?? '',
@@ -294,6 +298,8 @@ export class SupabaseAdminInventoryRepository implements IAdminInventoryReposito
         category: (product?.category as string) ?? null,
         supplier_ids: supplierIdsMap.get(vid) ?? [],
         purchaser_ids: purchaserIdsMap.get(vid) ?? [],
+        default_cost_cents: defaultCostCents,
+        default_cost_currency: defaultCostCurrency,
       };
     });
 
