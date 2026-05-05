@@ -15,6 +15,10 @@ import type {
   ManualProviderPurchaseResult,
   RecoverProviderOrderDto,
   RecoverProviderOrderResult,
+  SearchCatalogDto,
+  SearchCatalogResult,
+  LinkCatalogProductDto,
+  LinkCatalogProductResult,
 } from '../use-cases/procurement/procurement.types.js';
 
 export interface IAdminProcurementRepository {
@@ -26,4 +30,6 @@ export interface IAdminProcurementRepository {
   refreshProviderPrices(dto: RefreshProviderPricesDto): Promise<RefreshProviderPricesResult>;
   manualProviderPurchase(dto: ManualProviderPurchaseDto): Promise<ManualProviderPurchaseResult>;
   recoverProviderOrder(dto: RecoverProviderOrderDto): Promise<RecoverProviderOrderResult>;
+  searchCatalog(dto: SearchCatalogDto): Promise<SearchCatalogResult>;
+  linkCatalogProduct(dto: LinkCatalogProductDto): Promise<LinkCatalogProductResult>;
 }

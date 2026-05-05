@@ -5,14 +5,18 @@
  *   1. Validate listing exists and is active
  *   2. Deduplicate against existing live reservations
  *   3. Atomic key claim via SellerKeyOperations (with JIT fallback)
- *   4. Emit seller.stock_reserved + inventory.stock_changed
- *   5. Return reservation confirmation
+ *   4. Health monitoring via IListingHealthPort
+ *   5. On total failure: propagate variant unavailability via IVariantUnavailabilityPort
+ *   6. Emit seller.stock_reserved + inventory.stock_changed
+ *   7. Return reservation confirmation
  */
 import { injectable, inject } from 'tsyringe';
 import { TOKENS } from '../../../di/tokens.js';
 import type { IDatabase } from '../../ports/database.port.js';
 import type { ISellerKeyOperationsPort } from '../../ports/seller-key-operations.port.js';
 import type { ISellerDomainEventPort } from '../../ports/seller-domain-event.port.js';
+import type { IListingHealthPort } from '../../ports/seller-listing-health.port.js';
+import type { IVariantUnavailabilityPort } from '../../ports/variant-unavailability.port.js';
 import type {
   DeclaredStockReserveDto,
   DeclaredStockReserveResult,
@@ -30,10 +34,12 @@ export class HandleDeclaredStockReserveUseCase {
     @inject(TOKENS.Database) private readonly db: IDatabase,
     @inject(TOKENS.SellerKeyOperations) private readonly keyOps: ISellerKeyOperationsPort,
     @inject(TOKENS.SellerDomainEvents) private readonly events: ISellerDomainEventPort,
+    @inject(TOKENS.ListingHealth) private readonly healthPort: IListingHealthPort,
+    @inject(TOKENS.VariantUnavailability) private readonly unavailability: IVariantUnavailabilityPort,
   ) {}
 
   async execute(dto: DeclaredStockReserveDto): Promise<DeclaredStockReserveResult> {
-    const { orderId, originalOrderId, auctions, wholesale, providerCode } = dto;
+    const { orderId, originalOrderId, auctions, wholesale, providerCode, feesCents } = dto;
 
     if (!auctions || auctions.length === 0) {
       logger.error('RESERVE with no auctions', { orderId });
@@ -52,13 +58,13 @@ export class HandleDeclaredStockReserveUseCase {
 
         if (!listing) {
           logger.error('Listing not found for auctionId', { auctionId, orderId });
-          await this.updateHealthCounters(auctionId, 'reservation', false);
+          await this.healthPort.updateHealthCounters(auctionId, 'reservation', false);
           return { success: false, orderId };
         }
 
         if (!listing.provider_account_id) {
           logger.error('Listing missing provider_account_id', { auctionId, orderId });
-          await this.updateHealthCounters(auctionId, 'reservation', false);
+          await this.healthPort.updateHealthCounters(auctionId, 'reservation', false);
           return { success: false, orderId };
         }
 
@@ -97,25 +103,48 @@ export class HandleDeclaredStockReserveUseCase {
           ? Math.round(priceMoney.amount * 100)
           : Math.round(parseFloat(String(priceMoney.amount)) * 100);
 
-        const outcome = await this.keyOps.claimKeysForReservation({
-          variantId: listing.variant_id,
-          listingId: listing.id,
-          providerAccountId: listing.provider_account_id,
-          quantity: keyCount,
-          externalReservationId: orderId,
-          externalOrderId: orderId,
-          expiresAt,
-          providerMetadata: {
-            originalOrderId,
-            auctionId,
-            price: { amount: salePriceCents, currency: priceMoney.currency },
-            wholesale: wholesale ?? false,
-          },
-          salePriceCents,
-          minMarginCents: listing.min_jit_margin_cents ?? undefined,
-        });
+        const providerMetadata: Record<string, unknown> = {
+          originalOrderId,
+          auctionId,
+          price: { amount: salePriceCents, currency: priceMoney.currency },
+          wholesale: wholesale ?? false,
+        };
 
-        await this.updateHealthCounters(auctionId, 'reservation', true);
+        if (auction.marketplaceFinancials) {
+          providerMetadata.marketplaceFinancials = auction.marketplaceFinancials;
+        }
+
+        let outcome;
+        try {
+          outcome = await this.keyOps.claimKeysForReservation({
+            variantId: listing.variant_id,
+            listingId: listing.id,
+            providerAccountId: listing.provider_account_id,
+            quantity: keyCount,
+            externalReservationId: orderId,
+            externalOrderId: orderId,
+            expiresAt,
+            providerMetadata,
+            salePriceCents,
+            minMarginCents: listing.min_jit_margin_cents ?? undefined,
+            feesCents,
+          });
+        } catch (claimErr) {
+          logger.error('Key claim failed — propagating variant unavailability', claimErr as Error, {
+            orderId, auctionId, variantId: listing.variant_id,
+          });
+
+          await this.healthPort.updateHealthCounters(auctionId, 'reservation', false);
+
+          await this.unavailability.propagateVariantUnavailable(
+            listing.variant_id,
+            'jit_failed',
+          );
+
+          return { success: false, orderId };
+        }
+
+        await this.healthPort.updateHealthCounters(auctionId, 'reservation', true);
 
         await this.events.emitSellerEvent({
           eventType: 'seller.stock_reserved',
@@ -156,7 +185,7 @@ export class HandleDeclaredStockReserveUseCase {
     } catch (err) {
       logger.error('Unexpected error in reservation handler', err as Error, { orderId });
       if (auctions[0]) {
-        await this.updateHealthCounters(auctions[0].auctionId, 'reservation', false);
+        await this.healthPort.updateHealthCounters(auctions[0].auctionId, 'reservation', false);
       }
       return { success: false, orderId };
     }
@@ -166,24 +195,5 @@ export class HandleDeclaredStockReserveUseCase {
     const set = new Set([orderId]);
     if (originalOrderId && originalOrderId !== orderId) set.add(originalOrderId);
     return Array.from(set);
-  }
-
-  private async updateHealthCounters(
-    externalListingId: string,
-    type: 'reservation' | 'provision',
-    success: boolean,
-  ): Promise<void> {
-    try {
-      const col = success
-        ? `${type}_success_count`
-        : `${type}_failure_count`;
-
-      await this.db.rpc('increment_seller_listing_health_counter', {
-        p_external_listing_id: externalListingId,
-        p_counter: col,
-      });
-    } catch (err) {
-      logger.warn('Failed to update health counters', err as Error, { externalListingId, type });
-    }
   }
 }

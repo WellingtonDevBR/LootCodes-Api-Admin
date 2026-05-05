@@ -22,6 +22,38 @@ export interface EnebaAuctionPayload {
   campaignFee?: EnebaMoneyField;
   substituteAuctionFee?: EnebaMoneyField;
   extraInfo?: string;
+  marketplaceFinancials?: MarketplaceFinancialsSnapshot;
+}
+
+export interface MarketplaceFinancialsSnapshot {
+  provider: 'eneba';
+  wholesale: boolean;
+  currency: string;
+  key_count: number;
+  gross_cents_per_unit: number;
+  original_price_cents_per_unit: number | null;
+  price_without_commission_cents_per_unit: number;
+  campaign_fee_cents_per_unit: number;
+  substitute_auction_fee_cents_per_unit: number | null;
+  seller_profit_cents_per_unit: number;
+  extra_info: string | null;
+  total_gross_cents: number;
+  total_seller_profit_cents: number;
+  total_provider_fee_aggregate_cents: number;
+  raw: MarketplaceFinancialsRawWire;
+}
+
+export interface MarketplaceFinancialsRawWire {
+  price_amount: string;
+  price_currency: string;
+  original_price_amount?: string;
+  original_price_currency?: string;
+  price_without_commission_amount?: string;
+  price_without_commission_currency?: string;
+  campaign_fee_amount?: string;
+  campaign_fee_currency?: string;
+  substitute_auction_fee_amount?: string;
+  substitute_auction_fee_currency?: string;
 }
 
 export interface DeclaredStockReserveDto {
@@ -30,6 +62,7 @@ export interface DeclaredStockReserveDto {
   auctions: EnebaAuctionPayload[];
   wholesale?: boolean;
   providerCode: string;
+  feesCents?: number;
 }
 
 export interface DeclaredStockReserveResult {

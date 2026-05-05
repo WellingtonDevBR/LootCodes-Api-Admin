@@ -168,3 +168,88 @@ export interface FetchRemoteStockResult {
   listing_id: string;
   items: RemoteStockItem[];
 }
+
+// --- Batch Price Update ---
+
+export interface BatchUpdatePricesDto {
+  provider_account_id: string;
+  updates: Array<{ external_listing_id: string; price_cents: number }>;
+  admin_id: string;
+}
+
+export interface BatchUpdatePricesResult {
+  updated: number;
+  failed: number;
+  errors?: Array<{ externalListingId: string; error: string }>;
+}
+
+// --- Batch Stock Update ---
+
+export interface BatchUpdateStockDto {
+  provider_account_id: string;
+  updates: Array<{ external_listing_id: string; quantity: number }>;
+  admin_id: string;
+}
+
+export interface BatchUpdateStockResult {
+  updated: number;
+  failed: number;
+}
+
+// --- Global Stock Status ---
+
+export interface UpdateGlobalStockStatusDto {
+  provider_account_id: string;
+  enabled: boolean;
+  admin_id: string;
+}
+
+export interface UpdateGlobalStockStatusResult {
+  success: boolean;
+}
+
+// --- Enable Declared Stock ---
+
+export interface EnableDeclaredStockDto {
+  provider_account_id: string;
+  admin_id: string;
+}
+
+export interface EnableDeclaredStockResult {
+  success: boolean;
+  failureReason: string | null;
+}
+
+// --- Enable Key Replacements ---
+
+export interface EnableKeyReplacementsDto {
+  provider_account_id: string;
+  admin_id: string;
+}
+
+export interface EnableKeyReplacementsResult {
+  success: boolean;
+}
+
+// --- Remove Callback ---
+
+export interface RemoveCallbackDto {
+  provider_account_id: string;
+  callback_id: string;
+  admin_id: string;
+}
+
+export interface RemoveCallbackResult {
+  removed: boolean;
+}
+
+// --- Expire Reservations ---
+
+export interface ExpireReservationsDto {
+  admin_id: string;
+  max_age_minutes?: number;
+}
+
+export interface ExpireReservationsResult {
+  expired: number;
+}

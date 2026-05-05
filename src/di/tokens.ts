@@ -41,6 +41,8 @@ export const TOKENS = {
   MarketplaceAdapterRegistry: Symbol.for('IMarketplaceAdapterRegistry'),
   SellerKeyOperations: Symbol.for('ISellerKeyOperationsPort'),
   SellerDomainEvents: Symbol.for('ISellerDomainEventPort'),
+  ListingHealth: Symbol.for('IListingHealthPort'),
+  VariantUnavailability: Symbol.for('IVariantUnavailabilityPort'),
 
   // Seller pricing services
   SellerPricingService: Symbol.for('ISellerPricingService'),
@@ -161,6 +163,8 @@ export const UC_TOKENS = {
   RefreshProviderPrices: Symbol.for('RefreshProviderPricesUseCase'),
   ManualProviderPurchase: Symbol.for('ManualProviderPurchaseUseCase'),
   RecoverProviderOrder: Symbol.for('RecoverProviderOrderUseCase'),
+  SearchCatalog: Symbol.for('SearchCatalogUseCase'),
+  LinkCatalogProduct: Symbol.for('LinkCatalogProductUseCase'),
 
   // Price Match
   ListPriceMatchClaims: Symbol.for('ListPriceMatchClaimsUseCase'),
@@ -295,6 +299,13 @@ export const UC_TOKENS = {
   GetDecisionHistory: Symbol.for('GetDecisionHistoryUseCase'),
   GetLatestDecision: Symbol.for('GetLatestDecisionUseCase'),
   GetProviderDefaults: Symbol.for('GetProviderDefaultsUseCase'),
+  BatchUpdatePrices: Symbol.for('BatchUpdatePricesUseCase'),
+  BatchUpdateStock: Symbol.for('BatchUpdateStockUseCase'),
+  UpdateGlobalStockStatus: Symbol.for('UpdateGlobalStockStatusUseCase'),
+  EnableDeclaredStock: Symbol.for('EnableDeclaredStockUseCase'),
+  EnableKeyReplacements: Symbol.for('EnableKeyReplacementsUseCase'),
+  RemoveCallback: Symbol.for('RemoveCallbackUseCase'),
+  ExpireReservations: Symbol.for('ExpireReservationsUseCase'),
 
   // Seller Webhooks
   HandleDeclaredStockReserve: Symbol.for('HandleDeclaredStockReserveUseCase'),

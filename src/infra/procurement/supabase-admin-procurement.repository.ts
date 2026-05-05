@@ -19,6 +19,11 @@ import type {
   ManualProviderPurchaseResult,
   RecoverProviderOrderDto,
   RecoverProviderOrderResult,
+  SearchCatalogDto,
+  SearchCatalogResult,
+  CatalogProductRow,
+  LinkCatalogProductDto,
+  LinkCatalogProductResult,
 } from '../../core/use-cases/procurement/procurement.types.js';
 import { createLogger } from '../../shared/logger.js';
 
@@ -167,5 +172,91 @@ export class SupabaseAdminProcurementRepository implements IAdminProcurementRepo
     );
 
     return { success: true, new_status: result.new_status };
+  }
+
+  async searchCatalog(dto: SearchCatalogDto): Promise<SearchCatalogResult> {
+    const pageSize = dto.page_size ?? 20;
+    const page = dto.page ?? 1;
+    const from = (page - 1) * pageSize;
+    const to = from + pageSize - 1;
+
+    logger.info('Searching provider catalog table', { search: dto.search, provider: dto.provider_code, page });
+
+    const select = 'id, provider_code, external_product_id, product_name, platform, region, min_price_cents, currency, qty, available_to_buy, thumbnail, slug, wholesale_price_cents, updated_at';
+    const ilike: Array<[string, string]> = [];
+    const filter: Record<string, unknown> = {};
+
+    if (dto.search) {
+      ilike.push(['product_name', `%${dto.search}%`]);
+    }
+    if (dto.provider_code) {
+      filter.provider_code = dto.provider_code;
+    }
+
+    const { data, total } = await this.db.queryPaginated<CatalogProductRow>(
+      'provider_product_catalog',
+      {
+        select,
+        filter: Object.keys(filter).length > 0 ? filter : undefined,
+        ilike: ilike.length > 0 ? ilike : undefined,
+        order: { column: 'product_name', ascending: true },
+        range: [from, to],
+      },
+    );
+
+    return { products: data, total };
+  }
+
+  async linkCatalogProduct(dto: LinkCatalogProductDto): Promise<LinkCatalogProductResult> {
+    logger.info('Linking catalog product to variant', {
+      variantId: dto.variant_id,
+      provider: dto.provider_code,
+      externalProduct: dto.external_product_id,
+    });
+
+    const accounts = await this.db.query<{ id: string; supports_seller: boolean }>(
+      'provider_accounts',
+      { filter: { provider_code: dto.provider_code }, limit: 1 },
+    );
+    const account = accounts[0];
+    if (!account) {
+      throw new Error(`No provider account found for provider_code=${dto.provider_code}`);
+    }
+
+    const offer = await this.db.insert<{ id: string }>('provider_variant_offers', {
+      variant_id: dto.variant_id,
+      provider_code: dto.provider_code,
+      provider_account_id: account.id,
+      external_product_id: dto.external_product_id,
+      currency: dto.currency,
+      last_price_cents: dto.price_cents,
+      is_active: true,
+    });
+
+    let sellerListingId: string | null = null;
+
+    if (account.supports_seller) {
+      const existingListings = await this.db.query<{ id: string }>(
+        'seller_listings',
+        {
+          filter: { variant_id: dto.variant_id, provider_account_id: account.id },
+          limit: 1,
+        },
+      );
+
+      if (existingListings.length === 0) {
+        const listing = await this.db.insert<{ id: string }>('seller_listings', {
+          variant_id: dto.variant_id,
+          provider_account_id: account.id,
+          external_product_id: dto.external_product_id,
+          status: 'draft',
+          currency: dto.currency,
+          price_cents: dto.price_cents,
+        });
+        sellerListingId = listing.id;
+      }
+    }
+
+    return { offer_id: offer.id, seller_listing_id: sellerListingId };
   }
 }

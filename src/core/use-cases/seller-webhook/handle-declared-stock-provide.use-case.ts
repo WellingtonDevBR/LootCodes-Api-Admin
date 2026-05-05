@@ -5,13 +5,15 @@
  *   1. Find reservation by external_order_id (orderId or originalOrderId)
  *   2. Idempotent replay if already provisioned (re-decrypt delivered keys)
  *   3. Provision from pending keys (decrypt + update states)
- *   4. Complete provision orchestration (sale recording, events, stock notify)
- *   5. Return decrypted keys for marketplace delivery
+ *   4. Health monitoring via IListingHealthPort
+ *   5. Complete provision orchestration (sale recording, events, stock notify)
+ *   6. Return decrypted keys for marketplace delivery
  */
 import { injectable, inject } from 'tsyringe';
 import { TOKENS } from '../../../di/tokens.js';
 import type { IDatabase } from '../../ports/database.port.js';
 import type { ISellerKeyOperationsPort } from '../../ports/seller-key-operations.port.js';
+import type { IListingHealthPort } from '../../ports/seller-listing-health.port.js';
 import type {
   DeclaredStockProvideDto,
   DeclaredStockProvideResult,
@@ -26,6 +28,7 @@ export class HandleDeclaredStockProvideUseCase {
   constructor(
     @inject(TOKENS.Database) private readonly db: IDatabase,
     @inject(TOKENS.SellerKeyOperations) private readonly keyOps: ISellerKeyOperationsPort,
+    @inject(TOKENS.ListingHealth) private readonly healthPort: IListingHealthPort,
   ) {}
 
   async execute(dto: DeclaredStockProvideDto): Promise<DeclaredStockProvideResult> {
@@ -50,6 +53,9 @@ export class HandleDeclaredStockProvideUseCase {
         return { success: false, orderId };
       }
 
+      const meta = this.parseMetadata(reservation.provider_metadata);
+      const auctionId = meta.auctionId ?? '';
+
       if (reservation.status === 'provisioned') {
         return this.handleIdempotentReplay(orderId, reservation);
       }
@@ -69,11 +75,12 @@ export class HandleDeclaredStockProvideUseCase {
           orderId, reservationId: reservation.id,
         });
         await this.persistProvisionError(reservation, provisionErr);
+        await this.healthPort.updateHealthCounters(auctionId, 'provision', false);
         return { success: false, orderId };
       }
 
-      const meta = this.parseMetadata(reservation.provider_metadata);
-      const auctionId = meta.auctionId ?? '';
+      await this.healthPort.updateHealthCounters(auctionId, 'provision', true);
+
       const keys = result.decryptedKeys.map((k) => ({ type: 'TEXT' as const, value: k.plaintext }));
 
       try {
@@ -120,6 +127,11 @@ export class HandleDeclaredStockProvideUseCase {
       };
     } catch (err) {
       logger.error('Unexpected error in provision handler', err as Error, { orderId, originalOrderId });
+
+      try {
+        await this.healthPort.updateHealthCounters(orderId, 'provision', false);
+      } catch { /* best-effort */ }
+
       return { success: false, orderId };
     }
   }

@@ -30,6 +30,18 @@ import type { HandleListingDeactivationUseCase } from '../../core/use-cases/sell
 import type { HandleDigisellerDeliveryUseCase } from '../../core/use-cases/seller-webhook/handle-digiseller-delivery.use-case.js';
 import type { HandleInventoryCallbackUseCase } from '../../core/use-cases/seller-webhook/handle-inventory-callback.use-case.js';
 import type { HandleKeyUploadOrderUseCase } from '../../core/use-cases/seller-webhook/handle-key-upload-order.use-case.js';
+import {
+  parseCallbackPayload,
+  ParseError,
+  buildReservationResponse,
+  buildProvisionResponse,
+  buildAuctionKeysResponse,
+  buildTextKey,
+} from '../parsers/eneba-payload-parser.js';
+import {
+  buildMarketplaceFinancialsFromEnebaAuction,
+  computeAggregateFeesCents,
+} from '../parsers/eneba-marketplace-financials.js';
 import { createLogger } from '../../shared/logger.js';
 
 const logger = createLogger('webhook-routes');
@@ -46,54 +58,75 @@ export async function sellerWebhookRoutes(app: FastifyInstance) {
   app.post('/eneba', {
     preHandler: [createMarketplaceAuthMiddleware('eneba')],
   }, async (request, reply) => {
-    const body = request.body as Record<string, unknown>;
-    const action = body.action as string;
+    let parsed;
+    try {
+      parsed = parseCallbackPayload(request.body);
+    } catch (err) {
+      if (err instanceof ParseError) {
+        logger.warn('Eneba payload validation failed', { error: err.message });
+        return reply.status(400).send({ error: err.message });
+      }
+      throw err;
+    }
+
+    const { action, orderId, originalOrderId, auctions, wholesale } = parsed;
 
     switch (action) {
       case 'RESERVE': {
+        const enrichedAuctions = auctions!.map((auction) => {
+          try {
+            const financials = buildMarketplaceFinancialsFromEnebaAuction(auction, wholesale ?? false);
+            return { ...auction, marketplaceFinancials: financials };
+          } catch {
+            return auction;
+          }
+        });
+
+        const feesCents = computeAggregateFeesCents(auctions!, wholesale ?? false);
+
         const uc = container.resolve<HandleDeclaredStockReserveUseCase>(UC_TOKENS.HandleDeclaredStockReserve);
         const result = await uc.execute({
-          orderId: body.orderId as string,
-          originalOrderId: (body.originalOrderId as string) ?? null,
-          auctions: body.auctions as Array<{
-            auctionId: string;
-            keyCount: number;
-            price: { amount: string | number; currency: string };
-          }>,
-          wholesale: body.wholesale as boolean | undefined,
+          orderId,
+          originalOrderId,
+          auctions: enrichedAuctions,
+          wholesale,
           providerCode: 'eneba',
+          feesCents,
         });
-        return reply.send({ action: 'RESERVE', orderId: result.orderId, success: result.success });
+        return reply.send(buildReservationResponse(result.orderId, result.success));
       }
 
       case 'PROVIDE': {
         const uc = container.resolve<HandleDeclaredStockProvideUseCase>(UC_TOKENS.HandleDeclaredStockProvide);
         const result = await uc.execute({
-          orderId: body.orderId as string,
-          originalOrderId: (body.originalOrderId as string) ?? null,
+          orderId,
+          originalOrderId,
           providerCode: 'eneba',
         });
-        return reply.send({
-          action: 'PROVIDE',
-          orderId: result.orderId,
-          success: result.success,
-          ...(result.auctions ? { auctions: result.auctions } : {}),
-        });
+
+        if (!result.success || !result.auctions) {
+          return reply.send(buildProvisionResponse(result.orderId, result.success));
+        }
+
+        const responseAuctions = result.auctions.map((a) =>
+          buildAuctionKeysResponse(
+            a.auctionId,
+            a.keys.map((k) => buildTextKey(k.value)),
+          ),
+        );
+
+        return reply.send(buildProvisionResponse(result.orderId, true, responseAuctions));
       }
 
       case 'CANCEL': {
         const uc = container.resolve<HandleDeclaredStockCancelUseCase>(UC_TOKENS.HandleDeclaredStockCancel);
         await uc.execute({
-          orderId: body.orderId as string,
-          originalOrderId: (body.originalOrderId as string) ?? null,
+          orderId,
+          originalOrderId,
           providerCode: 'eneba',
         });
         return reply.status(200).send();
       }
-
-      default:
-        logger.warn('Unknown Eneba action', { action });
-        return reply.status(400).send({ error: 'Unknown action' });
     }
   });
 

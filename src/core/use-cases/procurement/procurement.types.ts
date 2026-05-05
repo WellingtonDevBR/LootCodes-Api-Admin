@@ -21,3 +21,48 @@ export interface ManualProviderPurchaseResult { success: boolean; purchase_id?: 
 
 export interface RecoverProviderOrderDto { purchase_id: string; admin_id: string }
 export interface RecoverProviderOrderResult { success: boolean; new_status: string }
+
+export interface SearchCatalogDto {
+  search?: string;
+  provider_code?: string;
+  page?: number;
+  page_size?: number;
+}
+
+export interface CatalogProductRow {
+  id: string;
+  provider_code: string;
+  external_product_id: string;
+  product_name: string;
+  platform: string | null;
+  region: string | null;
+  min_price_cents: number;
+  currency: string;
+  qty: number;
+  available_to_buy: boolean;
+  thumbnail: string | null;
+  slug: string | null;
+  wholesale_price_cents: number | null;
+  updated_at: string;
+}
+
+export interface SearchCatalogResult {
+  products: CatalogProductRow[];
+  total: number;
+}
+
+export interface LinkCatalogProductDto {
+  variant_id: string;
+  provider_code: string;
+  external_product_id: string;
+  currency: string;
+  price_cents: number;
+  platform_code?: string;
+  region_code?: string;
+  admin_id: string;
+}
+
+export interface LinkCatalogProductResult {
+  offer_id: string;
+  seller_listing_id: string | null;
+}

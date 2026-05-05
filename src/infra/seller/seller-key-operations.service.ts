@@ -345,7 +345,7 @@ export class SellerKeyOperationsService implements ISellerKeyOperationsPort {
     currency?: string;
     financialsSnapshot?: Record<string, unknown>;
   }): Promise<void> {
-    const { reservationId, listingId, providerCode, externalOrderId, keysProvisioned, priceCents, currency } = params;
+    const { reservationId, listingId, providerCode, externalOrderId, keysProvisioned, priceCents, currency, financialsSnapshot } = params;
 
     const idempotencyKey = `seller:${reservationId}`;
 
@@ -375,13 +375,19 @@ export class SellerKeyOperationsService implements ISellerKeyOperationsPort {
         listing_id: listingId,
         reservation_id: reservationId,
         keys_provisioned: keysProvisioned,
+        ...(financialsSnapshot && { marketplace_financials: financialsSnapshot }),
       },
     });
+
+    const transactionAmount =
+      typeof financialsSnapshot?.netPayoutCents === 'number'
+        ? financialsSnapshot.netPayoutCents as number
+        : totalAmount;
 
     await this.db.insert('transactions', {
       type: 'sale',
       direction: 'credit',
-      amount: totalAmount,
+      amount: transactionAmount,
       currency: currency ?? 'EUR',
       status: 'completed',
       payment_provider: providerCode,
@@ -391,6 +397,7 @@ export class SellerKeyOperationsService implements ISellerKeyOperationsPort {
         listing_id: listingId,
         external_order_id: externalOrderId,
         keys_provisioned: keysProvisioned,
+        ...(financialsSnapshot && { marketplace_financials: financialsSnapshot }),
       },
     });
   }

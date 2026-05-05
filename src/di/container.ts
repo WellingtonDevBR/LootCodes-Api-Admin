@@ -35,6 +35,8 @@ import { SupabaseAdminSellerRepository } from '../infra/seller/supabase-admin-se
 import { SupabaseAdminSellerPricingRepository } from '../infra/seller/supabase-admin-seller-pricing.repository.js';
 import { SellerKeyOperationsService } from '../infra/seller/seller-key-operations.service.js';
 import { SellerDomainEventsService } from '../infra/seller/seller-domain-events.service.js';
+import { ListingHealthService } from '../infra/seller/listing-health.service.js';
+import { VariantUnavailabilityService } from '../infra/seller/variant-unavailability.service.js';
 import { MarketplaceAdapterRegistry } from '../infra/marketplace/marketplace-adapter-registry.js';
 import { SellerPricingService } from '../infra/seller/pricing/seller-pricing.service.js';
 import { SellerAutoPricingService } from '../infra/seller/pricing/seller-auto-pricing.service.js';
@@ -273,6 +275,13 @@ import { DryRunPricingUseCase } from '../core/use-cases/seller/dry-run-pricing.u
 import { GetDecisionHistoryUseCase } from '../core/use-cases/seller/get-decision-history.use-case.js';
 import { GetLatestDecisionUseCase } from '../core/use-cases/seller/get-latest-decision.use-case.js';
 import { GetProviderDefaultsUseCase } from '../core/use-cases/seller/get-provider-defaults.use-case.js';
+import { BatchUpdatePricesUseCase } from '../core/use-cases/seller/batch-update-prices.use-case.js';
+import { BatchUpdateStockUseCase } from '../core/use-cases/seller/batch-update-stock.use-case.js';
+import { UpdateGlobalStockStatusUseCase } from '../core/use-cases/seller/update-global-stock-status.use-case.js';
+import { EnableDeclaredStockUseCase } from '../core/use-cases/seller/enable-declared-stock.use-case.js';
+import { EnableKeyReplacementsUseCase } from '../core/use-cases/seller/enable-key-replacements.use-case.js';
+import { RemoveCallbackUseCase } from '../core/use-cases/seller/remove-callback.use-case.js';
+import { ExpireReservationsUseCase } from '../core/use-cases/seller/expire-reservations.use-case.js';
 
 // Use cases — Seller Webhooks
 import { HandleDeclaredStockReserveUseCase } from '../core/use-cases/seller-webhook/handle-declared-stock-reserve.use-case.js';
@@ -304,6 +313,8 @@ import { IngestProviderCatalogStatusUseCase } from '../core/use-cases/procuremen
 import { RefreshProviderPricesUseCase } from '../core/use-cases/procurement/refresh-provider-prices.use-case.js';
 import { ManualProviderPurchaseUseCase } from '../core/use-cases/procurement/manual-provider-purchase.use-case.js';
 import { RecoverProviderOrderUseCase } from '../core/use-cases/procurement/recover-provider-order.use-case.js';
+import { SearchCatalogUseCase } from '../core/use-cases/procurement/search-catalog.use-case.js';
+import { LinkCatalogProductUseCase } from '../core/use-cases/procurement/link-catalog-product.use-case.js';
 
 // Use cases — Opportunities
 import { ListOpportunitiesUseCase } from '../core/use-cases/opportunities/list-opportunities.use-case.js';
@@ -460,6 +471,8 @@ container.register(UC_TOKENS.IngestProviderCatalogStatus, { useClass: IngestProv
 container.register(UC_TOKENS.RefreshProviderPrices, { useClass: RefreshProviderPricesUseCase });
 container.register(UC_TOKENS.ManualProviderPurchase, { useClass: ManualProviderPurchaseUseCase });
 container.register(UC_TOKENS.RecoverProviderOrder, { useClass: RecoverProviderOrderUseCase });
+container.register(UC_TOKENS.SearchCatalog, { useClass: SearchCatalogUseCase });
+container.register(UC_TOKENS.LinkCatalogProduct, { useClass: LinkCatalogProductUseCase });
 
 // Use cases — Opportunities
 container.register(UC_TOKENS.ListOpportunities, { useClass: ListOpportunitiesUseCase });
@@ -600,11 +613,20 @@ container.register(UC_TOKENS.DryRunPricing, { useClass: DryRunPricingUseCase });
 container.register(UC_TOKENS.GetDecisionHistory, { useClass: GetDecisionHistoryUseCase });
 container.register(UC_TOKENS.GetLatestDecision, { useClass: GetLatestDecisionUseCase });
 container.register(UC_TOKENS.GetProviderDefaults, { useClass: GetProviderDefaultsUseCase });
+container.register(UC_TOKENS.BatchUpdatePrices, { useClass: BatchUpdatePricesUseCase });
+container.register(UC_TOKENS.BatchUpdateStock, { useClass: BatchUpdateStockUseCase });
+container.register(UC_TOKENS.UpdateGlobalStockStatus, { useClass: UpdateGlobalStockStatusUseCase });
+container.register(UC_TOKENS.EnableDeclaredStock, { useClass: EnableDeclaredStockUseCase });
+container.register(UC_TOKENS.EnableKeyReplacements, { useClass: EnableKeyReplacementsUseCase });
+container.register(UC_TOKENS.RemoveCallback, { useClass: RemoveCallbackUseCase });
+container.register(UC_TOKENS.ExpireReservations, { useClass: ExpireReservationsUseCase });
 
 // Infrastructure — Marketplace & Seller Services
 container.register(TOKENS.MarketplaceAdapterRegistry, { useClass: MarketplaceAdapterRegistry });
 container.register(TOKENS.SellerKeyOperations, { useClass: SellerKeyOperationsService });
 container.register(TOKENS.SellerDomainEvents, { useClass: SellerDomainEventsService });
+container.register(TOKENS.ListingHealth, { useClass: ListingHealthService });
+container.register(TOKENS.VariantUnavailability, { useClass: VariantUnavailabilityService });
 
 // Seller pricing services
 container.register(TOKENS.SellerCostBasisService, { useClass: SellerCostBasisService });

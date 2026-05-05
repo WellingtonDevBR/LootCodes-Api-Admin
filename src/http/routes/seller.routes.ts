@@ -25,6 +25,13 @@ import type { FetchRemoteStockUseCase } from '../../core/use-cases/seller/fetch-
 import type { GetProviderAccountDetailUseCase } from '../../core/use-cases/seller/get-provider-account-detail.use-case.js';
 import type { RegisterWebhooksUseCase } from '../../core/use-cases/seller/register-webhooks.use-case.js';
 import type { GetWebhookStatusUseCase } from '../../core/use-cases/seller/get-webhook-status.use-case.js';
+import type { BatchUpdatePricesUseCase } from '../../core/use-cases/seller/batch-update-prices.use-case.js';
+import type { BatchUpdateStockUseCase } from '../../core/use-cases/seller/batch-update-stock.use-case.js';
+import type { UpdateGlobalStockStatusUseCase } from '../../core/use-cases/seller/update-global-stock-status.use-case.js';
+import type { EnableDeclaredStockUseCase } from '../../core/use-cases/seller/enable-declared-stock.use-case.js';
+import type { EnableKeyReplacementsUseCase } from '../../core/use-cases/seller/enable-key-replacements.use-case.js';
+import type { RemoveCallbackUseCase } from '../../core/use-cases/seller/remove-callback.use-case.js';
+import type { ExpireReservationsUseCase } from '../../core/use-cases/seller/expire-reservations.use-case.js';
 import type { IDatabase } from '../../core/ports/database.port.js';
 import { TOKENS } from '../../di/tokens.js';
 
@@ -417,5 +424,99 @@ export async function adminSellerRoutes(app: FastifyInstance) {
       pendingReservations: pendingReservations.length,
       listings,
     });
+  });
+
+  // ─── Batch Operations ──────────────────────────────────────────────
+
+  app.post('/listings/batch-prices', { preHandler: [adminGuard] }, async (request, reply) => {
+    const uc = container.resolve<BatchUpdatePricesUseCase>(UC_TOKENS.BatchUpdatePrices);
+    const body = request.body as Record<string, unknown>;
+    const admin_id = (request as unknown as Record<string, unknown>).adminId as string;
+    const result = await uc.execute({
+      provider_account_id: body.provider_account_id as string,
+      updates: body.updates as Array<{ external_listing_id: string; price_cents: number }>,
+      admin_id,
+    });
+    return reply.send(result);
+  });
+
+  app.post('/listings/batch-stock', { preHandler: [adminGuard] }, async (request, reply) => {
+    const uc = container.resolve<BatchUpdateStockUseCase>(UC_TOKENS.BatchUpdateStock);
+    const body = request.body as Record<string, unknown>;
+    const admin_id = (request as unknown as Record<string, unknown>).adminId as string;
+    const result = await uc.execute({
+      provider_account_id: body.provider_account_id as string,
+      updates: body.updates as Array<{ external_listing_id: string; quantity: number }>,
+      admin_id,
+    });
+    return reply.send(result);
+  });
+
+  app.post('/listings/global-stock-status', { preHandler: [adminGuard] }, async (request, reply) => {
+    const uc = container.resolve<UpdateGlobalStockStatusUseCase>(UC_TOKENS.UpdateGlobalStockStatus);
+    const body = request.body as Record<string, unknown>;
+    const admin_id = (request as unknown as Record<string, unknown>).adminId as string;
+    const result = await uc.execute({
+      provider_account_id: body.provider_account_id as string,
+      enabled: body.enabled as boolean,
+      admin_id,
+    });
+    return reply.send(result);
+  });
+
+  // ─── Account-Level Toggles ─────────────────────────────────────────
+
+  app.post('/provider-accounts/:id/enable-declared-stock', { preHandler: [adminGuard] }, async (request, reply) => {
+    const uc = container.resolve<EnableDeclaredStockUseCase>(UC_TOKENS.EnableDeclaredStock);
+    const { id } = request.params as { id: string };
+    const admin_id = (request as unknown as Record<string, unknown>).adminId as string;
+    try {
+      const result = await uc.execute({ provider_account_id: id, admin_id });
+      return reply.send(result);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to enable declared stock';
+      return reply.status(400).send({ error: message });
+    }
+  });
+
+  app.post('/provider-accounts/:id/enable-key-replacements', { preHandler: [adminGuard] }, async (request, reply) => {
+    const uc = container.resolve<EnableKeyReplacementsUseCase>(UC_TOKENS.EnableKeyReplacements);
+    const { id } = request.params as { id: string };
+    const admin_id = (request as unknown as Record<string, unknown>).adminId as string;
+    try {
+      const result = await uc.execute({ provider_account_id: id, admin_id });
+      return reply.send(result);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to enable key replacements';
+      return reply.status(400).send({ error: message });
+    }
+  });
+
+  // ─── Callback Management ───────────────────────────────────────────
+
+  app.delete('/provider-accounts/:id/webhooks/:callbackId', { preHandler: [adminGuard] }, async (request, reply) => {
+    const uc = container.resolve<RemoveCallbackUseCase>(UC_TOKENS.RemoveCallback);
+    const { id, callbackId } = request.params as { id: string; callbackId: string };
+    const admin_id = (request as unknown as Record<string, unknown>).adminId as string;
+    try {
+      const result = await uc.execute({ provider_account_id: id, callback_id: callbackId, admin_id });
+      return reply.send(result);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to remove callback';
+      return reply.status(400).send({ error: message });
+    }
+  });
+
+  // ─── Reservation Expiry ────────────────────────────────────────────
+
+  app.post('/expire-reservations', { preHandler: [adminGuard] }, async (request, reply) => {
+    const uc = container.resolve<ExpireReservationsUseCase>(UC_TOKENS.ExpireReservations);
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const admin_id = (request as unknown as Record<string, unknown>).adminId as string;
+    const result = await uc.execute({
+      admin_id,
+      max_age_minutes: body.max_age_minutes as number | undefined,
+    });
+    return reply.send(result);
   });
 }

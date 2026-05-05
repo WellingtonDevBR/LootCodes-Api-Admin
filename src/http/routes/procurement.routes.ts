@@ -10,6 +10,8 @@ import type { IngestProviderCatalogStatusUseCase } from '../../core/use-cases/pr
 import type { RefreshProviderPricesUseCase } from '../../core/use-cases/procurement/refresh-provider-prices.use-case.js';
 import type { ManualProviderPurchaseUseCase } from '../../core/use-cases/procurement/manual-provider-purchase.use-case.js';
 import type { RecoverProviderOrderUseCase } from '../../core/use-cases/procurement/recover-provider-order.use-case.js';
+import type { SearchCatalogUseCase } from '../../core/use-cases/procurement/search-catalog.use-case.js';
+import type { LinkCatalogProductUseCase } from '../../core/use-cases/procurement/link-catalog-product.use-case.js';
 
 export async function adminProcurementRoutes(app: FastifyInstance) {
   app.post('/quote', { preHandler: [adminGuard] }, async (request, reply) => {
@@ -97,6 +99,35 @@ export async function adminProcurementRoutes(app: FastifyInstance) {
     const result = await uc.execute({
       query: body.query as string,
       limit: body.limit as number | undefined,
+    });
+    return reply.send(result);
+  });
+
+  app.get('/catalog', { preHandler: [employeeGuard] }, async (request, reply) => {
+    const uc = container.resolve<SearchCatalogUseCase>(UC_TOKENS.SearchCatalog);
+    const query = request.query as Record<string, string>;
+    const result = await uc.execute({
+      search: query.search || undefined,
+      provider_code: query.provider_code || undefined,
+      page: query.page ? parseInt(query.page, 10) : undefined,
+      page_size: query.page_size ? parseInt(query.page_size, 10) : undefined,
+    });
+    return reply.send(result);
+  });
+
+  app.post('/catalog/link', { preHandler: [adminGuard] }, async (request, reply) => {
+    const uc = container.resolve<LinkCatalogProductUseCase>(UC_TOKENS.LinkCatalogProduct);
+    const body = request.body as Record<string, unknown>;
+    const adminId = (request as unknown as Record<string, string>).adminUserId ?? 'unknown';
+    const result = await uc.execute({
+      variant_id: body.variant_id as string,
+      provider_code: body.provider_code as string,
+      external_product_id: body.external_product_id as string,
+      currency: body.currency as string,
+      price_cents: body.price_cents as number,
+      platform_code: body.platform_code as string | undefined,
+      region_code: body.region_code as string | undefined,
+      admin_id: adminId,
     });
     return reply.send(result);
   });
