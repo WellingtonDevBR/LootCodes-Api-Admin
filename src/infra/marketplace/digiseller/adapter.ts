@@ -50,6 +50,7 @@ import type {
 } from './types.js';
 import { DIGISELLER_CREATE_PATHS, DIGISELLER_LOCALES, DEFAULT_LISTING_OPTS } from './types.js';
 import { createLogger } from '../../../shared/logger.js';
+import { floatToCents } from '../../../shared/pricing.js';
 
 const logger = createLogger('digiseller-adapter');
 
@@ -164,8 +165,8 @@ export class DigisellerMarketplaceAdapter
 
     const p = resp.product;
     const priceCents = p.prices?.initial
-      ? Math.round(p.prices.initial.price * 100)
-      : Math.round(p.price * 100);
+      ? floatToCents(p.prices.initial.price)
+      : floatToCents(p.price);
 
     return {
       status: p.is_available === 0 ? 'paused' : 'active',

@@ -5,8 +5,7 @@ import { adminGuard, employeeGuard, internalSecretGuard } from '../middleware/au
 import type { ListOrdersUseCase } from '../../core/use-cases/orders/list-orders.use-case.js';
 import type { GetOrderDetailUseCase } from '../../core/use-cases/orders/get-order-detail.use-case.js';
 import type { IDatabase } from '../../core/ports/database.port.js';
-
-type RateMap = Map<string, number>;
+import { type RateMap, loadCurrencyRates, convertCents } from './_currency-helpers.js';
 
 interface OrderItemEmbed {
   product_id?: string;
@@ -126,44 +125,9 @@ function resolveKeyCostCurrency(raw: Record<string, unknown>): string {
   return 'USD';
 }
 
-async function loadCurrencyRates(db: IDatabase): Promise<RateMap> {
-  const rows = await db.query<{
-    from_currency: string;
-    to_currency: string;
-    rate: string | number;
-  }>('currency_rates', { select: 'from_currency, to_currency, rate', eq: [['is_active', true]] });
+// loadCurrencyRates and convertCents are imported from ./_currency-helpers.js
 
-  const map: RateMap = new Map();
-  for (const r of rows) {
-    const rate = typeof r.rate === 'number' ? r.rate : Number(r.rate);
-    if (!Number.isFinite(rate) || rate <= 0) continue;
-    map.set(`${r.from_currency}->${r.to_currency}`, rate);
-  }
-  return map;
-}
-
-function convertCents(
-  amountCents: number,
-  fromCurrency: string,
-  toCurrency: string,
-  rates: RateMap,
-): number {
-  if (fromCurrency === toCurrency) return amountCents;
-  const direct = rates.get(`${fromCurrency}->${toCurrency}`);
-  if (direct !== undefined) return Math.round(amountCents * direct);
-  const inverse = rates.get(`${toCurrency}->${fromCurrency}`);
-  if (inverse !== undefined && inverse > 0) return Math.round(amountCents / inverse);
-
-  // Multi-hop via USD pivot (e.g. BRL->USD->EUR)
-  const toUsd = rates.get(`USD->${fromCurrency}`);
-  const fromUsd = rates.get(`USD->${toCurrency}`);
-  if (toUsd && toUsd > 0 && fromUsd) {
-    const inUsdCents = amountCents / toUsd;
-    return Math.round(inUsdCents * fromUsd);
-  }
-
-  return amountCents;
-}
+const DISPLAY_CURRENCY = 'AUD';
 
 function toSerializedOrder(raw: Record<string, unknown>, rates: RateMap) {
   const totalAmount = (raw.total_amount as number) ?? 0;
@@ -181,6 +145,20 @@ function toSerializedOrder(raw: Record<string, unknown>, rates: RateMap) {
   const totalCost = isMarketplace ? providerFee + keyCostInOrderCurrency : keyCostInOrderCurrency;
   const profit = isMarketplace ? netAmount - keyCostInOrderCurrency : totalAmount - keyCostInOrderCurrency;
 
+  const dc = DISPLAY_CURRENCY;
+  const toDisplay = (cents: number, from: string) => convertCents(cents, from, dc, rates);
+
+  const grossAud = toDisplay(totalAmount, currency);
+  const netAud = toDisplay(netAmount, currency);
+  const feeAud = toDisplay(providerFee, currency);
+  const keyCostAud = toDisplay(keyCostCents, keyCostCurrency);
+  // When Net is seller proceeds (marketplace), costAud = keys only;
+  // marketplace fee is informational on the Mkt: line.
+  const costAudAmount = isMarketplace ? keyCostAud : keyCostAud;
+  const profitAud = isMarketplace ? netAud - keyCostAud : grossAud - keyCostAud;
+
+  const profitInOrderCurrency = profit;
+
   const money = { amount: totalAmount, currency };
   return {
     order: {
@@ -196,21 +174,21 @@ function toSerializedOrder(raw: Record<string, unknown>, rates: RateMap) {
       unitPrice: money,
       placedAt: raw.created_at as string,
       customer: (raw.contact_email as string) ?? (raw.delivery_email as string) ?? (raw.guest_email as string) ?? 'Guest',
-      profit: { amount: profit, currency },
+      profit: { amount: profitInOrderCurrency, currency },
       items: serializeOrderItems(raw),
     },
     presentation: {
       paidTotal: { amount: totalAmount, currency },
-      paidGrossAud: null,
-      paidNetAud: isMarketplace ? { amount: netAmount, currency } : null,
-      processorFeeAud: providerFee > 0 ? { amount: providerFee, currency } : null,
-      channelFeeAud: null,
-      productCostAud: keyCostCents > 0 ? { amount: keyCostCents, currency: keyCostCurrency } : null,
-      costAud: totalCost > 0 ? { amount: totalCost, currency } : null,
-      profitAud: { amount: profit, currency },
+      paidGrossAud: { amount: grossAud, currency: dc },
+      paidNetAud: isMarketplace ? { amount: netAud, currency: dc } : null,
+      processorFeeAud: feeAud > 0 ? { amount: feeAud, currency: dc } : null,
+      channelFeeAud: isMarketplace && feeAud > 0 ? { amount: feeAud, currency: dc } : null,
+      productCostAud: keyCostAud > 0 ? { amount: keyCostAud, currency: dc } : null,
+      costAud: costAudAmount > 0 ? { amount: costAudAmount, currency: dc } : null,
+      profitAud: { amount: profitAud, currency: dc },
       netIsSellerProceedsAfterMkt: isMarketplace,
       processorFeeLinePrefix: isMarketplace ? 'Mkt:' as const : 'Net:' as const,
-      kpiProfitUsd: { amount: profit, currency },
+      kpiProfitUsd: { amount: profitInOrderCurrency, currency },
     },
   };
 }

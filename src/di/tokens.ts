@@ -47,6 +47,9 @@ export const TOKENS = {
   ListingHealth: Symbol.for('IListingHealthPort'),
   VariantUnavailability: Symbol.for('IVariantUnavailabilityPort'),
 
+  // Kinguin outbound key upload
+  KinguinKeyUpload: Symbol.for('IKinguinKeyUploadPort'),
+
   // Seller pricing services
   SellerPricingService: Symbol.for('ISellerPricingService'),
   SellerAutoPricingService: Symbol.for('ISellerAutoPricingService'),
@@ -328,6 +331,14 @@ export const UC_TOKENS = {
   HandleG2AGetInventory: Symbol.for('HandleG2AGetInventoryUseCase'),
   HandleG2AReturnInventory: Symbol.for('HandleG2AReturnInventoryUseCase'),
   HandleG2ANotifications: Symbol.for('HandleG2ANotificationsUseCase'),
+  HandleGamivoReservation: Symbol.for('HandleGamivoReservationUseCase'),
+  HandleGamivoOrder: Symbol.for('HandleGamivoOrderUseCase'),
+  HandleGamivoGetKeys: Symbol.for('HandleGamivoGetKeysUseCase'),
+  HandleGamivoRefund: Symbol.for('HandleGamivoRefundUseCase'),
+  HandleGamivoOfferDeactivation: Symbol.for('HandleGamivoOfferDeactivationUseCase'),
+  HandleKinguinWebhook: Symbol.for('HandleKinguinWebhookUseCase'),
+  HandleKinguinBuyerWebhook: Symbol.for('HandleKinguinBuyerWebhookUseCase'),
+  HandleBambooCallback: Symbol.for('HandleBambooCallbackUseCase'),
 
   // Products
   ListProducts: Symbol.for('ListProductsUseCase'),

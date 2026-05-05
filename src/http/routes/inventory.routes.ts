@@ -6,6 +6,7 @@ import { TOKENS, UC_TOKENS } from '../../di/tokens.js';
 import { SecureKeyManager } from '../../infra/crypto/secure-key-manager.js';
 import type { GetInventoryCatalogUseCase } from '../../core/use-cases/inventory/get-inventory-catalog.use-case.js';
 import type { INotificationDispatcher } from '../../core/ports/notification-channel.port.js';
+import { loadCurrencyRates, convertCentsToUsd } from './_currency-helpers.js';
 
 function mapKeyState(keyState: string | null, isUsed: boolean): 'available' | 'reserved' | 'sold' {
   if (isUsed || keyState === 'used' || keyState === 'seller_provisioned') return 'sold';
@@ -26,22 +27,29 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
     });
     const availableKeyCount = countResult.total;
 
-    const costRows = await db.query<{ purchase_cost: string | number | null }>('product_keys', {
-      select: 'purchase_cost',
+    const costRows = await db.query<{
+      purchase_cost: string | number | null;
+      purchase_currency: string | null;
+    }>('product_keys', {
+      select: 'purchase_cost, purchase_currency',
       eq: [['key_state', 'available']],
       limit: 10000,
     });
 
-    let totalCostCents = 0;
+    const rates = await loadCurrencyRates(db);
+
+    let totalCostUsdCents = 0;
     for (const row of costRows) {
       const cost = typeof row.purchase_cost === 'number' ? row.purchase_cost
         : typeof row.purchase_cost === 'string' ? Number(row.purchase_cost) : 0;
-      totalCostCents += cost;
+      if (cost <= 0) continue;
+      const currency = (row.purchase_currency ?? 'USD').toUpperCase();
+      totalCostUsdCents += convertCentsToUsd(cost, currency, rates);
     }
 
     return reply.send({
       availableKeyCount,
-      purchaseCostUsdTotal: totalCostCents / 100,
+      purchaseCostUsdTotal: totalCostUsdCents / 100,
     });
   });
 

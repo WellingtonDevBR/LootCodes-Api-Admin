@@ -10,16 +10,17 @@
  *   6. Return decrypted keys for marketplace delivery
  */
 import { injectable, inject } from 'tsyringe';
-import { TOKENS } from '../../../di/tokens.js';
-import type { IDatabase } from '../../ports/database.port.js';
-import type { ISellerKeyOperationsPort } from '../../ports/seller-key-operations.port.js';
-import type { IListingHealthPort } from '../../ports/seller-listing-health.port.js';
+import { TOKENS } from '../../../../di/tokens.js';
+import type { IDatabase } from '../../../ports/database.port.js';
+import type { ISellerKeyOperationsPort } from '../../../ports/seller-key-operations.port.js';
+import { buildOrderIdCandidates } from './eneba-helpers.js';
+import type { IListingHealthPort } from '../../../ports/seller-listing-health.port.js';
 import type {
   DeclaredStockProvideDto,
   DeclaredStockProvideResult,
   ReservationRow,
-} from './seller-webhook.types.js';
-import { createLogger } from '../../../shared/logger.js';
+} from '../seller-webhook.types.js';
+import { createLogger } from '../../../../shared/logger.js';
 
 const logger = createLogger('webhook:provide');
 
@@ -35,7 +36,7 @@ export class HandleDeclaredStockProvideUseCase {
     const { orderId, originalOrderId, providerCode } = dto;
 
     try {
-      const candidates = this.buildOrderIdCandidates(orderId, originalOrderId);
+      const candidates = buildOrderIdCandidates(orderId, originalOrderId);
 
       const rows = await this.db.query<ReservationRow>(
         'seller_stock_reservations',
@@ -147,11 +148,6 @@ export class HandleDeclaredStockProvideUseCase {
       };
     } catch (err) {
       logger.error('Unexpected error in provision handler', err as Error, { orderId, originalOrderId });
-
-      try {
-        await this.healthPort.updateHealthCounters(orderId, 'provision', false);
-      } catch { /* best-effort */ }
-
       return { success: false, orderId };
     }
   }
@@ -196,12 +192,6 @@ export class HandleDeclaredStockProvideUseCase {
   ): ReservationRow | undefined {
     if (!rows.length) return undefined;
     return rows.find((r) => r.external_order_id === preferredOrderId) ?? rows[0];
-  }
-
-  private buildOrderIdCandidates(orderId: string, originalOrderId: string | null): string[] {
-    const set = new Set([orderId]);
-    if (originalOrderId && originalOrderId !== orderId) set.add(originalOrderId);
-    return Array.from(set);
   }
 
   private parseMetadata(raw: Record<string, unknown>): {

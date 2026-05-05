@@ -10,7 +10,7 @@ import type { EnebaCallbackAuction, EnebaCallbackMoney } from './eneba-payload-p
 import type {
   MarketplaceFinancialsSnapshot,
   MarketplaceFinancialsRawWire,
-} from '../../core/use-cases/seller-webhook/seller-webhook.types.js';
+} from '../seller-webhook.types.js';
 
 // ─── ISO 4217 minor-unit exponent ────────────────────────────────────
 

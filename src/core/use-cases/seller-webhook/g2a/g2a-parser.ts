@@ -13,7 +13,7 @@ import type {
   G2AOrderCreatedResponse,
   G2ANotificationItem,
   G2AContractError,
-} from './seller-webhook.types.js';
+} from '../seller-webhook.types.js';
 
 // --- Request Parsers ---
 

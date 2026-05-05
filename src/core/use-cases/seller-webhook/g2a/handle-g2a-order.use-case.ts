@@ -13,22 +13,22 @@
  */
 import { injectable, inject } from 'tsyringe';
 import { randomUUID } from 'node:crypto';
-import { TOKENS } from '../../../di/tokens.js';
-import type { IDatabase } from '../../ports/database.port.js';
-import type { ISellerKeyOperationsPort } from '../../ports/seller-key-operations.port.js';
-import type { IKeyDecryptionPort } from '../../ports/key-decryption.port.js';
-import type { IListingHealthPort } from '../../ports/seller-listing-health.port.js';
+import { TOKENS } from '../../../../di/tokens.js';
+import type { IDatabase } from '../../../ports/database.port.js';
+import type { ISellerKeyOperationsPort } from '../../../ports/seller-key-operations.port.js';
+import type { IKeyDecryptionPort } from '../../../ports/key-decryption.port.js';
+import type { IListingHealthPort } from '../../../ports/seller-listing-health.port.js';
 import type {
   G2AOrderDto,
   G2AOrderCreatedResponse,
   G2AStockItem,
-} from './seller-webhook.types.js';
+} from '../seller-webhook.types.js';
 import {
   buildStockInventoryItem,
   buildStockItem,
   buildOrderResponse,
 } from './g2a-parser.js';
-import { createLogger } from '../../../shared/logger.js';
+import { createLogger } from '../../../../shared/logger.js';
 
 const logger = createLogger('webhook:g2a:order');
 
@@ -74,19 +74,14 @@ export class HandleG2AOrderUseCase {
       return { ok: false, code: 'BR02', message: 'Reservation not found', status: 404 };
     }
 
-    const firstReservation = reservations[0];
-
-    if (firstReservation.status === 'expired') {
-      return { ok: false, code: 'BR02', message: 'Reservation expired', status: 410 };
-    }
-
-    const isExpiredByTimestamp =
-      firstReservation.status === 'pending' &&
-      firstReservation.expires_at &&
-      new Date(firstReservation.expires_at) < new Date();
-
-    if (isExpiredByTimestamp) {
-      return { ok: false, code: 'BR02', message: 'Reservation expired', status: 410 };
+    const now = new Date();
+    for (const r of reservations) {
+      if (r.status === 'expired') {
+        return { ok: false, code: 'BR02', message: 'Reservation expired', status: 410 };
+      }
+      if (r.status === 'pending' && r.expires_at && new Date(r.expires_at) < now) {
+        return { ok: false, code: 'BR02', message: 'Reservation expired', status: 410 };
+      }
     }
 
     const orderId = randomUUID();

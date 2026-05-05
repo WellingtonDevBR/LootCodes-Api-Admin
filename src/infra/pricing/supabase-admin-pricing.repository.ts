@@ -29,6 +29,7 @@ interface SellerListingRow {
   provider_account_id: string;
   price_cents: number;
   currency: string;
+  cost_basis_cents: number | null;
   status: string;
 }
 
@@ -92,7 +93,7 @@ export class SupabaseAdminPricingRepository implements IAdminPricingRepository {
 
     const [sellerListings, providerAccounts] = await Promise.all([
       this.db.queryAll<SellerListingRow>('seller_listings', {
-        select: 'id, variant_id, provider_account_id, price_cents, currency, status',
+        select: 'id, variant_id, provider_account_id, price_cents, currency, cost_basis_cents, status',
         eq: [['status', 'active']],
       }),
       this.db.query<ProviderAccountRow>('provider_accounts', {
@@ -131,11 +132,15 @@ export class SupabaseAdminPricingRepository implements IAdminPricingRepository {
       for (const k of keyCounts) stockMap.set(k.variant_id, k.available_count);
     }
 
-    const grouped = new Map<string, {
+    interface GroupedEntry {
       variant: VariantRow;
       product: ProductRow;
       prices: Record<string, { cents: number; currency: string }>;
-    }>();
+      bestCostCents: number | null;
+      bestCostCurrency: string | null;
+    }
+
+    const grouped = new Map<string, GroupedEntry>();
 
     for (const listing of sellerListings) {
       const variant = variantMap.get(listing.variant_id);
@@ -149,13 +154,21 @@ export class SupabaseAdminPricingRepository implements IAdminPricingRepository {
 
       let entry = grouped.get(variant.id);
       if (!entry) {
-        entry = { variant, product, prices: {} };
+        entry = { variant, product, prices: {}, bestCostCents: null, bestCostCurrency: null };
         grouped.set(variant.id, entry);
       }
       entry.prices[channelName] = {
         cents: listing.price_cents,
         currency: listing.currency,
       };
+
+      const cost = listing.cost_basis_cents;
+      if (cost !== null && Number.isFinite(cost) && cost >= 0) {
+        if (entry.bestCostCents === null || cost < entry.bestCostCents) {
+          entry.bestCostCents = cost;
+          entry.bestCostCurrency = listing.currency;
+        }
+      }
     }
 
     const limit = dto.limit ?? 200;
@@ -164,7 +177,7 @@ export class SupabaseAdminPricingRepository implements IAdminPricingRepository {
     const sliced = allEntries.slice(offset, offset + limit);
 
     const listings: PricingSnapshotListing[] = sliced.map(entry => {
-      const { variant, product, prices } = entry;
+      const { variant, product, prices, bestCostCents, bestCostCurrency } = entry;
       const variantLabel = variant.face_value
         ? `${product.name} — ${variant.face_value}`
         : product.name;
@@ -173,8 +186,8 @@ export class SupabaseAdminPricingRepository implements IAdminPricingRepository {
         productId: variant.id,
         name: variantLabel,
         sku: variant.sku ?? '',
-        costBestCents: Math.round((variant.price_usd ?? 0) * 100),
-        costCurrency: 'USD',
+        costBestCents: bestCostCents ?? 0,
+        costCurrency: bestCostCurrency ?? 'EUR',
         stock: stockMap.get(variant.id) ?? 0,
         prices,
       };

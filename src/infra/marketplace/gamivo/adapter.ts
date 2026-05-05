@@ -47,12 +47,13 @@ import {
   GAMIVO_OFFER_STATUS_INACTIVE,
 } from './types.js';
 import { createLogger } from '../../../shared/logger.js';
+import { floatToCents as rawFloatToCents } from '../../../shared/pricing.js';
 
 const logger = createLogger('gamivo-adapter');
 
 function floatToCents(value: number | undefined | null): number {
   if (value == null || isNaN(value)) return 0;
-  return Math.round(value * 100);
+  return rawFloatToCents(value);
 }
 
 export class GamivoMarketplaceAdapter

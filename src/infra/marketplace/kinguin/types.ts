@@ -127,5 +127,4 @@ export interface KinguinBuyerSearchResponse {
 
 // ─── Declared Stock Cap ────────────────────────────────────────────────
 
-/** Kinguin allows at most 20 declared units per offer update. */
-export const KINGUIN_MAX_DECLARED_STOCK = 20;
+export { KINGUIN_MAX_DECLARED_STOCK } from '../../../core/shared/kinguin.constants.js';

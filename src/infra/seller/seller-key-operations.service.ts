@@ -15,6 +15,7 @@ import type {
   ClaimKeysResult,
   ProvisionResult,
   DecryptedKey,
+  DecryptPendingResult,
   CompleteProvisionParams,
   PostProvisionReturnParams,
 } from '../../core/ports/seller-key-operations.port.js';
@@ -95,6 +96,45 @@ export class SellerKeyOperationsService implements ISellerKeyOperationsPort {
     const decryptedKeys = await this.decryptKeys(keyIds);
 
     return { keyIds, decryptedKeys };
+  }
+
+  async decryptPendingWithoutFinalize(reservationId: string): Promise<DecryptPendingResult> {
+    const provisions = await this.db.query<{
+      id: string;
+      product_key_id: string;
+    }>('seller_key_provisions', {
+      select: 'id, product_key_id',
+      eq: [['reservation_id', reservationId], ['status', 'pending']],
+    });
+
+    if (provisions.length === 0) {
+      throw new Error(`No pending provisions for reservation ${reservationId}`);
+    }
+
+    const keyIds = provisions.map((p) => p.product_key_id);
+    const provisionIds = provisions.map((p) => p.id);
+    const decryptedKeys = await this.decryptKeys(keyIds);
+
+    const keyRows = await this.db.query<{
+      id: string;
+      key_format: string;
+    }>('product_keys', {
+      select: 'id, key_format',
+      in: [['id', keyIds]],
+    });
+
+    const formatMap = new Map(keyRows.map((r) => [r.id, r.key_format ?? 'text']));
+    const keyFormats = keyIds.map((id) => formatMap.get(id) ?? 'text');
+
+    return { keyIds, provisionIds, decryptedKeys, keyFormats };
+  }
+
+  async finalizeProvisions(reservationId: string, keyIds: string[], provisionIds: string[]): Promise<void> {
+    await this.db.rpc('finalize_seller_provisions_atomic', {
+      p_reservation_id: reservationId,
+      p_key_ids: keyIds,
+      p_provision_ids: provisionIds,
+    });
   }
 
   async decryptDeliveredProvisionKeys(reservationId: string): Promise<{ decryptedKeys: DecryptedKey[] }> {

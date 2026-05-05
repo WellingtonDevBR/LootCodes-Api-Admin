@@ -7,12 +7,13 @@
  * Response: [{ product_id, inventory_size, inventory: [{ id, value, kind }] }]
  */
 import { injectable, inject } from 'tsyringe';
-import { TOKENS } from '../../../di/tokens.js';
-import type { IDatabase } from '../../ports/database.port.js';
-import type { IKeyDecryptionPort } from '../../ports/key-decryption.port.js';
-import type { G2AGetInventoryDto, G2AStockItem } from './seller-webhook.types.js';
+import { TOKENS } from '../../../../di/tokens.js';
+import type { IDatabase } from '../../../ports/database.port.js';
+import type { IKeyDecryptionPort } from '../../../ports/key-decryption.port.js';
+import type { G2AGetInventoryDto, G2AStockItem } from '../seller-webhook.types.js';
 import { buildStockInventoryItem } from './g2a-parser.js';
-import { createLogger } from '../../../shared/logger.js';
+import { countAvailableKeys } from '../../../shared/stock-queries.js';
+import { createLogger } from '../../../../shared/logger.js';
 
 const logger = createLogger('webhook:g2a:get-inventory');
 
@@ -85,7 +86,7 @@ export class HandleG2AGetInventoryUseCase {
         const decrypted = await this.keyDecryption.decryptKeysByIds(keyIds);
         const inventory = decrypted.map((d) => buildStockInventoryItem(d.keyId, d.plaintext));
 
-        const availableCount = await this.countAvailableKeys(listing.variant_id);
+        const availableCount = await countAvailableKeys(this.db, listing.variant_id);
 
         result.push({
           product_id: Number(listing.external_product_id),
@@ -102,11 +103,4 @@ export class HandleG2AGetInventoryUseCase {
     return { ok: true, response: result };
   }
 
-  private async countAvailableKeys(variantId: string): Promise<number> {
-    const keys = await this.db.query<{ id: string }>('product_keys', {
-      select: 'id',
-      eq: [['variant_id', variantId], ['key_state', 'available']],
-    });
-    return keys.length;
-  }
 }

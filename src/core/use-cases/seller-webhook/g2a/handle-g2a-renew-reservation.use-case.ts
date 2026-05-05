@@ -8,25 +8,24 @@
  * Response: { reservation_id, stock: [...] } (same shape as POST /reservation)
  */
 import { injectable, inject } from 'tsyringe';
-import { TOKENS } from '../../../di/tokens.js';
-import type { IDatabase } from '../../ports/database.port.js';
-import type { ISellerKeyOperationsPort } from '../../ports/seller-key-operations.port.js';
-import type { IKeyDecryptionPort } from '../../ports/key-decryption.port.js';
+import { TOKENS } from '../../../../di/tokens.js';
+import type { IDatabase } from '../../../ports/database.port.js';
+import type { ISellerKeyOperationsPort } from '../../../ports/seller-key-operations.port.js';
+import type { IKeyDecryptionPort } from '../../../ports/key-decryption.port.js';
 import type {
   G2ARenewReservationDto,
   G2AReservationResponse,
   G2AStockItem,
-} from './seller-webhook.types.js';
+} from '../seller-webhook.types.js';
 import {
   buildStockInventoryItem,
   buildStockItem,
   buildReservationResponse,
 } from './g2a-parser.js';
-import { createLogger } from '../../../shared/logger.js';
+import { countAvailableKeys, MARKETPLACE_RESERVATION_EXPIRY_MS } from '../../../shared/stock-queries.js';
+import { createLogger } from '../../../../shared/logger.js';
 
 const logger = createLogger('webhook:g2a:renew-reservation');
-
-const G2A_RESERVATION_EXPIRY_MS = 30 * 60 * 1000;
 
 interface ReservationRow {
   id: string;
@@ -67,7 +66,7 @@ export class HandleG2ARenewReservationUseCase {
       return { ok: false, code: 'BR02', message: 'Reservation not found', status: 404 };
     }
 
-    const newExpiresAt = new Date(Date.now() + G2A_RESERVATION_EXPIRY_MS).toISOString();
+    const newExpiresAt = new Date(Date.now() + MARKETPLACE_RESERVATION_EXPIRY_MS).toISOString();
     const stockItems: G2AStockItem[] = [];
 
     for (const reservation of reservations) {
@@ -123,7 +122,7 @@ export class HandleG2ARenewReservationUseCase {
       const decrypted = await this.keyDecryption.decryptKeysByIds(keyIds);
       const inventory = decrypted.map((d) => buildStockInventoryItem(d.keyId, d.plaintext));
 
-      const availableCount = await this.countAvailableKeys(listing.variant_id);
+      const availableCount = await countAvailableKeys(this.db, listing.variant_id);
 
       return buildStockItem(Number(listing.external_product_id), availableCount, inventory);
     } catch (err) {
@@ -159,7 +158,7 @@ export class HandleG2ARenewReservationUseCase {
         quantity: reservation.quantity,
         externalReservationId,
         externalOrderId: externalReservationId,
-        expiresAt: new Date(Date.now() + G2A_RESERVATION_EXPIRY_MS).toISOString(),
+        expiresAt: new Date(Date.now() + MARKETPLACE_RESERVATION_EXPIRY_MS).toISOString(),
         providerMetadata: {
           ...(reservation.provider_metadata ?? {}),
           renewed_from: reservation.id,
@@ -169,7 +168,7 @@ export class HandleG2ARenewReservationUseCase {
 
       const provisionResult = await this.keyOps.provisionFromPendingKeys(claimResult.reservationId);
 
-      const availableCount = await this.countAvailableKeys(listing.variant_id);
+      const availableCount = await countAvailableKeys(this.db, listing.variant_id);
 
       const inventory = provisionResult.keyIds.map((keyId, idx) =>
         buildStockInventoryItem(keyId, provisionResult.decryptedKeys[idx]?.plaintext ?? ''),
@@ -184,11 +183,4 @@ export class HandleG2ARenewReservationUseCase {
     }
   }
 
-  private async countAvailableKeys(variantId: string): Promise<number> {
-    const keys = await this.db.query<{ id: string }>('product_keys', {
-      select: 'id',
-      eq: [['variant_id', variantId], ['key_state', 'available']],
-    });
-    return keys.length;
-  }
 }

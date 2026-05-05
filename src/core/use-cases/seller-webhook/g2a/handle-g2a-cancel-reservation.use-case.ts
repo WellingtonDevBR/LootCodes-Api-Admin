@@ -10,11 +10,11 @@
  * Response: 204 No Content (success) or 404 (not found)
  */
 import { injectable, inject } from 'tsyringe';
-import { TOKENS } from '../../../di/tokens.js';
-import type { IDatabase } from '../../ports/database.port.js';
-import type { ISellerKeyOperationsPort } from '../../ports/seller-key-operations.port.js';
-import type { G2ACancelReservationDto } from './seller-webhook.types.js';
-import { createLogger } from '../../../shared/logger.js';
+import { TOKENS } from '../../../../di/tokens.js';
+import type { IDatabase } from '../../../ports/database.port.js';
+import type { ISellerKeyOperationsPort } from '../../../ports/seller-key-operations.port.js';
+import type { G2ACancelReservationDto } from '../seller-webhook.types.js';
+import { createLogger } from '../../../../shared/logger.js';
 
 const logger = createLogger('webhook:g2a:cancel-reservation');
 

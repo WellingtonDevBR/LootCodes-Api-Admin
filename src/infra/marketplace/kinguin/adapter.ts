@@ -49,14 +49,11 @@ import type {
   KinguinStockItem,
   KinguinBuyerSearchResponse,
 } from './types.js';
-import { KINGUIN_MAX_DECLARED_STOCK } from './types.js';
+import { capKinguinDeclaredStock } from '../../../core/shared/kinguin.constants.js';
 import { createLogger } from '../../../shared/logger.js';
+import { floatToCents } from '../../../shared/pricing.js';
 
 const logger = createLogger('kinguin-adapter');
-
-function capDeclaredStock(quantity: number): number {
-  return Math.min(Math.max(0, quantity), KINGUIN_MAX_DECLARED_STOCK);
-}
 
 export class KinguinMarketplaceAdapter
   implements
@@ -77,7 +74,7 @@ export class KinguinMarketplaceAdapter
   // ─── ISellerListingAdapter ───────────────────────────────────────────
 
   async createListing(params: CreateListingParams): Promise<CreateListingResult> {
-    const qty = capDeclaredStock(params.quantity ?? 0);
+    const qty = capKinguinDeclaredStock(params.quantity ?? 0);
 
     const body: KinguinCreateOfferRequest = {
       productId: params.externalProductId,
@@ -110,7 +107,7 @@ export class KinguinMarketplaceAdapter
       body.price = { amount: params.priceCents, currency: 'EUR' };
     }
     if (params.quantity != null) {
-      const q = capDeclaredStock(params.quantity);
+      const q = capKinguinDeclaredStock(params.quantity);
       body.declaredStock = q;
       body.declaredTextStock = q;
     }
@@ -150,7 +147,7 @@ export class KinguinMarketplaceAdapter
   // ─── ISellerDeclaredStockAdapter ─────────────────────────────────────
 
   async declareStock(externalListingId: string, quantity: number): Promise<DeclareStockResult> {
-    const capped = capDeclaredStock(quantity);
+    const capped = capKinguinDeclaredStock(quantity);
 
     await this.httpClient.patch<KinguinOffer>(
       `/api/v1/offers/${encodeURIComponent(externalListingId)}`,
@@ -213,7 +210,7 @@ export class KinguinMarketplaceAdapter
       `/api/v1/offers/${encodeURIComponent(externalListingId)}`,
     );
 
-    const capped = capDeclaredStock(availableQuantity);
+    const capped = capKinguinDeclaredStock(availableQuantity);
 
     await this.httpClient.patch(
       `/api/v1/offers/${encodeURIComponent(externalListingId)}`,
@@ -272,7 +269,7 @@ export class KinguinMarketplaceAdapter
         productName: p.name,
         platform: p.platform ?? null,
         region: p.regionalLimitations ?? null,
-        priceCents: Math.round(p.price * 100),
+        priceCents: floatToCents(p.price),
         currency: 'EUR',
         available: p.qty > 0 && !p.isPreorder,
       }));

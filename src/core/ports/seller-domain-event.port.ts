@@ -18,7 +18,9 @@ export type SellerEventType =
   | 'seller.key_replaced'
   | 'seller.sale_refunded'
   | 'seller.reservation_expired'
-  | 'seller.variant_unavailable_propagated';
+  | 'seller.variant_unavailable_propagated'
+  | 'procurement.order_succeeded'
+  | 'procurement.order_failed';
 
 export type InventoryStockChangeReason =
   | 'keys_assigned'

@@ -285,22 +285,31 @@ import { RemoveCallbackUseCase } from '../core/use-cases/seller/remove-callback.
 import { ExpireReservationsUseCase } from '../core/use-cases/seller/expire-reservations.use-case.js';
 
 // Use cases — Seller Webhooks
-import { HandleDeclaredStockReserveUseCase } from '../core/use-cases/seller-webhook/handle-declared-stock-reserve.use-case.js';
-import { HandleDeclaredStockProvideUseCase } from '../core/use-cases/seller-webhook/handle-declared-stock-provide.use-case.js';
-import { HandleDeclaredStockCancelUseCase } from '../core/use-cases/seller-webhook/handle-declared-stock-cancel.use-case.js';
+import { HandleDeclaredStockReserveUseCase } from '../core/use-cases/seller-webhook/eneba/handle-declared-stock-reserve.use-case.js';
+import { HandleDeclaredStockProvideUseCase } from '../core/use-cases/seller-webhook/eneba/handle-declared-stock-provide.use-case.js';
+import { HandleDeclaredStockCancelUseCase } from '../core/use-cases/seller-webhook/eneba/handle-declared-stock-cancel.use-case.js';
 import { HandleKeyUploadOrderUseCase } from '../core/use-cases/seller-webhook/handle-key-upload-order.use-case.js';
 import { HandleMarketplaceRefundUseCase } from '../core/use-cases/seller-webhook/handle-marketplace-refund.use-case.js';
 import { HandleListingDeactivationUseCase } from '../core/use-cases/seller-webhook/handle-listing-deactivation.use-case.js';
-import { HandleDigisellerDeliveryUseCase } from '../core/use-cases/seller-webhook/handle-digiseller-delivery.use-case.js';
-import { HandleDigisellerQuantityCheckUseCase } from '../core/use-cases/seller-webhook/handle-digiseller-quantity-check.use-case.js';
+import { HandleDigisellerDeliveryUseCase } from '../core/use-cases/seller-webhook/digiseller/handle-digiseller-delivery.use-case.js';
+import { HandleDigisellerQuantityCheckUseCase } from '../core/use-cases/seller-webhook/digiseller/handle-digiseller-quantity-check.use-case.js';
 import { HandleInventoryCallbackUseCase } from '../core/use-cases/seller-webhook/handle-inventory-callback.use-case.js';
-import { HandleG2AReservationUseCase } from '../core/use-cases/seller-webhook/handle-g2a-reservation.use-case.js';
-import { HandleG2AOrderUseCase } from '../core/use-cases/seller-webhook/handle-g2a-order.use-case.js';
-import { HandleG2ARenewReservationUseCase } from '../core/use-cases/seller-webhook/handle-g2a-renew-reservation.use-case.js';
-import { HandleG2ACancelReservationUseCase } from '../core/use-cases/seller-webhook/handle-g2a-cancel-reservation.use-case.js';
-import { HandleG2AGetInventoryUseCase } from '../core/use-cases/seller-webhook/handle-g2a-get-inventory.use-case.js';
-import { HandleG2AReturnInventoryUseCase } from '../core/use-cases/seller-webhook/handle-g2a-return-inventory.use-case.js';
-import { HandleG2ANotificationsUseCase } from '../core/use-cases/seller-webhook/handle-g2a-notifications.use-case.js';
+import { HandleG2AReservationUseCase } from '../core/use-cases/seller-webhook/g2a/handle-g2a-reservation.use-case.js';
+import { HandleG2AOrderUseCase } from '../core/use-cases/seller-webhook/g2a/handle-g2a-order.use-case.js';
+import { HandleG2ARenewReservationUseCase } from '../core/use-cases/seller-webhook/g2a/handle-g2a-renew-reservation.use-case.js';
+import { HandleG2ACancelReservationUseCase } from '../core/use-cases/seller-webhook/g2a/handle-g2a-cancel-reservation.use-case.js';
+import { HandleG2AGetInventoryUseCase } from '../core/use-cases/seller-webhook/g2a/handle-g2a-get-inventory.use-case.js';
+import { HandleG2AReturnInventoryUseCase } from '../core/use-cases/seller-webhook/g2a/handle-g2a-return-inventory.use-case.js';
+import { HandleG2ANotificationsUseCase } from '../core/use-cases/seller-webhook/g2a/handle-g2a-notifications.use-case.js';
+import { HandleGamivoReservationUseCase } from '../core/use-cases/seller-webhook/gamivo/handle-gamivo-reservation.use-case.js';
+import { HandleGamivoOrderUseCase } from '../core/use-cases/seller-webhook/gamivo/handle-gamivo-order.use-case.js';
+import { HandleGamivoGetKeysUseCase } from '../core/use-cases/seller-webhook/gamivo/handle-gamivo-get-keys.use-case.js';
+import { HandleGamivoRefundUseCase } from '../core/use-cases/seller-webhook/gamivo/handle-gamivo-refund.use-case.js';
+import { HandleGamivoOfferDeactivationUseCase } from '../core/use-cases/seller-webhook/gamivo/handle-gamivo-offer-deactivation.use-case.js';
+import { HandleKinguinWebhookUseCase } from '../core/use-cases/seller-webhook/kinguin/handle-kinguin-webhook.use-case.js';
+import { HandleKinguinBuyerWebhookUseCase } from '../core/use-cases/seller-webhook/kinguin/handle-kinguin-buyer-webhook.use-case.js';
+import { HandleBambooCallbackUseCase } from '../core/use-cases/seller-webhook/bamboo/handle-bamboo-callback.use-case.js';
+import { KinguinKeyUploadService } from '../infra/seller/kinguin-key-upload.service.js';
 
 // Use cases — Products
 import { ListProductsUseCase } from '../core/use-cases/products/list-products.use-case.js';
@@ -639,6 +648,7 @@ container.register(TOKENS.ListingHealth, { useClass: ListingHealthService });
 container.register(TOKENS.VariantUnavailability, { useClass: VariantUnavailabilityService });
 container.register(TOKENS.SellerKeyOperations, { useClass: SellerKeyOperationsService });
 container.register(TOKENS.SellerDomainEvents, { useClass: SellerDomainEventsService });
+container.register(TOKENS.KinguinKeyUpload, { useClass: KinguinKeyUploadService });
 
 // Seller pricing services
 container.register(TOKENS.SellerCostBasisService, { useClass: SellerCostBasisService });
@@ -664,6 +674,14 @@ container.register(UC_TOKENS.HandleG2ACancelReservation, { useClass: HandleG2ACa
 container.register(UC_TOKENS.HandleG2AGetInventory, { useClass: HandleG2AGetInventoryUseCase });
 container.register(UC_TOKENS.HandleG2AReturnInventory, { useClass: HandleG2AReturnInventoryUseCase });
 container.register(UC_TOKENS.HandleG2ANotifications, { useClass: HandleG2ANotificationsUseCase });
+container.register(UC_TOKENS.HandleGamivoReservation, { useClass: HandleGamivoReservationUseCase });
+container.register(UC_TOKENS.HandleGamivoOrder, { useClass: HandleGamivoOrderUseCase });
+container.register(UC_TOKENS.HandleGamivoGetKeys, { useClass: HandleGamivoGetKeysUseCase });
+container.register(UC_TOKENS.HandleGamivoRefund, { useClass: HandleGamivoRefundUseCase });
+container.register(UC_TOKENS.HandleGamivoOfferDeactivation, { useClass: HandleGamivoOfferDeactivationUseCase });
+container.register(UC_TOKENS.HandleKinguinWebhook, { useClass: HandleKinguinWebhookUseCase });
+container.register(UC_TOKENS.HandleKinguinBuyerWebhook, { useClass: HandleKinguinBuyerWebhookUseCase });
+container.register(UC_TOKENS.HandleBambooCallback, { useClass: HandleBambooCallbackUseCase });
 
 // Use cases — Products
 container.register(UC_TOKENS.ListProducts, { useClass: ListProductsUseCase });

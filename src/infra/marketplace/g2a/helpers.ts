@@ -79,12 +79,7 @@ export function pickIncomeValue(
   return values[0] ?? 0;
 }
 
-/**
- * Convert a float EUR value to integer cents.
- */
-export function floatToCents(value: number): number {
-  return Math.round(value * 100);
-}
+export { floatToCents } from '../../../shared/pricing.js';
 
 /**
  * Convert integer cents to a EUR float string suitable for G2A API.

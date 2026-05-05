@@ -8,6 +8,7 @@
  *   - G2A:       Bearer token -> seller_config.g2a_callback_auth_token
  *   - Gamivo:    Bearer token -> seller_config.callback_auth_token
  *   - Digiseller: X-Callback-Secret header or ?secret= query -> seller_config.callback_auth_token
+ *   - Bamboo:    secretKey in JSON body -> seller_config.bamboo_webhook_secret
  *
  * Uses timing-safe comparison to prevent timing attacks.
  */
@@ -101,19 +102,29 @@ async function authenticateCallback(
   providerCode: string,
   token: string,
   configKey: string,
+  opts: { requiresSeller?: boolean } = {},
 ): Promise<ProviderAuthResult | null> {
+  const requiresSeller = opts.requiresSeller ?? true;
+
+  const eqFilters: [string, unknown][] = [['provider_code', providerCode]];
+  if (requiresSeller) {
+    eqFilters.push(['supports_seller', true]);
+  } else {
+    eqFilters.push(['is_enabled', true]);
+  }
+
   const account = await db.queryOne<{
     id: string;
     provider_code: string;
     seller_config: Record<string, unknown>;
   }>('provider_accounts', {
     select: 'id, provider_code, seller_config',
-    eq: [['provider_code', providerCode], ['supports_seller', true]],
+    eq: eqFilters,
     single: true,
   });
 
   if (!account) {
-    logger.error(`${providerCode} seller provider account not found`);
+    logger.error(`${providerCode} provider account not found`);
     return null;
   }
 
@@ -176,6 +187,22 @@ async function authenticateApiProfileSecret(
   };
 }
 
+// ─── Auth Strategy: Body Secret (Bamboo) ────────────────────────────
+
+function bodySecretStrategy(providerCode: string, bodyKey: string, configKey: string): AuthStrategy {
+  return async (req, db) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const token = typeof body[bodyKey] === 'string' ? body[bodyKey] as string : '';
+
+    if (!token) {
+      logger.warn(`Missing ${bodyKey} in body for ${providerCode}`);
+      return null;
+    }
+
+    return authenticateCallback(db, providerCode, token, configKey, { requiresSeller: false });
+  };
+}
+
 // ─── Provider → Strategy Map ─────────────────────────────────────────
 
 const PROVIDER_AUTH_STRATEGIES: Record<string, AuthStrategy> = {
@@ -185,6 +212,7 @@ const PROVIDER_AUTH_STRATEGIES: Record<string, AuthStrategy> = {
   'kinguin-buyer': apiProfileSecretStrategy('kinguin', 'x-event-secret', 'buyer_webhook_secret'),
   gamivo: bearerTokenStrategy('gamivo'),
   digiseller: secretParamStrategy('digiseller'),
+  bamboo: bodySecretStrategy('bamboo', 'secretKey', 'bamboo_webhook_secret'),
 };
 
 // ─── Fastify Middleware Factory ──────────────────────────────────────

@@ -11,18 +11,19 @@
  *   7. Return reservation confirmation
  */
 import { injectable, inject } from 'tsyringe';
-import { TOKENS } from '../../../di/tokens.js';
-import type { IDatabase } from '../../ports/database.port.js';
-import type { ISellerKeyOperationsPort } from '../../ports/seller-key-operations.port.js';
-import type { ISellerDomainEventPort } from '../../ports/seller-domain-event.port.js';
-import type { IListingHealthPort } from '../../ports/seller-listing-health.port.js';
-import type { IVariantUnavailabilityPort } from '../../ports/variant-unavailability.port.js';
+import { TOKENS } from '../../../../di/tokens.js';
+import type { IDatabase } from '../../../ports/database.port.js';
+import type { ISellerKeyOperationsPort } from '../../../ports/seller-key-operations.port.js';
+import type { ISellerDomainEventPort } from '../../../ports/seller-domain-event.port.js';
+import type { IListingHealthPort } from '../../../ports/seller-listing-health.port.js';
+import type { IVariantUnavailabilityPort } from '../../../ports/variant-unavailability.port.js';
+import { buildOrderIdCandidates } from './eneba-helpers.js';
 import type {
   DeclaredStockReserveDto,
   DeclaredStockReserveResult,
   ListingRow,
-} from './seller-webhook.types.js';
-import { createLogger } from '../../../shared/logger.js';
+} from '../seller-webhook.types.js';
+import { createLogger } from '../../../../shared/logger.js';
 
 const logger = createLogger('webhook:reserve');
 
@@ -75,7 +76,7 @@ export class HandleDeclaredStockReserveUseCase {
           return { success: false, orderId };
         }
 
-        const candidates = this.buildOrderIdCandidates(orderId, originalOrderId);
+        const candidates = buildOrderIdCandidates(orderId, originalOrderId);
         const existingRows = await this.db.query<{ id: string; status: string; external_order_id: string }>(
           'seller_stock_reservations',
           {
@@ -191,9 +192,4 @@ export class HandleDeclaredStockReserveUseCase {
     }
   }
 
-  private buildOrderIdCandidates(orderId: string, originalOrderId: string | null): string[] {
-    const set = new Set([orderId]);
-    if (originalOrderId && originalOrderId !== orderId) set.add(originalOrderId);
-    return Array.from(set);
-  }
 }

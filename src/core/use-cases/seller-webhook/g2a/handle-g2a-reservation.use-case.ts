@@ -12,27 +12,26 @@
  */
 import { injectable, inject } from 'tsyringe';
 import { randomUUID } from 'node:crypto';
-import { TOKENS } from '../../../di/tokens.js';
-import type { IDatabase } from '../../ports/database.port.js';
-import type { ISellerKeyOperationsPort } from '../../ports/seller-key-operations.port.js';
-import type { ISellerDomainEventPort } from '../../ports/seller-domain-event.port.js';
-import type { IListingHealthPort } from '../../ports/seller-listing-health.port.js';
-import type { IVariantUnavailabilityPort } from '../../ports/variant-unavailability.port.js';
+import { TOKENS } from '../../../../di/tokens.js';
+import type { IDatabase } from '../../../ports/database.port.js';
+import type { ISellerKeyOperationsPort } from '../../../ports/seller-key-operations.port.js';
+import type { ISellerDomainEventPort } from '../../../ports/seller-domain-event.port.js';
+import type { IListingHealthPort } from '../../../ports/seller-listing-health.port.js';
+import type { IVariantUnavailabilityPort } from '../../../ports/variant-unavailability.port.js';
 import type {
   G2AReservationDto,
   G2AReservationResponse,
   G2AStockItem,
-} from './seller-webhook.types.js';
+} from '../seller-webhook.types.js';
 import {
   buildStockInventoryItem,
   buildStockItem,
   buildReservationResponse,
 } from './g2a-parser.js';
-import { createLogger } from '../../../shared/logger.js';
+import { countAvailableKeys, MARKETPLACE_RESERVATION_EXPIRY_MS } from '../../../shared/stock-queries.js';
+import { createLogger } from '../../../../shared/logger.js';
 
 const logger = createLogger('webhook:g2a:reservation');
-
-const G2A_RESERVATION_EXPIRY_MS = 30 * 60 * 1000;
 
 interface ListingRow {
   id: string;
@@ -82,7 +81,7 @@ export class HandleG2AReservationUseCase {
         return { ok: false, code: 'BR02', message: `Product not available: ${item.product_id}`, status: 400 };
       }
 
-      const expiresAt = new Date(Date.now() + G2A_RESERVATION_EXPIRY_MS).toISOString();
+      const expiresAt = new Date(Date.now() + MARKETPLACE_RESERVATION_EXPIRY_MS).toISOString();
 
       let outcome;
       try {
@@ -141,7 +140,7 @@ export class HandleG2AReservationUseCase {
         return { ok: false, code: 'ERR99', message: 'Failed to provision keys', status: 500 };
       }
 
-      const availableCount = await this.countAvailableKeys(listing.variant_id);
+      const availableCount = await countAvailableKeys(this.db, listing.variant_id);
 
       const inventoryItems = provisionResult.keyIds.map((keyId, idx) =>
         buildStockInventoryItem(keyId, provisionResult.decryptedKeys[idx]?.plaintext ?? ''),
@@ -200,11 +199,4 @@ export class HandleG2AReservationUseCase {
     return { ok: true, response: buildReservationResponse(reservationId, stockItems) };
   }
 
-  private async countAvailableKeys(variantId: string): Promise<number> {
-    const keys = await this.db.query<{ id: string }>('product_keys', {
-      select: 'id',
-      eq: [['variant_id', variantId], ['key_state', 'available']],
-    });
-    return keys.length;
-  }
 }

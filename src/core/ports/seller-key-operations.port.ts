@@ -69,6 +69,13 @@ export interface PostProvisionReturnParams {
   refundEventId?: string;
 }
 
+export interface DecryptPendingResult {
+  keyIds: string[];
+  provisionIds: string[];
+  decryptedKeys: DecryptedKey[];
+  keyFormats: string[];
+}
+
 export interface ISellerKeyOperationsPort {
   /**
    * Atomically claim keys for a seller reservation with JIT fallback.
@@ -81,6 +88,19 @@ export interface ISellerKeyOperationsPort {
    * Delegates decryption to `encrypt-product-keys` Edge Function.
    */
   provisionFromPendingKeys(reservationId: string): Promise<ProvisionResult>;
+
+  /**
+   * Decrypt pending provisions WITHOUT finalising DB state.
+   * Used by marketplaces that need outbound key delivery (Kinguin)
+   * where finalization should only happen after successful upload.
+   */
+  decryptPendingWithoutFinalize(reservationId: string): Promise<DecryptPendingResult>;
+
+  /**
+   * Finalize provisions that were previously decrypted without finalizing.
+   * Marks provisions as 'delivered' and keys as 'seller_provisioned'.
+   */
+  finalizeProvisions(reservationId: string, keyIds: string[], provisionIds: string[]): Promise<void>;
 
   /**
    * Decrypt keys from an already-provisioned reservation (idempotent replay).

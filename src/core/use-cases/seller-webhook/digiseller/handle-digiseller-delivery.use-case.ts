@@ -15,17 +15,17 @@
  *   Error:   { id, inv, error }
  */
 import { injectable, inject } from 'tsyringe';
-import { TOKENS } from '../../../di/tokens.js';
-import type { IDatabase } from '../../ports/database.port.js';
-import type { ISellerKeyOperationsPort } from '../../ports/seller-key-operations.port.js';
-import type { IListingHealthPort } from '../../ports/seller-listing-health.port.js';
-import type { IVariantUnavailabilityPort } from '../../ports/variant-unavailability.port.js';
+import { TOKENS } from '../../../../di/tokens.js';
+import type { IDatabase } from '../../../ports/database.port.js';
+import type { ISellerKeyOperationsPort } from '../../../ports/seller-key-operations.port.js';
+import type { IListingHealthPort } from '../../../ports/seller-listing-health.port.js';
+import type { IVariantUnavailabilityPort } from '../../../ports/variant-unavailability.port.js';
 import type {
   DigisellerDeliveryDto,
   DigisellerDeliveryResult,
   DigisellerFormDeliveryPayload,
-} from './seller-webhook.types.js';
-import { createLogger } from '../../../shared/logger.js';
+} from '../seller-webhook.types.js';
+import { createLogger } from '../../../../shared/logger.js';
 
 const logger = createLogger('webhook:digiseller');
 

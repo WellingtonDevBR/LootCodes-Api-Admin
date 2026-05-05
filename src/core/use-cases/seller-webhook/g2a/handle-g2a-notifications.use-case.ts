@@ -8,11 +8,11 @@
  * Response: 204 No Content
  */
 import { injectable, inject } from 'tsyringe';
-import { TOKENS } from '../../../di/tokens.js';
-import type { IDatabase } from '../../ports/database.port.js';
-import type { ISellerDomainEventPort } from '../../ports/seller-domain-event.port.js';
-import type { G2ANotificationsDto } from './seller-webhook.types.js';
-import { createLogger } from '../../../shared/logger.js';
+import { TOKENS } from '../../../../di/tokens.js';
+import type { IDatabase } from '../../../ports/database.port.js';
+import type { ISellerDomainEventPort } from '../../../ports/seller-domain-event.port.js';
+import type { G2ANotificationsDto } from '../seller-webhook.types.js';
+import { createLogger } from '../../../../shared/logger.js';
 
 const logger = createLogger('webhook:g2a:notifications');
 

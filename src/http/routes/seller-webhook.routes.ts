@@ -17,10 +17,15 @@
  *   POST /webhooks/g2a/notifications             -> G2A auction deactivation notifications
  *   POST /webhooks/kinguin                       -> Kinguin seller callbacks
  *   POST /webhooks/kinguin-buyer                 -> Kinguin buyer webhooks
- *   POST /webhooks/gamivo                        -> Gamivo refund/deactivation
  *   GET  /webhooks/gamivo                        -> Gamivo health check (204)
+ *   POST /webhooks/gamivo/reservation            -> Gamivo reserve stock
+ *   POST /webhooks/gamivo/order                  -> Gamivo confirm order + deliver keys
+ *   GET  /webhooks/gamivo/order/:id/keys         -> Gamivo retrieve order keys (idempotent)
+ *   POST /webhooks/gamivo/refund                 -> Gamivo refund (cumulative, 204)
+ *   POST /webhooks/gamivo/offer-deactivation     -> Gamivo listing deactivation (204)
  *   POST /webhooks/digiseller                    -> Digiseller form delivery
  *   POST /webhooks/digiseller/quantity            -> Digiseller quantity check
+ *   POST /webhooks/bamboo                         -> Bamboo procurement callbacks
  */
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { container } from '../../di/container.js';
@@ -30,30 +35,51 @@ import {
   type ProviderAuthResult,
 } from '../middleware/marketplace-auth.middleware.js';
 import type { IDatabase } from '../../core/ports/database.port.js';
-import type { HandleDeclaredStockReserveUseCase } from '../../core/use-cases/seller-webhook/handle-declared-stock-reserve.use-case.js';
-import type { HandleDeclaredStockProvideUseCase } from '../../core/use-cases/seller-webhook/handle-declared-stock-provide.use-case.js';
-import type { HandleDeclaredStockCancelUseCase } from '../../core/use-cases/seller-webhook/handle-declared-stock-cancel.use-case.js';
-import type { HandleMarketplaceRefundUseCase } from '../../core/use-cases/seller-webhook/handle-marketplace-refund.use-case.js';
-import type { HandleListingDeactivationUseCase } from '../../core/use-cases/seller-webhook/handle-listing-deactivation.use-case.js';
-import type { HandleDigisellerDeliveryUseCase } from '../../core/use-cases/seller-webhook/handle-digiseller-delivery.use-case.js';
-import type { HandleDigisellerQuantityCheckUseCase } from '../../core/use-cases/seller-webhook/handle-digiseller-quantity-check.use-case.js';
-import type { HandleKeyUploadOrderUseCase } from '../../core/use-cases/seller-webhook/handle-key-upload-order.use-case.js';
-import type { HandleG2AReservationUseCase } from '../../core/use-cases/seller-webhook/handle-g2a-reservation.use-case.js';
-import type { HandleG2AOrderUseCase } from '../../core/use-cases/seller-webhook/handle-g2a-order.use-case.js';
-import type { HandleG2ARenewReservationUseCase } from '../../core/use-cases/seller-webhook/handle-g2a-renew-reservation.use-case.js';
-import type { HandleG2ACancelReservationUseCase } from '../../core/use-cases/seller-webhook/handle-g2a-cancel-reservation.use-case.js';
-import type { HandleG2AGetInventoryUseCase } from '../../core/use-cases/seller-webhook/handle-g2a-get-inventory.use-case.js';
-import type { HandleG2AReturnInventoryUseCase } from '../../core/use-cases/seller-webhook/handle-g2a-return-inventory.use-case.js';
-import type { HandleG2ANotificationsUseCase } from '../../core/use-cases/seller-webhook/handle-g2a-notifications.use-case.js';
+import type { HandleDeclaredStockReserveUseCase } from '../../core/use-cases/seller-webhook/eneba/handle-declared-stock-reserve.use-case.js';
+import type { HandleDeclaredStockProvideUseCase } from '../../core/use-cases/seller-webhook/eneba/handle-declared-stock-provide.use-case.js';
+import type { HandleDeclaredStockCancelUseCase } from '../../core/use-cases/seller-webhook/eneba/handle-declared-stock-cancel.use-case.js';
+import type { HandleDigisellerDeliveryUseCase } from '../../core/use-cases/seller-webhook/digiseller/handle-digiseller-delivery.use-case.js';
+import type { HandleDigisellerQuantityCheckUseCase } from '../../core/use-cases/seller-webhook/digiseller/handle-digiseller-quantity-check.use-case.js';
+import type { HandleG2AReservationUseCase } from '../../core/use-cases/seller-webhook/g2a/handle-g2a-reservation.use-case.js';
+import type { HandleG2AOrderUseCase } from '../../core/use-cases/seller-webhook/g2a/handle-g2a-order.use-case.js';
+import type { HandleG2ARenewReservationUseCase } from '../../core/use-cases/seller-webhook/g2a/handle-g2a-renew-reservation.use-case.js';
+import type { HandleG2ACancelReservationUseCase } from '../../core/use-cases/seller-webhook/g2a/handle-g2a-cancel-reservation.use-case.js';
+import type { HandleG2AGetInventoryUseCase } from '../../core/use-cases/seller-webhook/g2a/handle-g2a-get-inventory.use-case.js';
+import type { HandleG2AReturnInventoryUseCase } from '../../core/use-cases/seller-webhook/g2a/handle-g2a-return-inventory.use-case.js';
+import type { HandleG2ANotificationsUseCase } from '../../core/use-cases/seller-webhook/g2a/handle-g2a-notifications.use-case.js';
 import {
   parseReservationRequest,
   parseOrderRequest,
   parseNotifications,
   G2AParseError,
   buildContractError,
-} from '../../core/use-cases/seller-webhook/g2a-parser.js';
+} from '../../core/use-cases/seller-webhook/g2a/g2a-parser.js';
 import { resolveProviderSecrets } from '../../infra/marketplace/resolve-provider-secrets.js';
 import { timingSafeEqual } from '../../infra/marketplace/_shared/marketplace-http.js';
+import type { HandleGamivoReservationUseCase } from '../../core/use-cases/seller-webhook/gamivo/handle-gamivo-reservation.use-case.js';
+import type { HandleGamivoOrderUseCase } from '../../core/use-cases/seller-webhook/gamivo/handle-gamivo-order.use-case.js';
+import type { HandleGamivoGetKeysUseCase } from '../../core/use-cases/seller-webhook/gamivo/handle-gamivo-get-keys.use-case.js';
+import type { HandleGamivoRefundUseCase } from '../../core/use-cases/seller-webhook/gamivo/handle-gamivo-refund.use-case.js';
+import type { HandleGamivoOfferDeactivationUseCase } from '../../core/use-cases/seller-webhook/gamivo/handle-gamivo-offer-deactivation.use-case.js';
+import type { HandleKinguinWebhookUseCase } from '../../core/use-cases/seller-webhook/kinguin/handle-kinguin-webhook.use-case.js';
+import type { HandleKinguinBuyerWebhookUseCase } from '../../core/use-cases/seller-webhook/kinguin/handle-kinguin-buyer-webhook.use-case.js';
+import type { HandleBambooCallbackUseCase } from '../../core/use-cases/seller-webhook/bamboo/handle-bamboo-callback.use-case.js';
+import {
+  parseBambooCallbackPayload,
+  BambooParseError,
+} from '../../core/use-cases/seller-webhook/bamboo/bamboo-parser.js';
+import {
+  parseKinguinWebhookPayload,
+  KinguinParseError,
+} from '../../core/use-cases/seller-webhook/kinguin/kinguin-parser.js';
+import {
+  parseReservationRequest as parseGamivoReservation,
+  parseOrderRequest as parseGamivoOrder,
+  parseRefundRequest as parseGamivoRefund,
+  parseOfferDeactivation as parseGamivoDeactivation,
+  buildErrorResponse as buildGamivoError,
+  GamivoParseError,
+} from '../../core/use-cases/seller-webhook/gamivo/gamivo-parser.js';
 import {
   parseCallbackPayload,
   ParseError,
@@ -61,11 +87,11 @@ import {
   buildProvisionResponse,
   buildAuctionKeysResponse,
   buildTextKey,
-} from '../parsers/eneba-payload-parser.js';
+} from '../../core/use-cases/seller-webhook/eneba/eneba-payload-parser.js';
 import {
   buildMarketplaceFinancialsFromEnebaAuction,
   computeAggregateFeesCents,
-} from '../parsers/eneba-marketplace-financials.js';
+} from '../../core/use-cases/seller-webhook/eneba/eneba-marketplace-financials.js';
 import { createLogger } from '../../shared/logger.js';
 
 const logger = createLogger('webhook-routes');
@@ -302,105 +328,189 @@ export async function sellerWebhookRoutes(app: FastifyInstance) {
     return reply.status(204).send();
   });
 
-  // ─── Kinguin Seller Callbacks ────────────────────────────────────────
+  // ─── Kinguin Seller Callbacks (Envoy lifecycle webhooks) ─────────────
+  //
+  // Single endpoint handling 13+ status values via HandleKinguinWebhookUseCase.
+  // Keys are delivered OUTBOUND (POST to Kinguin Sales Manager API),
+  // not returned in the response body.
 
   app.post('/kinguin', {
     preHandler: [createMarketplaceAuthMiddleware('kinguin')],
   }, async (request, reply) => {
-    const body = request.body as Record<string, unknown>;
-    const action = body.action as string ?? body.type as string;
-
-    if (action === 'BUYING' || action === 'reservation') {
-      const uc = container.resolve<HandleDeclaredStockReserveUseCase>(UC_TOKENS.HandleDeclaredStockReserve);
-      const result = await uc.execute({
-        orderId: body.orderId as string,
-        originalOrderId: null,
-        auctions: [{
-          auctionId: body.offerId as string,
-          keyCount: (body.quantity as number) ?? 1,
-          price: { amount: body.unitPrice as number ?? 0, currency: body.currency as string ?? 'EUR' },
-        }],
-        providerCode: 'kinguin',
-      });
-      return reply.send({ success: result.success });
+    let parsed;
+    try {
+      parsed = parseKinguinWebhookPayload(request.body);
+    } catch (err) {
+      if (err instanceof KinguinParseError) {
+        logger.warn('Kinguin payload validation failed', { error: err.message });
+        return reply.status(400).send({ status: 'error', error: err.message });
+      }
+      throw err;
     }
 
-    if (action === 'RETURNED' || action === 'REFUNDED') {
-      const uc = container.resolve<HandleMarketplaceRefundUseCase>(UC_TOKENS.HandleMarketplaceRefund);
-      const result = await uc.execute({
-        externalOrderId: body.orderId as string,
-        providerCode: 'kinguin',
-        reason: `kinguin_${action.toLowerCase()}`,
-      });
-      return reply.send({ success: result.success });
-    }
+    const auth = getAuth(request);
+    const uc = container.resolve<HandleKinguinWebhookUseCase>(UC_TOKENS.HandleKinguinWebhook);
+    const result = await uc.execute({
+      payload: parsed,
+      providerAccountId: auth.providerAccountId,
+    });
 
-    logger.info('Kinguin webhook received', { action });
-    return reply.send({ success: true });
+    return reply.status(result.status).send(result.body);
   });
 
-  // ─── Kinguin Buyer Webhooks ──────────────────────────────────────────
+  // ─── Kinguin Buyer Webhooks (ESA subscriptions) ────────────────────
+  //
+  // Authenticated via X-Event-Secret header (not X-Auth-Token).
+  // MUST return 204 No Content (Kinguin ESA spec requirement).
 
   app.post('/kinguin-buyer', {
     preHandler: [createMarketplaceAuthMiddleware('kinguin-buyer')],
   }, async (request, reply) => {
-    const eventName = request.headers['x-event-name'] as string ?? '';
-    logger.info('Kinguin buyer webhook received', { eventName });
+    const eventName = (request.headers['x-event-name'] as string) ?? '';
+    const auth = getAuth(request);
+
+    const uc = container.resolve<HandleKinguinBuyerWebhookUseCase>(UC_TOKENS.HandleKinguinBuyerWebhook);
+    await uc.execute({
+      eventName,
+      payload: request.body,
+      providerAccountId: auth.providerAccountId,
+    });
+
     return reply.status(204).send();
   });
 
-  // ─── Gamivo Callbacks ────────────────────────────────────────────────
+  // ─── Gamivo Import API ───────────────────────────────────────────────
 
   app.get('/gamivo', async (_request, reply) => {
     return reply.status(204).send();
   });
 
-  app.post('/gamivo', {
+  app.post('/gamivo/reservation', {
     preHandler: [createMarketplaceAuthMiddleware('gamivo')],
   }, async (request, reply) => {
-    const body = request.body as Record<string, unknown>;
-    const eventType = body.type as string ?? body.event as string;
-
-    if (eventType === 'refund' || eventType === 'partial_refund') {
-      const uc = container.resolve<HandleMarketplaceRefundUseCase>(UC_TOKENS.HandleMarketplaceRefund);
-      const result = await uc.execute({
-        externalOrderId: body.orderId as string ?? body.order_id as string,
-        providerCode: 'gamivo',
-        reason: `gamivo_${eventType}`,
-        refundedKeysCount: body.refunded_keys_count as number | undefined,
-        refundEventId: body.event_id
-          ? `gamivo:${body.event_id as string}`
-          : undefined,
-      });
-      return reply.send({ success: result.success });
+    let parsed;
+    try {
+      parsed = parseGamivoReservation(request.body);
+    } catch (err) {
+      if (err instanceof GamivoParseError) {
+        return reply.status(400).send(buildGamivoError('invalid_request', err.message));
+      }
+      throw err;
     }
 
-    if (eventType === 'deactivation') {
-      const uc = container.resolve<HandleListingDeactivationUseCase>(UC_TOKENS.HandleListingDeactivation);
-      const result = await uc.execute({
-        externalListingId: body.offerId as string ?? body.offer_id as string,
-        providerCode: 'gamivo',
-        reason: body.reason as string | undefined,
-      });
-      return reply.send({ success: result.success });
+    const auth = getAuth(request);
+    const uc = container.resolve<HandleGamivoReservationUseCase>(UC_TOKENS.HandleGamivoReservation);
+    const result = await uc.execute({
+      productId: parsed.productId,
+      quantity: parsed.quantity,
+      unitPrice: parsed.unitPrice,
+      providerAccountId: auth.providerAccountId,
+    });
+
+    if (!result.ok) {
+      return reply.status(result.status).send(buildGamivoError(result.code, result.message));
+    }
+    return reply.send({ reservation_id: result.reservationId });
+  });
+
+  app.post('/gamivo/order', {
+    preHandler: [createMarketplaceAuthMiddleware('gamivo')],
+  }, async (request, reply) => {
+    let parsed;
+    try {
+      parsed = parseGamivoOrder(request.body);
+    } catch (err) {
+      if (err instanceof GamivoParseError) {
+        return reply.status(400).send(buildGamivoError('invalid_request', err.message));
+      }
+      throw err;
     }
 
-    if (eventType === 'reservation' || eventType === 'order') {
-      const uc = container.resolve<HandleKeyUploadOrderUseCase>(UC_TOKENS.HandleKeyUploadOrder);
-      const result = await uc.execute({
-        externalOrderId: body.orderId as string ?? body.order_id as string,
-        externalListingId: body.offerId as string ?? body.offer_id as string,
-        quantity: (body.quantity as number) ?? 1,
-        providerCode: 'gamivo',
-        priceCents: body.unit_price_cents as number | undefined,
-        currency: body.currency as string | undefined,
-        providerMetadata: body,
-      });
-      return reply.send({ success: result.success });
+    const auth = getAuth(request);
+    const uc = container.resolve<HandleGamivoOrderUseCase>(UC_TOKENS.HandleGamivoOrder);
+    const result = await uc.execute({
+      reservationId: parsed.reservationId,
+      gamivoOrderId: parsed.gamivoOrderId,
+      createdTime: parsed.createdTime,
+      providerAccountId: auth.providerAccountId,
+    });
+
+    if (!result.ok) {
+      return reply.status(result.status).send(buildGamivoError(result.code, result.message));
+    }
+    return reply.send({
+      provider_order_id: result.providerOrderId,
+      keys: result.keys,
+      available_stock: result.availableStock,
+    });
+  });
+
+  const GAMIVO_ID_SEGMENT = /^[A-Za-z0-9_-]{1,128}$/;
+
+  app.get('/gamivo/order/:id/keys', {
+    preHandler: [createMarketplaceAuthMiddleware('gamivo')],
+  }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    if (!GAMIVO_ID_SEGMENT.test(id)) {
+      return reply.status(400).send(buildGamivoError('invalid_request', 'Invalid order ID'));
     }
 
-    logger.info('Gamivo webhook received', { eventType });
-    return reply.send({ success: true });
+    const uc = container.resolve<HandleGamivoGetKeysUseCase>(UC_TOKENS.HandleGamivoGetKeys);
+    const result = await uc.execute({ providerOrderId: id });
+
+    if (!result.ok) {
+      return reply.status(result.status).send(buildGamivoError(result.code, result.message));
+    }
+    return reply.send({ keys: result.keys, available_stock: result.availableStock });
+  });
+
+  app.post('/gamivo/refund', {
+    preHandler: [createMarketplaceAuthMiddleware('gamivo')],
+  }, async (request, reply) => {
+    let parsed;
+    try {
+      parsed = parseGamivoRefund(request.body);
+    } catch (err) {
+      if (err instanceof GamivoParseError) {
+        return reply.status(400).send(buildGamivoError('invalid_request', err.message));
+      }
+      throw err;
+    }
+
+    const uc = container.resolve<HandleGamivoRefundUseCase>(UC_TOKENS.HandleGamivoRefund);
+    const result = await uc.execute({
+      orderId: parsed.orderId,
+      reservationId: parsed.reservationId,
+      refundedAt: parsed.refundedAt,
+      refundedKeysCount: parsed.refundedKeysCount,
+    });
+
+    return reply.status(result.status).send();
+  });
+
+  app.post('/gamivo/offer-deactivation', {
+    preHandler: [createMarketplaceAuthMiddleware('gamivo')],
+  }, async (request, reply) => {
+    let parsed;
+    try {
+      parsed = parseGamivoDeactivation(request.body);
+    } catch (err) {
+      if (err instanceof GamivoParseError) {
+        return reply.status(400).send(buildGamivoError('invalid_request', err.message));
+      }
+      throw err;
+    }
+
+    const auth = getAuth(request);
+    const uc = container.resolve<HandleGamivoOfferDeactivationUseCase>(UC_TOKENS.HandleGamivoOfferDeactivation);
+    const result = await uc.execute({
+      offerId: parsed.offerId,
+      productName: parsed.productName,
+      reason: parsed.reason,
+      providerAccountId: auth.providerAccountId,
+    });
+
+    return reply.status(result.status).send();
   });
 
   // ─── Digiseller Form Delivery (Supplier API) ─────────────────────────
@@ -488,6 +598,37 @@ export async function sellerWebhookRoutes(app: FastifyInstance) {
     });
 
     return reply.send(result);
+  });
+
+  // ─── Bamboo Procurement Callbacks ───────────────────────────────────
+  //
+  // POST /bamboo  → order notification callback (Succeeded / Failed / PartialFailed)
+  //
+  // Bamboo includes secretKey in the JSON body (not headers).
+  // Auth is verified by comparing against configured BAMBOO_WEBHOOK_SECRET.
+
+  app.post('/bamboo', {
+    preHandler: [createMarketplaceAuthMiddleware('bamboo')],
+  }, async (request, reply) => {
+    let parsed;
+    try {
+      parsed = parseBambooCallbackPayload(request.body);
+    } catch (err) {
+      if (err instanceof BambooParseError) {
+        logger.warn('Bamboo callback parse error', { error: err.message });
+        return reply.status(400).send({ error: err.message });
+      }
+      throw err;
+    }
+
+    const auth = getAuth(request);
+    const uc = container.resolve<HandleBambooCallbackUseCase>(UC_TOKENS.HandleBambooCallback);
+    const result = await uc.execute({
+      payload: parsed,
+      providerAccountId: auth.providerAccountId,
+    });
+
+    return reply.status(result.status).send(result.body);
   });
 }
 

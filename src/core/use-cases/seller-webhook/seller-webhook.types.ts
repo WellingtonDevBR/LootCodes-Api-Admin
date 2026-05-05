@@ -103,6 +103,79 @@ export interface DeclaredStockCancelResult {
   keysReleased?: number;
 }
 
+// ─── Gamivo Import API ──────────────────────────────────────────────
+
+export interface GamivoReservationDto {
+  productId: number;
+  quantity: number;
+  unitPrice: number;
+  providerAccountId: string;
+}
+
+export type GamivoReservationResult = {
+  ok: true;
+  reservationId: string;
+} | {
+  ok: false;
+  code: string;
+  message: string;
+  status: number;
+};
+
+export interface GamivoOrderDto {
+  reservationId: string;
+  gamivoOrderId: string;
+  createdTime: string;
+  providerAccountId: string;
+}
+
+export interface GamivoKeyResponse {
+  id: string;
+  value: string;
+  type: 'text';
+}
+
+export type GamivoOrderResult = {
+  ok: true;
+  providerOrderId: string;
+  keys: GamivoKeyResponse[];
+  availableStock?: number;
+} | {
+  ok: false;
+  code: string;
+  message: string;
+  status: number;
+};
+
+export interface GamivoGetKeysDto {
+  providerOrderId: string;
+}
+
+export type GamivoGetKeysResult = {
+  ok: true;
+  keys: GamivoKeyResponse[];
+  availableStock?: number;
+} | {
+  ok: false;
+  code: string;
+  message: string;
+  status: number;
+};
+
+export interface GamivoRefundDto {
+  orderId: string;
+  reservationId: string;
+  refundedAt: string;
+  refundedKeysCount: number;
+}
+
+export interface GamivoOfferDeactivationDto {
+  offerId: number;
+  productName: string;
+  reason: string;
+  providerAccountId: string;
+}
+
 // ─── G2A / Gamivo Key-Upload Orders ──────────────────────────────────
 
 export interface KeyUploadOrderDto {
@@ -280,6 +353,41 @@ export interface G2AContractError {
   message: string;
 }
 
+// ─── Kinguin Seller Webhook ──────────────────────────────────────────
+
+export interface KinguinWebhookDto {
+  payload: import('./kinguin/kinguin-parser.js').KinguinWebhookPayload;
+  providerAccountId: string;
+}
+
+export type KinguinWebhookResult =
+  | { ok: true; status: number; body: Record<string, unknown> }
+  | { ok: false; status: number; body: Record<string, unknown> };
+
+// ─── Kinguin Buyer Webhook ──────────────────────────────────────────
+
+export interface KinguinBuyerWebhookDto {
+  eventName: string;
+  payload: unknown;
+  providerAccountId: string;
+}
+
+export interface KinguinBuyerProductUpdatePayload {
+  productId?: string;
+  kinguinId?: number;
+  qty?: number;
+  textQty?: number;
+  cheapestOfferId?: string[];
+  updatedAt?: string;
+}
+
+export interface KinguinBuyerOrderStatusPayload {
+  orderId?: string;
+  orderExternalId?: string;
+  status?: string;
+  updatedAt?: string;
+}
+
 // ─── Inventory Callback (generic check) ─────────────────────────────
 
 export interface InventoryCallbackDto {
@@ -319,4 +427,17 @@ export interface ListingRow {
   external_listing_id: string | null;
   listing_type: SellerListingType;
   variant?: { product_id?: string } | null;
+}
+
+// ─── Bamboo Procurement Callback ──────────────────────────────────
+
+export interface BambooCallbackDto {
+  payload: import('./bamboo/bamboo-parser.js').BambooNotificationCallbackPayload;
+  providerAccountId: string;
+}
+
+export interface BambooCallbackResult {
+  ok: boolean;
+  status: number;
+  body: Record<string, unknown>;
 }

@@ -6,15 +6,16 @@
  *   provisioned → restock keys + ledger refund via handlePostProvisionReturn
  */
 import { injectable, inject } from 'tsyringe';
-import { TOKENS } from '../../../di/tokens.js';
-import type { IDatabase } from '../../ports/database.port.js';
-import type { ISellerKeyOperationsPort } from '../../ports/seller-key-operations.port.js';
-import type { ISellerDomainEventPort } from '../../ports/seller-domain-event.port.js';
+import { TOKENS } from '../../../../di/tokens.js';
+import type { IDatabase } from '../../../ports/database.port.js';
+import type { ISellerKeyOperationsPort } from '../../../ports/seller-key-operations.port.js';
+import type { ISellerDomainEventPort } from '../../../ports/seller-domain-event.port.js';
+import { buildOrderIdCandidates } from './eneba-helpers.js';
 import type {
   DeclaredStockCancelDto,
   DeclaredStockCancelResult,
-} from './seller-webhook.types.js';
-import { createLogger } from '../../../shared/logger.js';
+} from '../seller-webhook.types.js';
+import { createLogger } from '../../../../shared/logger.js';
 
 const logger = createLogger('webhook:cancel');
 
@@ -30,7 +31,7 @@ export class HandleDeclaredStockCancelUseCase {
     const { orderId, originalOrderId, providerCode } = dto;
 
     try {
-      const candidates = this.buildOrderIdCandidates(orderId, originalOrderId);
+      const candidates = buildOrderIdCandidates(orderId, originalOrderId);
 
       const rows = await this.db.query<{
         id: string;
@@ -118,11 +119,5 @@ export class HandleDeclaredStockCancelUseCase {
       logger.error('Unexpected error in cancellation handler', err as Error, { orderId });
       return { success: true };
     }
-  }
-
-  private buildOrderIdCandidates(orderId: string, originalOrderId: string | null): string[] {
-    const set = new Set([orderId]);
-    if (originalOrderId && originalOrderId !== orderId) set.add(originalOrderId);
-    return Array.from(set);
   }
 }

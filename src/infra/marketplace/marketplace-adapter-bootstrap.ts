@@ -1,9 +1,10 @@
 /**
  * Lazy marketplace adapter bootstrap.
  *
- * Loads `provider_accounts` where `supports_seller = true`, resolves secrets
- * via `provider_secrets_ref` + Vault (same pattern as Edge `provider-procurement`),
- * merges `api_profile`, and registers adapters in the MarketplaceAdapterRegistry.
+ * Loads all `provider_accounts` where `is_enabled = true` (seller and
+ * procurement-only providers), resolves secrets via `provider_secrets_ref`
+ * + Vault, merges `api_profile`, and registers adapters in the
+ * MarketplaceAdapterRegistry.
  *
  * Called once on first request via a Fastify onRequest hook.
  */
@@ -16,6 +17,7 @@ import { G2AAdapter } from './g2a/adapter.js';
 import { GamivoMarketplaceAdapter } from './gamivo/adapter.js';
 import { KinguinMarketplaceAdapter } from './kinguin/adapter.js';
 import { DigisellerMarketplaceAdapter } from './digiseller/adapter.js';
+import { BambooMarketplaceAdapter } from './bamboo/adapter.js';
 import { resolveProviderSecrets } from './resolve-provider-secrets.js';
 import { createLogger } from '../../shared/logger.js';
 
@@ -55,14 +57,11 @@ export async function bootstrapMarketplaceAdapters(
   try {
     const accounts = await db.query<ProviderAccountRow>('provider_accounts', {
       select: 'id, provider_code, api_profile, seller_config',
-      eq: [
-        ['is_enabled', true],
-        ['supports_seller', true],
-      ],
+      filter: { is_enabled: true },
     });
 
     if (accounts.length === 0) {
-      logger.info('No enabled seller provider accounts found — skipping adapter registration');
+      logger.info('No enabled provider accounts found — skipping adapter registration');
       return;
     }
 
@@ -105,6 +104,8 @@ function buildAdapter(
       return buildKinguinAdapter(secrets, profile);
     case 'digiseller':
       return buildDigisellerAdapter(secrets, profile, account.seller_config);
+    case 'bamboo':
+      return buildBambooAdapter(secrets, profile);
     default:
       logger.warn(`Unknown provider code — no adapter factory`, { providerCode: account.provider_code });
       return null;
@@ -308,4 +309,37 @@ function buildDigisellerAdapter(
   return new DigisellerMarketplaceAdapter(httpClient, {
     defaultCurrency: (cfg['default_currency'] as string) ?? 'USD',
   });
+}
+
+function buildBambooAdapter(
+  secrets: Record<string, string>,
+  profile: Record<string, unknown>,
+): BambooMarketplaceAdapter | null {
+  const clientId = secrets['BAMBOO_CLIENT_ID'];
+  const clientSecret = secrets['BAMBOO_CLIENT_SECRET'];
+  const baseUrlV2 = profileStr(profile, 'base_url_v2') ?? profileStr(profile, 'base_url') ?? 'https://api.bamboocardportal.com/api/integration/v2.0';
+  const baseUrlV1 = profileStr(profile, 'base_url') ?? 'https://api.bamboocardportal.com/api/integration/v1.0';
+
+  if (!clientId || !clientSecret) {
+    logger.warn('Bamboo adapter skipped — need BAMBOO_CLIENT_ID and BAMBOO_CLIENT_SECRET');
+    return null;
+  }
+
+  const basicAuth = 'Basic ' + Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
+
+  const catalogClient = new MarketplaceHttpClient({
+    baseUrl: baseUrlV2.replace(/\/$/, ''),
+    providerCode: 'bamboo',
+    rateLimiter: { maxRequests: 50, windowMs: 60_000 },
+    headers: async () => ({ Authorization: basicAuth }),
+  });
+
+  const ordersClient = new MarketplaceHttpClient({
+    baseUrl: baseUrlV1.replace(/\/$/, ''),
+    providerCode: 'bamboo',
+    rateLimiter: { maxRequests: 50, windowMs: 60_000 },
+    headers: async () => ({ Authorization: basicAuth }),
+  });
+
+  return new BambooMarketplaceAdapter(catalogClient, ordersClient);
 }
