@@ -5,6 +5,7 @@ import { employeeGuard } from '../middleware/auth.guard.js';
 import type { ListAlertsUseCase } from '../../core/use-cases/alerts/list-alerts.use-case.js';
 import type { DismissAlertUseCase } from '../../core/use-cases/alerts/dismiss-alert.use-case.js';
 import type { DismissAllAlertsUseCase } from '../../core/use-cases/alerts/dismiss-all-alerts.use-case.js';
+import type { DismissAllByFilterUseCase } from '../../core/use-cases/alerts/dismiss-all-by-filter.use-case.js';
 
 export async function adminAlertsRoutes(app: FastifyInstance) {
   app.get('/', { preHandler: [employeeGuard] }, async (request, reply) => {
@@ -31,13 +32,20 @@ export async function adminAlertsRoutes(app: FastifyInstance) {
   });
 
   app.post('/dismiss-all', { preHandler: [employeeGuard] }, async (request, reply) => {
-    const body = request.body as { ids?: string[] } | undefined;
+    const body = request.body as { ids?: string[]; severity?: string; alert_type?: string } | undefined;
     const ids = body?.ids ?? [];
-    if (ids.length === 0) {
-      return reply.status(400).send({ error: 'ids array is required' });
+
+    if (ids.length > 0) {
+      const uc = container.resolve<DismissAllAlertsUseCase>(UC_TOKENS.DismissAllAlerts);
+      await uc.execute({ ids });
+      return reply.send({ success: true, dismissed_count: ids.length });
     }
-    const uc = container.resolve<DismissAllAlertsUseCase>(UC_TOKENS.DismissAllAlerts);
-    await uc.execute({ ids });
-    return reply.send({ success: true });
+
+    const uc = container.resolve<DismissAllByFilterUseCase>(UC_TOKENS.DismissAllByFilter);
+    const count = await uc.execute({
+      severity: body?.severity,
+      alert_type: body?.alert_type,
+    });
+    return reply.send({ success: true, dismissed_count: count });
   });
 }

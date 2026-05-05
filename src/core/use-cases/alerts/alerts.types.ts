@@ -39,3 +39,8 @@ export interface DismissAlertDto {
 export interface DismissAllAlertsDto {
   readonly ids: readonly string[];
 }
+
+export interface DismissAllByFilterDto {
+  readonly severity?: string;
+  readonly alert_type?: string;
+}

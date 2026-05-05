@@ -8,6 +8,7 @@ import type {
   ListAlertsResult,
   DismissAlertDto,
   DismissAllAlertsDto,
+  DismissAllByFilterDto,
 } from '../../core/use-cases/alerts/alerts.types.js';
 import { createLogger } from '../../shared/logger.js';
 
@@ -69,19 +70,36 @@ export class SupabaseAdminAlertsRepository implements IAdminAlertsRepository {
     await this.db.update(
       'admin_alerts',
       { id: dto.id },
-      { is_read: true },
+      { is_read: true, is_resolved: true, resolved_at: new Date().toISOString() },
     );
   }
 
   async dismissAllAlerts(dto: DismissAllAlertsDto): Promise<void> {
     logger.debug('dismissAllAlerts', { count: dto.ids.length });
 
+    const now = new Date().toISOString();
     for (const id of dto.ids) {
       await this.db.update(
         'admin_alerts',
         { id },
-        { is_read: true },
+        { is_read: true, is_resolved: true, resolved_at: now },
       );
     }
+  }
+
+  async dismissAllByFilter(dto: DismissAllByFilterDto): Promise<number> {
+    logger.debug('dismissAllByFilter', { dto });
+
+    const filter: Record<string, unknown> = { is_resolved: false };
+    if (dto.severity) filter.severity = dto.severity;
+    if (dto.alert_type) filter.alert_type = dto.alert_type;
+
+    const now = new Date().toISOString();
+    const rows = await this.db.update(
+      'admin_alerts',
+      filter,
+      { is_read: true, is_resolved: true, resolved_at: now },
+    );
+    return rows.length;
   }
 }

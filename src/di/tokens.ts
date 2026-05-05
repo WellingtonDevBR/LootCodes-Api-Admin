@@ -42,6 +42,13 @@ export const TOKENS = {
   SellerKeyOperations: Symbol.for('ISellerKeyOperationsPort'),
   SellerDomainEvents: Symbol.for('ISellerDomainEventPort'),
 
+  // Seller pricing services
+  SellerPricingService: Symbol.for('ISellerPricingService'),
+  SellerAutoPricingService: Symbol.for('ISellerAutoPricingService'),
+  SellerPriceIntelligenceService: Symbol.for('SellerPriceIntelligenceService'),
+  SellerCostBasisService: Symbol.for('SellerCostBasisService'),
+  SellerStockSyncService: Symbol.for('ISellerStockSyncService'),
+
   // Shared infra
   EventBus: Symbol.for('IEventBus'),
   EmailSender: Symbol.for('IEmailSender'),
@@ -251,6 +258,7 @@ export const UC_TOKENS = {
   ListAlerts: Symbol.for('ListAlertsUseCase'),
   DismissAlert: Symbol.for('DismissAlertUseCase'),
   DismissAllAlerts: Symbol.for('DismissAllAlertsUseCase'),
+  DismissAllByFilter: Symbol.for('DismissAllByFilterUseCase'),
 
   // Variant Price Timeline
   GetVariantPriceTimeline: Symbol.for('GetVariantPriceTimelineUseCase'),

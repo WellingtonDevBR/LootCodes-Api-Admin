@@ -36,6 +36,11 @@ import { SupabaseAdminSellerPricingRepository } from '../infra/seller/supabase-a
 import { SellerKeyOperationsService } from '../infra/seller/seller-key-operations.service.js';
 import { SellerDomainEventsService } from '../infra/seller/seller-domain-events.service.js';
 import { MarketplaceAdapterRegistry } from '../infra/marketplace/marketplace-adapter-registry.js';
+import { SellerPricingService } from '../infra/seller/pricing/seller-pricing.service.js';
+import { SellerAutoPricingService } from '../infra/seller/pricing/seller-auto-pricing.service.js';
+import { SellerPriceIntelligenceService } from '../infra/seller/pricing/seller-price-intelligence.service.js';
+import { SellerCostBasisService } from '../infra/seller/pricing/seller-cost-basis.service.js';
+import { SellerStockSyncService } from '../infra/seller/pricing/seller-stock-sync.service.js';
 import { SupabaseAdminOpportunitiesRepository } from '../infra/opportunities/supabase-admin-opportunities.repository.js';
 import { SupabaseAdminAlertsRepository } from '../infra/alerts/supabase-admin-alerts.repository.js';
 
@@ -307,6 +312,7 @@ import { ListOpportunitiesUseCase } from '../core/use-cases/opportunities/list-o
 import { ListAlertsUseCase } from '../core/use-cases/alerts/list-alerts.use-case.js';
 import { DismissAlertUseCase } from '../core/use-cases/alerts/dismiss-alert.use-case.js';
 import { DismissAllAlertsUseCase } from '../core/use-cases/alerts/dismiss-all-alerts.use-case.js';
+import { DismissAllByFilterUseCase } from '../core/use-cases/alerts/dismiss-all-by-filter.use-case.js';
 
 // Core infrastructure ports
 container.register(TOKENS.Database, { useClass: SupabaseDbAdapter });
@@ -462,6 +468,7 @@ container.register(UC_TOKENS.ListOpportunities, { useClass: ListOpportunitiesUse
 container.register(UC_TOKENS.ListAlerts, { useClass: ListAlertsUseCase });
 container.register(UC_TOKENS.DismissAlert, { useClass: DismissAlertUseCase });
 container.register(UC_TOKENS.DismissAllAlerts, { useClass: DismissAllAlertsUseCase });
+container.register(UC_TOKENS.DismissAllByFilter, { useClass: DismissAllByFilterUseCase });
 
 // Use cases — Inventory Sources
 container.register(UC_TOKENS.LinkVariantInventorySource, { useClass: LinkVariantInventorySourceUseCase });
@@ -598,6 +605,13 @@ container.register(UC_TOKENS.GetProviderDefaults, { useClass: GetProviderDefault
 container.register(TOKENS.MarketplaceAdapterRegistry, { useClass: MarketplaceAdapterRegistry });
 container.register(TOKENS.SellerKeyOperations, { useClass: SellerKeyOperationsService });
 container.register(TOKENS.SellerDomainEvents, { useClass: SellerDomainEventsService });
+
+// Seller pricing services
+container.register(TOKENS.SellerCostBasisService, { useClass: SellerCostBasisService });
+container.register(TOKENS.SellerPriceIntelligenceService, { useClass: SellerPriceIntelligenceService });
+container.register(TOKENS.SellerPricingService, { useClass: SellerPricingService });
+container.register(TOKENS.SellerAutoPricingService, { useClass: SellerAutoPricingService });
+container.register(TOKENS.SellerStockSyncService, { useClass: SellerStockSyncService });
 
 // Use cases — Seller Webhooks
 container.register(UC_TOKENS.HandleDeclaredStockReserve, { useClass: HandleDeclaredStockReserveUseCase });
