@@ -84,28 +84,48 @@ export class HandleDeclaredStockProvideUseCase {
       const keys = result.decryptedKeys.map((k) => ({ type: 'TEXT' as const, value: k.plaintext }));
 
       try {
-        const providerAccount = await this.db.queryOne<{ provider_code: string }>(
-          'provider_accounts',
-          {
-            select: 'provider_code',
-            eq: [['id', (await this.db.queryOne<{ provider_account_id: string }>('seller_listings', {
-              select: 'provider_account_id',
-              eq: [['id', reservation.seller_listing_id]],
+        const listing = await this.db.queryOne<{
+          variant_id: string;
+          provider_account_id: string;
+        }>('seller_listings', {
+          select: 'variant_id, provider_account_id',
+          eq: [['id', reservation.seller_listing_id]],
+          single: true,
+        });
+
+        const providerAccount = listing?.provider_account_id
+          ? await this.db.queryOne<{ provider_code: string }>('provider_accounts', {
+              select: 'provider_code',
+              eq: [['id', listing.provider_account_id]],
               single: true,
-            }))?.provider_account_id ?? '']],
+            })
+          : null;
+
+        const variantId = listing?.variant_id ?? '';
+        let productId = '';
+        if (variantId) {
+          const variant = await this.db.queryOne<{ product_id: string }>('product_variants', {
+            select: 'product_id',
+            eq: [['id', variantId]],
             single: true,
-          },
-        );
+          });
+          productId = variant?.product_id ?? '';
+        }
+
+        const grossPerUnit = meta.marketplaceFinancials?.gross_cents_per_unit ?? meta.price?.amount ?? 0;
+        const saleCurrency = meta.marketplaceFinancials?.currency ?? meta.price?.currency ?? 'EUR';
 
         await this.keyOps.completeProvisionOrchestration({
           reservationId: reservation.id,
           listingId: reservation.seller_listing_id,
+          variantId,
+          productId,
           providerCode: providerAccount?.provider_code ?? providerCode,
           externalOrderId: orderId,
           keyIds: result.keyIds,
           keysProvisionedCount: result.decryptedKeys.length,
-          priceCents: meta.marketplaceFinancials?.gross_cents_per_unit ?? meta.price?.amount,
-          currency: meta.marketplaceFinancials?.currency ?? meta.price?.currency,
+          priceCents: grossPerUnit,
+          currency: saleCurrency,
           marketplaceFinancialsSnapshot: meta.marketplaceFinancials,
         });
       } catch (orchestrationErr) {

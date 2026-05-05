@@ -40,6 +40,7 @@ import { adminOpportunitiesRoutes } from './http/routes/opportunities.routes.js'
 import { adminAlertsRoutes } from './http/routes/alerts.routes.js';
 import { sellerWebhookRoutes } from './http/routes/seller-webhook.routes.js';
 import { registerCronJobs } from './infra/scheduler/cron-registry.js';
+import { bootstrapMarketplaceAdapters } from './infra/marketplace/marketplace-adapter-bootstrap.js';
 
 export async function buildApp(): Promise<FastifyInstance> {
   const env = loadEnv();
@@ -127,6 +128,14 @@ export async function buildApp(): Promise<FastifyInstance> {
   app.setErrorHandler(errorHandler);
 
   await registerCronJobs(app);
+
+  app.addHook('onReady', async () => {
+    const { container } = await import('./di/container.js');
+    const { TOKENS } = await import('./di/tokens.js');
+    const db = container.resolve(TOKENS.Database) as import('./core/ports/database.port.js').IDatabase;
+    const registry = container.resolve(TOKENS.MarketplaceAdapterRegistry) as import('./core/ports/marketplace-adapter.port.js').IMarketplaceAdapterRegistry;
+    await bootstrapMarketplaceAdapters(db, registry);
+  });
 
   return app;
 }

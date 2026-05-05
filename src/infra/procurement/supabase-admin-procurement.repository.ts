@@ -24,6 +24,8 @@ import type {
   CatalogProductRow,
   LinkCatalogProductDto,
   LinkCatalogProductResult,
+  LiveSearchProvidersDto,
+  LiveSearchProvidersResult,
 } from '../../core/use-cases/procurement/procurement.types.js';
 import { createLogger } from '../../shared/logger.js';
 
@@ -258,5 +260,41 @@ export class SupabaseAdminProcurementRepository implements IAdminProcurementRepo
     }
 
     return { offer_id: offer.id, seller_listing_id: sellerListingId };
+  }
+
+  async liveSearchProviders(dto: LiveSearchProvidersDto): Promise<LiveSearchProvidersResult> {
+    logger.info('Live searching marketplace APIs', { query: dto.query, maxResults: dto.max_results });
+
+    const result = await this.db.invokeFunction<Record<string, unknown>>(
+      'provider-procurement',
+      {
+        action: 'search',
+        query: dto.query,
+        max_results: dto.max_results ?? 10,
+        exclude_provider_codes: dto.exclude_provider_codes ?? [],
+      },
+    );
+
+    const rawProviders = (result?.providers ?? result?.results ?? []) as Array<Record<string, unknown>>;
+    const providers = rawProviders.map((group) => {
+      const code = (group.provider_code ?? group.providerCode ?? 'unknown') as string;
+      const rawOffers = (group.offers ?? []) as Array<Record<string, unknown>>;
+      return {
+        provider_code: code,
+        offers: rawOffers.map((o) => ({
+          provider_code: (o.provider_code ?? code) as string,
+          external_product_id: (o.external_product_id ?? o.external_offer_id ?? '') as string,
+          product_name: (o.product_name ?? o.name ?? '') as string,
+          platform: (o.platform ?? null) as string | null,
+          region: (o.region ?? null) as string | null,
+          price_cents: (o.price_cents ?? 0) as number,
+          currency: (o.currency ?? 'EUR') as string,
+          available: (o.available ?? true) as boolean,
+          thumbnail: (o.thumbnail ?? null) as string | null,
+        })),
+      };
+    });
+
+    return { providers };
   }
 }

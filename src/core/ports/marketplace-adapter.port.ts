@@ -188,6 +188,7 @@ export type MarketplaceCapability =
   | 'global_stock';
 
 export interface IMarketplaceAdapterRegistry {
+  registerAdapter(providerCode: string, adapter: unknown): void;
   getListingAdapter(providerCode: string): ISellerListingAdapter | null;
   getKeyUploadAdapter(providerCode: string): ISellerKeyUploadAdapter | null;
   getDeclaredStockAdapter(providerCode: string): ISellerDeclaredStockAdapter | null;

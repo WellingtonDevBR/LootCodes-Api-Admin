@@ -37,4 +37,9 @@ export interface IDatabase {
   delete(table: string, filter: Record<string, unknown>): Promise<number>;
   rpc<T = unknown>(functionName: string, params?: Record<string, unknown>): Promise<T>;
   invokeFunction<T = unknown>(functionName: string, body: Record<string, unknown>): Promise<T>;
+  /**
+   * Invoke an Edge Function that requires X-Internal-Secret authentication.
+   * Attaches the INTERNAL_SERVICE_SECRET from env as a header.
+   */
+  invokeInternalFunction<T = unknown>(functionName: string, body: Record<string, unknown>): Promise<T>;
 }

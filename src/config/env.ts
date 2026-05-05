@@ -53,3 +53,12 @@ export function getEnv(): Env {
   if (!_env) throw new Error('Environment not loaded. Call loadEnv() at startup.');
   return _env;
 }
+
+/**
+ * Read dynamic env keys (e.g. provider secret names from `provider_secrets_ref`).
+ * Centralized `process.env` access for infra that cannot enumerate all keys in zod.
+ */
+export function getOptionalEnvVar(name: string): string | undefined {
+  const v = process.env[name];
+  return typeof v === 'string' && v.length > 0 ? v : undefined;
+}

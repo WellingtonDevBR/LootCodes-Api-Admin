@@ -19,6 +19,8 @@ import type {
   SearchCatalogResult,
   LinkCatalogProductDto,
   LinkCatalogProductResult,
+  LiveSearchProvidersDto,
+  LiveSearchProvidersResult,
 } from '../use-cases/procurement/procurement.types.js';
 
 export interface IAdminProcurementRepository {
@@ -32,4 +34,5 @@ export interface IAdminProcurementRepository {
   recoverProviderOrder(dto: RecoverProviderOrderDto): Promise<RecoverProviderOrderResult>;
   searchCatalog(dto: SearchCatalogDto): Promise<SearchCatalogResult>;
   linkCatalogProduct(dto: LinkCatalogProductDto): Promise<LinkCatalogProductResult>;
+  liveSearchProviders(dto: LiveSearchProvidersDto): Promise<LiveSearchProvidersResult>;
 }

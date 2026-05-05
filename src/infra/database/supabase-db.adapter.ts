@@ -143,4 +143,18 @@ export class SupabaseDbAdapter implements IDatabase {
     if (error) throw new InternalError(`Edge Function ${functionName} failed: ${error.message}`);
     return data as T;
   }
+
+  async invokeInternalFunction<T = unknown>(functionName: string, body: Record<string, unknown>): Promise<T> {
+    const env = getEnv();
+    const secret = env.INTERNAL_SERVICE_SECRET;
+    if (!secret) {
+      throw new InternalError(`Missing INTERNAL_SERVICE_SECRET — cannot invoke ${functionName}`);
+    }
+    const { data, error } = await this.getClient().functions.invoke(functionName, {
+      body,
+      headers: { 'x-internal-secret': secret },
+    });
+    if (error) throw new InternalError(`Internal Edge Function ${functionName} failed: ${error.message}`);
+    return data as T;
+  }
 }

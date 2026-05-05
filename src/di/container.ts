@@ -35,6 +35,7 @@ import { SupabaseAdminSellerRepository } from '../infra/seller/supabase-admin-se
 import { SupabaseAdminSellerPricingRepository } from '../infra/seller/supabase-admin-seller-pricing.repository.js';
 import { SellerKeyOperationsService } from '../infra/seller/seller-key-operations.service.js';
 import { SellerDomainEventsService } from '../infra/seller/seller-domain-events.service.js';
+import { KeyDecryptionService } from '../infra/crypto/key-decryption.service.js';
 import { ListingHealthService } from '../infra/seller/listing-health.service.js';
 import { VariantUnavailabilityService } from '../infra/seller/variant-unavailability.service.js';
 import { MarketplaceAdapterRegistry } from '../infra/marketplace/marketplace-adapter-registry.js';
@@ -315,6 +316,7 @@ import { ManualProviderPurchaseUseCase } from '../core/use-cases/procurement/man
 import { RecoverProviderOrderUseCase } from '../core/use-cases/procurement/recover-provider-order.use-case.js';
 import { SearchCatalogUseCase } from '../core/use-cases/procurement/search-catalog.use-case.js';
 import { LinkCatalogProductUseCase } from '../core/use-cases/procurement/link-catalog-product.use-case.js';
+import { LiveSearchProvidersUseCase } from '../core/use-cases/procurement/live-search-providers.use-case.js';
 
 // Use cases — Opportunities
 import { ListOpportunitiesUseCase } from '../core/use-cases/opportunities/list-opportunities.use-case.js';
@@ -473,6 +475,7 @@ container.register(UC_TOKENS.ManualProviderPurchase, { useClass: ManualProviderP
 container.register(UC_TOKENS.RecoverProviderOrder, { useClass: RecoverProviderOrderUseCase });
 container.register(UC_TOKENS.SearchCatalog, { useClass: SearchCatalogUseCase });
 container.register(UC_TOKENS.LinkCatalogProduct, { useClass: LinkCatalogProductUseCase });
+container.register(UC_TOKENS.LiveSearchProviders, { useClass: LiveSearchProvidersUseCase });
 
 // Use cases — Opportunities
 container.register(UC_TOKENS.ListOpportunities, { useClass: ListOpportunitiesUseCase });
@@ -623,10 +626,11 @@ container.register(UC_TOKENS.ExpireReservations, { useClass: ExpireReservationsU
 
 // Infrastructure — Marketplace & Seller Services
 container.register(TOKENS.MarketplaceAdapterRegistry, { useClass: MarketplaceAdapterRegistry });
-container.register(TOKENS.SellerKeyOperations, { useClass: SellerKeyOperationsService });
-container.register(TOKENS.SellerDomainEvents, { useClass: SellerDomainEventsService });
+container.register(TOKENS.KeyDecryption, { useClass: KeyDecryptionService });
 container.register(TOKENS.ListingHealth, { useClass: ListingHealthService });
 container.register(TOKENS.VariantUnavailability, { useClass: VariantUnavailabilityService });
+container.register(TOKENS.SellerKeyOperations, { useClass: SellerKeyOperationsService });
+container.register(TOKENS.SellerDomainEvents, { useClass: SellerDomainEventsService });
 
 // Seller pricing services
 container.register(TOKENS.SellerCostBasisService, { useClass: SellerCostBasisService });

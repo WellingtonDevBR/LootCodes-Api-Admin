@@ -74,9 +74,17 @@ export class HandleDigisellerDeliveryUseCase {
       const keys = provision.decryptedKeys.map((k) => k.plaintext);
 
       try {
+        const variant = await this.db.queryOne<{ product_id: string }>('product_variants', {
+          select: 'product_id',
+          eq: [['id', listing.variant_id]],
+          single: true,
+        });
+
         await this.keyOps.completeProvisionOrchestration({
           reservationId: outcome.reservationId,
           listingId: listing.id,
+          variantId: listing.variant_id,
+          productId: variant?.product_id ?? '',
           providerCode,
           externalOrderId: uniqueCode,
           keyIds: provision.keyIds,

@@ -12,6 +12,7 @@ import type { ManualProviderPurchaseUseCase } from '../../core/use-cases/procure
 import type { RecoverProviderOrderUseCase } from '../../core/use-cases/procurement/recover-provider-order.use-case.js';
 import type { SearchCatalogUseCase } from '../../core/use-cases/procurement/search-catalog.use-case.js';
 import type { LinkCatalogProductUseCase } from '../../core/use-cases/procurement/link-catalog-product.use-case.js';
+import type { LiveSearchProvidersUseCase } from '../../core/use-cases/procurement/live-search-providers.use-case.js';
 
 export async function adminProcurementRoutes(app: FastifyInstance) {
   app.post('/quote', { preHandler: [adminGuard] }, async (request, reply) => {
@@ -128,6 +129,17 @@ export async function adminProcurementRoutes(app: FastifyInstance) {
       platform_code: body.platform_code as string | undefined,
       region_code: body.region_code as string | undefined,
       admin_id: adminId,
+    });
+    return reply.send(result);
+  });
+
+  app.post('/providers/live-search', { preHandler: [employeeGuard] }, async (request, reply) => {
+    const uc = container.resolve<LiveSearchProvidersUseCase>(UC_TOKENS.LiveSearchProviders);
+    const body = request.body as Record<string, unknown>;
+    const result = await uc.execute({
+      query: body.query as string,
+      max_results: body.max_results as number | undefined,
+      exclude_provider_codes: body.exclude_provider_codes as string[] | undefined,
     });
     return reply.send(result);
   });

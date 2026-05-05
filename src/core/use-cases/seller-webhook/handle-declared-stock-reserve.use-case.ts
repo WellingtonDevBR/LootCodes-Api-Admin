@@ -100,8 +100,8 @@ export class HandleDeclaredStockReserveUseCase {
 
         const priceMoney = auction.price;
         const salePriceCents = typeof priceMoney.amount === 'number'
-          ? Math.round(priceMoney.amount * 100)
-          : Math.round(parseFloat(String(priceMoney.amount)) * 100);
+          ? priceMoney.amount
+          : parseInt(String(priceMoney.amount), 10);
 
         const providerMetadata: Record<string, unknown> = {
           originalOrderId,

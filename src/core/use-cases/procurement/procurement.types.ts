@@ -66,3 +66,30 @@ export interface LinkCatalogProductResult {
   offer_id: string;
   seller_listing_id: string | null;
 }
+
+export interface LiveSearchProvidersDto {
+  query: string;
+  max_results?: number;
+  exclude_provider_codes?: string[];
+}
+
+export interface LiveSearchOffer {
+  provider_code: string;
+  external_product_id: string;
+  product_name: string;
+  platform: string | null;
+  region: string | null;
+  price_cents: number;
+  currency: string;
+  available: boolean;
+  thumbnail?: string | null;
+}
+
+export interface LiveSearchProviderGroup {
+  provider_code: string;
+  offers: LiveSearchOffer[];
+}
+
+export interface LiveSearchProvidersResult {
+  providers: LiveSearchProviderGroup[];
+}

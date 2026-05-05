@@ -2,8 +2,8 @@
  * Seller key operations port — atomic key claim, decrypt, provision, release.
  *
  * Abstraction over the DB-level key management that the webhook handlers need.
- * Infrastructure implements this with direct DB queries + Edge Function
- * delegation for decryption (`encrypt-product-keys`).
+ * Infrastructure implements this with direct DB queries + in-process crypto
+ * for decryption via IKeyDecryptionPort.
  */
 
 export interface ClaimKeysResult {
@@ -39,13 +39,17 @@ export interface ProvisionResult {
 export interface CompleteProvisionParams {
   reservationId: string;
   listingId: string;
+  variantId: string;
+  productId: string;
   providerCode: string;
   externalOrderId: string;
   keyIds: string[];
   keysProvisionedCount: number;
-  priceCents?: number;
-  currency?: string;
+  priceCents: number;
+  feeCents?: number;
+  currency: string;
   marketplaceFinancialsSnapshot?: Record<string, unknown>;
+  buyerEmail?: string;
 }
 
 export interface ReleaseKeysResult {
@@ -91,9 +95,10 @@ export interface ISellerKeyOperationsPort {
 
   /**
    * Release keys from a pending reservation back to available inventory.
-   * Calls `release_seller_reserved_keys` RPC.
+   * Calls `release_seller_reserved_keys` RPC, flips provisions to 'failed',
+   * and sets reservation status to the given target.
    */
-  releaseReservationKeys(reservationId: string, newStatus: string): Promise<number>;
+  releaseReservationKeys(reservationId: string, targetStatus: 'cancelled' | 'expired' | 'failed'): Promise<number>;
 
   /**
    * Handle post-provision merchandise return — restock keys + ledger refund.

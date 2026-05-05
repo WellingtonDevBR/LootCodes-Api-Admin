@@ -4,8 +4,7 @@
  * Implements ISellerKeyOperationsPort.
  * Mirrors `provider-procurement/services/seller-key-operations.service.ts`.
  *
- * Key decryption delegates to the `encrypt-product-keys` Edge Function
- * via `db.invokeFunction()`.
+ * Key decryption delegates to IKeyDecryptionPort (Node.js in-process crypto).
  */
 import { injectable, inject } from 'tsyringe';
 import { TOKENS } from '../../di/tokens.js';
@@ -20,6 +19,7 @@ import type {
   PostProvisionReturnParams,
 } from '../../core/ports/seller-key-operations.port.js';
 import type { ISellerDomainEventPort } from '../../core/ports/seller-domain-event.port.js';
+import type { IKeyDecryptionPort } from '../../core/ports/key-decryption.port.js';
 import { createLogger } from '../../shared/logger.js';
 
 const logger = createLogger('seller-key-operations');
@@ -29,6 +29,7 @@ export class SellerKeyOperationsService implements ISellerKeyOperationsPort {
   constructor(
     @inject(TOKENS.Database) private readonly db: IDatabase,
     @inject(TOKENS.SellerDomainEvents) private readonly events: ISellerDomainEventPort,
+    @inject(TOKENS.KeyDecryption) private readonly keyDecryption: IKeyDecryptionPort,
   ) {}
 
   async claimKeysForReservation(params: ClaimKeysParams): Promise<ClaimKeysResult> {
@@ -85,8 +86,9 @@ export class SellerKeyOperationsService implements ISellerKeyOperationsPort {
 
     const keyIds = provisions.map((p) => p.product_key_id);
 
-    await this.db.rpc('finalize_seller_provisions', {
+    await this.db.rpc('finalize_seller_provisions_atomic', {
       p_reservation_id: reservationId,
+      p_key_ids: keyIds,
       p_provision_ids: provisions.map((p) => p.id),
     });
 
@@ -115,31 +117,29 @@ export class SellerKeyOperationsService implements ISellerKeyOperationsPort {
 
   async completeProvisionOrchestration(params: CompleteProvisionParams): Promise<void> {
     const {
-      reservationId, listingId, providerCode, externalOrderId,
-      keysProvisionedCount, priceCents, currency,
-      marketplaceFinancialsSnapshot,
+      reservationId, listingId, variantId, productId, providerCode,
+      externalOrderId, keyIds, keysProvisionedCount, priceCents,
+      feeCents, currency, marketplaceFinancialsSnapshot, buyerEmail,
     } = params;
 
     try {
       await this.recordMarketplaceSale({
         reservationId,
         listingId,
+        variantId,
+        productId,
         providerCode,
         externalOrderId,
-        keysProvisioned: keysProvisionedCount,
+        keyIds,
         priceCents,
+        feeCents,
         currency,
-        financialsSnapshot: marketplaceFinancialsSnapshot,
+        marketplaceFinancialsSnapshot,
+        buyerEmail,
       });
     } catch (err) {
       logger.error('Failed to record marketplace sale', err as Error, { reservationId, externalOrderId });
     }
-
-    const listing = await this.db.queryOne<{ variant_id: string }>('seller_listings', {
-      select: 'variant_id',
-      eq: [['id', listingId]],
-      single: true,
-    });
 
     await this.events.emitSellerEvent({
       eventType: 'seller.stock_provisioned',
@@ -147,41 +147,57 @@ export class SellerKeyOperationsService implements ISellerKeyOperationsPort {
       payload: {
         reservationId,
         listingId,
-        variantId: listing?.variant_id,
+        variantId,
         keysProvisioned: keysProvisionedCount,
         providerCode,
         externalOrderId,
       },
     });
 
-    if (listing?.variant_id) {
-      const variant = await this.db.queryOne<{ product_id: string }>('product_variants', {
-        select: 'product_id',
-        eq: [['id', listing.variant_id]],
-        single: true,
-      });
+    const variant = await this.db.queryOne<{ product_id: string }>('product_variants', {
+      select: 'product_id',
+      eq: [['id', variantId]],
+      single: true,
+    });
 
-      if (variant?.product_id) {
-        await this.events.emitInventoryStockChanged({
-          productIds: [variant.product_id],
-          variantIds: [listing.variant_id],
-          reason: 'seller_provisioned',
-        });
-      }
+    if (variant?.product_id) {
+      await this.events.emitInventoryStockChanged({
+        productIds: [variant.product_id],
+        variantIds: [variantId],
+        reason: 'seller_provisioned',
+      });
     }
   }
 
-  async releaseReservationKeys(reservationId: string, newStatus: string): Promise<number> {
-    const result = await this.db.rpc<{ keys_released: number }>('release_seller_reserved_keys', {
+  async releaseReservationKeys(
+    reservationId: string,
+    targetStatus: 'cancelled' | 'expired' | 'failed',
+  ): Promise<number> {
+    const releasedCount = await this.db.rpc<number>('release_seller_reserved_keys', {
       p_reservation_id: reservationId,
-      p_new_status: newStatus,
     });
 
-    return result.keys_released;
+    await this.db.update(
+      'seller_key_provisions',
+      { reservation_id: reservationId, status: 'pending' },
+      { status: 'failed' },
+    ).catch((err) => {
+      logger.error('Failed to mark provisions as failed', err as Error, { reservationId });
+    });
+
+    await this.db.update(
+      'seller_stock_reservations',
+      { id: reservationId },
+      { status: targetStatus },
+    ).catch((err) => {
+      logger.error('Failed to update reservation status', err as Error, { reservationId, targetStatus });
+    });
+
+    return releasedCount ?? 0;
   }
 
   async handlePostProvisionReturn(params: PostProvisionReturnParams): Promise<number> {
-    const { reservation, providerCode, externalOrderId, reason, maxKeysToRestock } = params;
+    const { reservation, providerCode, externalOrderId, reason, maxKeysToRestock, refundEventId } = params;
 
     const deliveredProvisions = await this.db.query<{
       id: string;
@@ -193,44 +209,36 @@ export class SellerKeyOperationsService implements ISellerKeyOperationsPort {
       order: { column: 'created_at', ascending: true },
     });
 
-    const totalDelivered = deliveredProvisions.length;
+    const totalDeliveredThisCall = deliveredProvisions.length;
     const cap = typeof maxKeysToRestock === 'number' && maxKeysToRestock >= 0
-      ? Math.min(maxKeysToRestock, totalDelivered)
-      : totalDelivered;
+      ? Math.min(maxKeysToRestock, totalDeliveredThisCall)
+      : totalDeliveredThisCall;
     const provisionsToReturn = deliveredProvisions.slice(0, cap);
 
-    if (provisionsToReturn.length === 0) return 0;
+    const keysRestocked = await this.restockProvisionedKeys(reservation.id, provisionsToReturn);
 
-    const productKeyIds = provisionsToReturn.map((p) => p.product_key_id);
-    const RESTOCKABLE_STATES = ['seller_provisioned', 'seller_reserved', 'seller_uploaded'];
+    const totals = await this.computeCumulativeRefundFraction(reservation.id);
+    const isFinalRefund = !!totals.fraction
+      && totals.fraction.numerator >= totals.fraction.denominator;
 
-    let keysRestocked = 0;
-    for (const keyId of productKeyIds) {
-      try {
-        const result = await this.db.rpc<{ success: boolean }>('restock_seller_key', {
-          p_key_id: keyId,
-          p_restockable_states: RESTOCKABLE_STATES,
+    const { orderId } = await this.applyMarketplaceRefundLedger(
+      reservation,
+      providerCode,
+      externalOrderId,
+      reason,
+      { refundFraction: totals.fraction, refundEventId },
+    );
+
+    if (isFinalRefund) {
+      await this.db.update('seller_stock_reservations', { id: reservation.id }, { status: 'cancelled' })
+        .catch((err) => {
+          logger.error('Failed to cancel reservation after full refund', err as Error, {
+            reservationId: reservation.id,
+          });
         });
-        if (result.success) keysRestocked++;
-      } catch {
-        logger.warn('Failed to restock key', { keyId, reservationId: reservation.id });
-      }
     }
 
-    const provisionIds = provisionsToReturn
-      .filter((p) => productKeyIds.includes(p.product_key_id))
-      .map((p) => p.id);
-
-    if (provisionIds.length > 0) {
-      for (const pid of provisionIds) {
-        try {
-          await this.db.update('seller_key_provisions', { id: pid }, { status: 'refunded' });
-        } catch {
-          logger.warn('Failed to flip provision status', { provisionId: pid });
-        }
-      }
-    }
-
+    const partial = !isFinalRefund;
     await this.events.emitSellerEvent({
       eventType: 'seller.stock_cancelled',
       aggregateId: reservation.seller_listing_id,
@@ -239,6 +247,35 @@ export class SellerKeyOperationsService implements ISellerKeyOperationsPort {
         reason,
         providerCode,
         keysReleased: keysRestocked,
+        partial,
+        ...(partial
+          ? { totalDelivered: totals.provisioned, totalRefunded: totals.refunded }
+          : {}),
+      },
+    });
+
+    await this.createAdminAlert({
+      alertType: 'marketplace_post_provision_cancel',
+      severity: partial ? 'high' : (keysRestocked > 0 ? 'medium' : 'high'),
+      title: partial
+        ? `Marketplace partial refund — ${keysRestocked} of ${totals.provisioned} keys restocked (${providerCode})`
+        : `Marketplace return — keys restocked (${providerCode})`,
+      message: partial
+        ? `${providerCode} partially refunded order ${externalOrderId}: ${keysRestocked} key(s) restocked this notification ` +
+          `(${totals.refunded}/${totals.provisioned} cumulative). Reservation ${reservation.id} kept as provisioned; ledger updated.`
+        : `${providerCode} returned order ${externalOrderId} after provision; ${keysRestocked} key(s) set back to available inventory. ` +
+          `Reservation ${reservation.id} cancelled and ledger updated.`,
+      metadata: {
+        provider_code: providerCode,
+        reservation_id: reservation.id,
+        external_order_id: externalOrderId,
+        listing_id: reservation.seller_listing_id,
+        keys_restocked: keysRestocked,
+        marketplace_order_id: orderId,
+        partial,
+        ...(partial
+          ? { total_delivered: totals.provisioned, total_refunded: totals.refunded }
+          : {}),
       },
     });
 
@@ -264,11 +301,15 @@ export class SellerKeyOperationsService implements ISellerKeyOperationsPort {
       }
     }
 
-    logger.info('Post-provision return processed', {
+    logger.info('Post-provision merchandise return processed', {
       reservationId: reservation.id,
       providerCode,
       keysRestocked,
       externalOrderId,
+      marketplaceOrderId: orderId,
+      cumulativeRefunded: totals.refunded,
+      cumulativeProvisioned: totals.provisioned,
+      isFinalRefund,
     });
 
     return keysRestocked;
@@ -277,17 +318,8 @@ export class SellerKeyOperationsService implements ISellerKeyOperationsPort {
   // ─── Private Helpers ─────────────────────────────────────────────────
 
   private async decryptKeys(keyIds: string[]): Promise<DecryptedKey[]> {
-    const result = await this.db.invokeFunction<{
-      keys: Array<{ id: string; value: string }>;
-    }>('encrypt-product-keys', {
-      action: 'decrypt',
-      key_ids: keyIds,
-    });
-
-    return (result.keys ?? []).map((k) => ({
-      keyId: k.id,
-      plaintext: k.value,
-    }));
+    const results = await this.keyDecryption.decryptKeysByIds(keyIds);
+    return results.map((r) => ({ keyId: r.keyId, plaintext: r.plaintext }));
   }
 
   private async attemptJitProcurement(params: ClaimKeysParams): Promise<ClaimKeysResult | null> {
@@ -298,14 +330,13 @@ export class SellerKeyOperationsService implements ISellerKeyOperationsPort {
         quantity: params.quantity,
       });
 
-      await this.db.invokeFunction('provider-procurement', {
-        action: 'purchase',
+      await this.db.invokeInternalFunction('provider-procurement', {
+        action: 'jit-purchase',
         variant_id: params.variantId,
         quantity: params.quantity,
-        max_cost_cents: params.salePriceCents
-          ? params.salePriceCents - (params.feesCents ?? 0) - (params.minMarginCents ?? 0)
-          : undefined,
-        source: 'jit_seller_webhook',
+        sale_price_cents: params.salePriceCents,
+        fee_cents: params.feesCents,
+        min_margin_cents: params.minMarginCents,
       });
 
       const retryResult = await this.db.rpc<{
@@ -338,14 +369,22 @@ export class SellerKeyOperationsService implements ISellerKeyOperationsPort {
   private async recordMarketplaceSale(params: {
     reservationId: string;
     listingId: string;
+    variantId: string;
+    productId: string;
     providerCode: string;
     externalOrderId: string;
-    keysProvisioned: number;
-    priceCents?: number;
-    currency?: string;
-    financialsSnapshot?: Record<string, unknown>;
+    keyIds: string[];
+    priceCents: number;
+    feeCents?: number;
+    currency: string;
+    marketplaceFinancialsSnapshot?: Record<string, unknown>;
+    buyerEmail?: string;
   }): Promise<void> {
-    const { reservationId, listingId, providerCode, externalOrderId, keysProvisioned, priceCents, currency, financialsSnapshot } = params;
+    const {
+      reservationId, listingId, variantId, productId, providerCode,
+      externalOrderId, keyIds, priceCents, feeCents, currency,
+      marketplaceFinancialsSnapshot: snapshot, buyerEmail,
+    } = params;
 
     const idempotencyKey = `seller:${reservationId}`;
 
@@ -356,49 +395,354 @@ export class SellerKeyOperationsService implements ISellerKeyOperationsPort {
     });
 
     if (existingOrder) {
-      logger.debug('Marketplace sale already recorded', { reservationId, orderId: existingOrder.id });
+      logger.info('Marketplace order already recorded (idempotent)', { reservationId, orderId: existingOrder.id });
       return;
     }
 
-    const totalAmount = (priceCents ?? 0) * keysProvisioned;
+    const quantity = keyIds.length;
+    const normalizedEmail = typeof buyerEmail === 'string' && buyerEmail.trim().length > 0
+      ? buyerEmail.trim().toLowerCase()
+      : null;
 
-    await this.db.insert('orders', {
-      idempotency_key: idempotencyKey,
+    let inventoryCostCents = 0;
+    if (keyIds.length > 0) {
+      try {
+        const keyCostRows = await this.db.query<{ purchase_cost: number | string | null }>('product_keys', {
+          select: 'purchase_cost',
+          in: [['id', keyIds]],
+        });
+        for (const row of keyCostRows) {
+          const n = typeof row.purchase_cost === 'number' ? row.purchase_cost : Number(row.purchase_cost);
+          if (Number.isFinite(n) && n > 0) inventoryCostCents += Math.round(n);
+        }
+      } catch (err) {
+        logger.error('Failed to load key purchase costs', err as Error, { reservationId, keyCount: keyIds.length });
+      }
+    }
+
+    let totalAmount: number;
+    let netAmount: number | null;
+    let providerFee: number | null;
+    let unitPriceCents: number;
+    let marketplacePricing: Record<string, unknown> | null = null;
+
+    const snap = snapshot as Record<string, unknown> | undefined;
+    if (snap && typeof snap.gross_cents_per_unit === 'number' && typeof snap.seller_profit_cents_per_unit === 'number') {
+      unitPriceCents = snap.gross_cents_per_unit as number;
+      totalAmount = unitPriceCents * quantity;
+      netAmount = (snap.seller_profit_cents_per_unit as number) * quantity;
+      providerFee = totalAmount - netAmount;
+      marketplacePricing = {
+        ...snap,
+        provisioned_quantity: quantity,
+        total_gross_cents: totalAmount,
+        total_seller_profit_cents: netAmount,
+        total_provider_fee_aggregate_cents: providerFee,
+      };
+    } else {
+      unitPriceCents = priceCents;
+      totalAmount = priceCents * quantity;
+      netAmount = feeCents != null ? totalAmount - feeCents * quantity : null;
+      providerFee = feeCents != null ? feeCents * quantity : null;
+    }
+
+    const order = await this.db.insert<{ id: string; order_number: string }>('orders', {
+      user_id: null,
+      product_id: productId,
+      quantity,
+      unit_price: unitPriceCents,
+      currency,
       status: 'fulfilled',
-      total_amount: totalAmount,
-      currency: currency ?? 'EUR',
+      fulfillment_status: 'fulfilled',
       payment_provider: providerCode,
-      metadata: {
-        source: 'marketplace_sale',
-        provider_code: providerCode,
-        external_order_id: externalOrderId,
-        listing_id: listingId,
-        reservation_id: reservationId,
-        keys_provisioned: keysProvisioned,
-        ...(financialsSnapshot && { marketplace_financials: financialsSnapshot }),
-      },
+      order_channel: 'marketplace',
+      total_amount: totalAmount,
+      subtotal_cents: totalAmount,
+      provider_fee: providerFee,
+      net_amount: netAmount,
+      balance_currency: currency,
+      marketplace_pricing: marketplacePricing,
+      provider_payment_id: externalOrderId,
+      idempotency_key: idempotencyKey,
+      notes: `Marketplace sale via ${providerCode}`,
+      payment_verified_at: new Date().toISOString(),
+      processed_at: new Date().toISOString(),
+      delivery_email: normalizedEmail,
     });
 
-    const transactionAmount =
-      typeof financialsSnapshot?.netPayoutCents === 'number'
-        ? financialsSnapshot.netPayoutCents as number
-        : totalAmount;
+    if (!order?.id) {
+      await this.createAdminAlert({
+        alertType: 'marketplace_sale_recording_failed',
+        severity: 'high',
+        title: 'Marketplace order insert failed',
+        message: `Failed to insert order for ${providerCode} reservation ${reservationId}. Keys were provisioned but no order/transaction recorded.`,
+        metadata: { reservationId, listingId, providerCode, priceCents, currency, keyCount: keyIds.length },
+      });
+      return;
+    }
+
+    await this.db.insert('order_items', {
+      order_id: order.id,
+      product_id: productId,
+      variant_id: variantId,
+      quantity,
+      unit_price: unitPriceCents,
+      total_price: totalAmount,
+      status: 'fulfilled',
+    }).catch((err) => {
+      logger.error('Failed to insert marketplace order item', err as Error, { orderId: order.id, reservationId });
+    });
 
     await this.db.insert('transactions', {
-      type: 'sale',
+      order_id: order.id,
+      type: 'marketplace_sale',
       direction: 'credit',
-      amount: transactionAmount,
-      currency: currency ?? 'EUR',
+      amount: totalAmount,
+      currency,
       status: 'completed',
       payment_provider: providerCode,
-      description: `Marketplace sale via ${providerCode}`,
+      provider_charge_id: externalOrderId,
+      description: `${providerCode} marketplace sale`,
       metadata: {
+        provider_code: providerCode,
         reservation_id: reservationId,
         listing_id: listingId,
         external_order_id: externalOrderId,
-        keys_provisioned: keysProvisioned,
-        ...(financialsSnapshot && { marketplace_financials: financialsSnapshot }),
+        key_count: quantity,
+        unit_price_cents: unitPriceCents,
+        fee_cents: feeCents ?? null,
+        gross_cents: totalAmount,
+        seller_profit_cents: netAmount,
+        provider_fee_aggregate_cents: providerFee,
+        inventory_cost_cents: inventoryCostCents > 0 ? inventoryCostCents : null,
+        inventory_cost_currency: inventoryCostCents > 0 ? 'USD' : null,
       },
+    }).catch((err) => {
+      logger.error('Failed to insert marketplace transaction', err as Error, { orderId: order.id, reservationId });
     });
+
+    if (keyIds.length > 0) {
+      for (const keyId of keyIds) {
+        await this.db.update('product_keys', { id: keyId }, { order_id: order.id, is_assigned: true })
+          .catch((err) => {
+            logger.error('Failed to link key to marketplace order', err as Error, { keyId, orderId: order.id });
+          });
+      }
+    }
+
+    logger.info('Marketplace sale recorded', {
+      orderId: order.id,
+      orderNumber: order.order_number,
+      providerCode,
+      reservationId,
+      totalAmount,
+      currency,
+    });
+  }
+
+  private async createAdminAlert(alert: {
+    alertType: string;
+    severity: string;
+    title: string;
+    message: string;
+    metadata: Record<string, unknown>;
+  }): Promise<void> {
+    try {
+      await this.db.insert('admin_alerts', {
+        alert_type: alert.alertType,
+        severity: alert.severity,
+        title: alert.title,
+        message: alert.message,
+        metadata: alert.metadata,
+      });
+    } catch (err) {
+      logger.error('Failed to create admin alert', err as Error, { alertType: alert.alertType });
+    }
+  }
+
+  // ─── Batch Restock (replaces per-key N+1 RPCs) ─────────────────────
+
+  private static readonly RESTOCKABLE_KEY_STATES = ['seller_provisioned', 'seller_reserved', 'seller_uploaded'];
+
+  private async restockProvisionedKeys(
+    reservationId: string,
+    provisions: Array<{ id: string; product_key_id: string }>,
+  ): Promise<number> {
+    if (provisions.length === 0) return 0;
+
+    const productKeyIds = provisions.map((p) => p.product_key_id);
+    let keysRestocked = 0;
+
+    try {
+      const restocked = await this.db.rpc<Array<{ id: string }>>('batch_restock_seller_keys', {
+        p_key_ids: productKeyIds,
+        p_restockable_states: SellerKeyOperationsService.RESTOCKABLE_KEY_STATES,
+      });
+      keysRestocked = Array.isArray(restocked) ? restocked.length : 0;
+    } catch {
+      for (const keyId of productKeyIds) {
+        try {
+          const result = await this.db.rpc<{ success: boolean }>('restock_seller_key', {
+            p_key_id: keyId,
+            p_restockable_states: SellerKeyOperationsService.RESTOCKABLE_KEY_STATES,
+          });
+          if (result?.success) keysRestocked++;
+        } catch {
+          logger.warn('Failed to restock key', { keyId, reservationId });
+        }
+      }
+    }
+
+    if (keysRestocked === 0) return 0;
+
+    const provisionIdsToFlip = provisions
+      .filter((p) => productKeyIds.includes(p.product_key_id))
+      .map((p) => p.id);
+
+    for (const pid of provisionIdsToFlip) {
+      await this.db.update('seller_key_provisions', { id: pid, status: 'delivered' }, { status: 'refunded' })
+        .catch((err) => {
+          logger.warn('Failed to flip provision status to refunded', { provisionId: pid, error: (err as Error).message });
+        });
+    }
+
+    return keysRestocked;
+  }
+
+  // ─── Cumulative Refund Fraction ────────────────────────────────────
+
+  private async computeCumulativeRefundFraction(reservationId: string): Promise<{
+    refunded: number;
+    provisioned: number;
+    fraction?: { numerator: number; denominator: number };
+  }> {
+    const rows = await this.db.query<{ id: string; status: string }>('seller_key_provisions', {
+      select: 'id, status',
+      eq: [['reservation_id', reservationId]],
+    });
+
+    const refunded = rows.filter((r) => r.status === 'refunded').length;
+    const provisioned = rows.filter((r) => r.status === 'delivered' || r.status === 'refunded').length;
+
+    if (provisioned === 0) return { refunded, provisioned };
+
+    return {
+      refunded,
+      provisioned,
+      fraction: { numerator: Math.min(refunded, provisioned), denominator: provisioned },
+    };
+  }
+
+  // ─── Delta-Aware Marketplace Refund Ledger ─────────────────────────
+
+  private async applyMarketplaceRefundLedger(
+    reservation: PostProvisionReturnParams['reservation'],
+    providerCode: string,
+    externalOrderId: string,
+    reason: string,
+    options: {
+      refundFraction?: { numerator: number; denominator: number };
+      refundEventId?: string;
+    } = {},
+  ): Promise<{ orderId?: string; refundAmount?: number; isFullRefund?: boolean }> {
+    const idempotencyKey = `seller:${reservation.id}`;
+
+    const order = await this.db.queryOne<{
+      id: string;
+      total_amount: number;
+      currency: string;
+      status: string;
+    }>('orders', {
+      select: 'id, total_amount, currency, status',
+      eq: [['idempotency_key', idempotencyKey]],
+      maybeSingle: true,
+    });
+
+    if (!order) return {};
+    if (order.status === 'refunded') {
+      return { orderId: order.id, refundAmount: 0, isFullRefund: true };
+    }
+
+    const totalAmount = Number(order.total_amount);
+    const fraction = options.refundFraction;
+    const isFullRefund = !fraction || fraction.numerator >= fraction.denominator;
+
+    const targetCumulativeAmount = isFullRefund
+      ? totalAmount
+      : Math.round((totalAmount * fraction!.numerator) / fraction!.denominator);
+
+    const existingRefunds = await this.db.query<{ amount: number }>('transactions', {
+      select: 'amount',
+      eq: [['order_id', order.id], ['type', 'refund'], ['status', 'completed']],
+    }).catch((err) => {
+      logger.error('Failed to load prior refund transactions', err as Error, { orderId: order.id });
+      return [] as Array<{ amount: number }>;
+    });
+
+    const alreadyRefunded = existingRefunds.reduce(
+      (sum, row) => sum + Number(row.amount ?? 0),
+      0,
+    );
+    const deltaAmount = Math.max(0, targetCumulativeAmount - alreadyRefunded);
+    const targetStatus = isFullRefund ? 'refunded' : 'partially_refunded';
+
+    if (deltaAmount === 0) {
+      await this.db.update('orders', { id: order.id }, { status: targetStatus })
+        .catch((err) => {
+          logger.error('Failed to update order status (no-delta path)', err as Error, { orderId: order.id });
+        });
+      return { orderId: order.id, refundAmount: 0, isFullRefund };
+    }
+
+    const insertData: Record<string, unknown> = {
+      order_id: order.id,
+      type: 'refund',
+      direction: 'debit',
+      amount: deltaAmount,
+      currency: order.currency,
+      status: 'completed',
+      payment_provider: providerCode,
+      description: isFullRefund
+        ? `Marketplace cancellation after provision (${providerCode})`
+        : `Marketplace partial refund after provision (${providerCode}, ${fraction!.numerator}/${fraction!.denominator})`,
+      metadata: {
+        provider_code: providerCode,
+        reservation_id: reservation.id,
+        external_order_id: externalOrderId,
+        reason,
+        cumulative_target_amount: targetCumulativeAmount,
+        already_refunded_amount: alreadyRefunded,
+        ...(fraction
+          ? { refunded_keys: fraction.numerator, total_delivered_keys: fraction.denominator }
+          : {}),
+      },
+    };
+    if (options.refundEventId) {
+      insertData.provider_refund_id = options.refundEventId;
+    }
+
+    try {
+      await this.db.insert('transactions', insertData);
+    } catch (err) {
+      const msg = (err as Error).message ?? '';
+      if (msg.includes('23505') || msg.includes('unique') || msg.includes('duplicate')) {
+        logger.info('Refund transaction already recorded — idempotent replay', {
+          orderId: order.id,
+          refundEventId: options.refundEventId,
+        });
+      } else {
+        logger.error('Failed to insert refund transaction', err as Error, {
+          orderId: order.id,
+          refundEventId: options.refundEventId,
+        });
+      }
+    }
+
+    await this.db.update('orders', { id: order.id }, { status: targetStatus })
+      .catch((err) => {
+        logger.error('Failed to update order status', err as Error, { orderId: order.id, targetStatus });
+      });
+
+    return { orderId: order.id, refundAmount: deltaAmount, isFullRefund };
   }
 }

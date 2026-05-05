@@ -37,6 +37,9 @@ export const TOKENS = {
   AdminOpportunitiesRepository: Symbol.for('IAdminOpportunitiesRepository'),
   AdminAlertsRepository: Symbol.for('IAdminAlertsRepository'),
 
+  // Crypto & key management
+  KeyDecryption: Symbol.for('IKeyDecryptionPort'),
+
   // Marketplace adapters & seller services
   MarketplaceAdapterRegistry: Symbol.for('IMarketplaceAdapterRegistry'),
   SellerKeyOperations: Symbol.for('ISellerKeyOperationsPort'),
@@ -165,6 +168,7 @@ export const UC_TOKENS = {
   RecoverProviderOrder: Symbol.for('RecoverProviderOrderUseCase'),
   SearchCatalog: Symbol.for('SearchCatalogUseCase'),
   LinkCatalogProduct: Symbol.for('LinkCatalogProductUseCase'),
+  LiveSearchProviders: Symbol.for('LiveSearchProvidersUseCase'),
 
   // Price Match
   ListPriceMatchClaims: Symbol.for('ListPriceMatchClaimsUseCase'),
