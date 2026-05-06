@@ -1,7 +1,16 @@
 import type { IDatabase } from '../../core/ports/database.port.js';
 
+/**
+ * Sparse map of `"FROM->TO"` → rate pairs loaded from `currency_rates`.
+ * Example key: `"USD->EUR"`, value: `0.92`.
+ */
 export type RateMap = Map<string, number>;
 
+/**
+ * Loads active currency rates from the `currency_rates` table into a
+ * sparse `RateMap`. Used by order, inventory, and pricing endpoints for
+ * multi-currency conversion via {@link convertCents}.
+ */
 export async function loadCurrencyRates(db: IDatabase): Promise<RateMap> {
   const rows = await db.query<{
     from_currency: string;
@@ -18,6 +27,15 @@ export async function loadCurrencyRates(db: IDatabase): Promise<RateMap> {
   return map;
 }
 
+/**
+ * Convert a minor-unit (cents) amount between two currencies.
+ *
+ * Resolution order:
+ * 1. Direct rate `FROM->TO`
+ * 2. Inverse rate `TO->FROM`
+ * 3. Two-hop via USD pivot (`USD->FROM` + `USD->TO`)
+ * 4. Identity (returns input unchanged) when no path exists
+ */
 export function convertCents(
   amountCents: number,
   fromCurrency: string,
@@ -40,6 +58,7 @@ export function convertCents(
   return amountCents;
 }
 
+/** Shorthand: convert any currency to USD cents. */
 export function convertCentsToUsd(
   amountCents: number,
   fromCurrency: string,

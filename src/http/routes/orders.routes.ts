@@ -105,6 +105,11 @@ function serializeOrderItems(raw: Record<string, unknown>): unknown[] {
   });
 }
 
+/**
+ * Sum the `purchase_cost` of all delivered keys for a single order.
+ * Prefers the pre-aggregated `key_cost_cents` from the list query;
+ * falls back to per-key summation for the detail view.
+ */
 function computeKeyCost(raw: Record<string, unknown>): number {
   if (typeof raw.key_cost_cents === 'number') return raw.key_cost_cents;
   const keys = (raw.delivered_keys as Array<Record<string, unknown>>) ?? [];
@@ -116,6 +121,11 @@ function computeKeyCost(raw: Record<string, unknown>): number {
   return total;
 }
 
+/**
+ * Resolve the currency of the key procurement cost for an order.
+ * Returns the first non-null `purchase_currency` found on delivered keys,
+ * defaulting to USD when no currency metadata exists (legacy keys).
+ */
 function resolveKeyCostCurrency(raw: Record<string, unknown>): string {
   if (typeof raw.key_cost_currency === 'string') return raw.key_cost_currency;
   const keys = (raw.delivered_keys as Array<Record<string, unknown>>) ?? [];
@@ -129,6 +139,14 @@ function resolveKeyCostCurrency(raw: Record<string, unknown>): string {
 
 const DISPLAY_CURRENCY = 'AUD';
 
+/**
+ * Transform a raw DB order row + currency rates into the serialized
+ * shape consumed by the CRM.
+ *
+ * Key cost is converted from its native `purchase_currency` (EUR, USD, …)
+ * into the order currency for profit calculation, and into AUD for
+ * the display columns.
+ */
 function toSerializedOrder(raw: Record<string, unknown>, rates: RateMap) {
   const totalAmount = (raw.total_amount as number) ?? 0;
   const currency = (raw.currency as string) ?? 'USD';

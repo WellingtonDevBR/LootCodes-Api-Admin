@@ -212,7 +212,7 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
     }
 
     const { data: keys, total } = await db.queryPaginated<Record<string, unknown>>('product_keys', {
-      select: 'id, key_state, is_used, created_at, used_at, order_id, sales_blocked_at, marked_faulty_at',
+      select: 'id, key_state, is_used, created_at, used_at, order_id, sales_blocked_at, marked_faulty_at, purchase_cost, purchase_currency',
       eq: eqFilters,
       in: inFilters.length > 0 ? inFilters : undefined,
       order: { column: 'created_at', ascending: false },
@@ -246,6 +246,9 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
         order_id: (k.order_id as string) || null,
         is_sales_blocked: k.sales_blocked_at !== null && k.sales_blocked_at !== undefined,
         is_faulty: k.marked_faulty_at !== null && k.marked_faulty_at !== undefined,
+        purchase_cost: typeof k.purchase_cost === 'number' ? k.purchase_cost
+          : typeof k.purchase_cost === 'string' ? Number(k.purchase_cost) : null,
+        purchase_currency: (k.purchase_currency as string) || null,
       };
     });
 
