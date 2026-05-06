@@ -53,7 +53,7 @@ export class VariantUnavailabilityService implements IVariantUnavailabilityPort 
         eq: [
           ['variant_id', variantId],
           ['status', 'active'],
-          ['auto_sync', true],
+          ['auto_sync_stock', true],
         ],
       });
 

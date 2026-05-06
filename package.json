@@ -26,6 +26,7 @@
     "algoliasearch": "^5.52.0",
     "dotenv": "^17.4.2",
     "fastify": "^5.3.3",
+    "node-cron": "^4.2.1",
     "reflect-metadata": "^0.2.2",
     "resend": "^4.0.0",
     "stripe": "^22.1.0",

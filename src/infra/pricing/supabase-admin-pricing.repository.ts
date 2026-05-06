@@ -77,13 +77,15 @@ export class SupabaseAdminPricingRepository implements IAdminPricingRepository {
     const days = periodToDays(dto.period);
     logger.info('Fetching variant price timeline', { variantId: dto.variant_id, days });
 
-    const timeline = await this.db.rpc<unknown[]>(
-      'get_variant_price_timeline',
-      {
-        p_variant_id: dto.variant_id,
-        p_days: days,
-      },
-    );
+    const cutoff = new Date(Date.now() - Math.max(days, 1) * 86_400_000).toISOString();
+
+    const timeline = await this.db.query<unknown>('variant_price_timeline', {
+      select: 'bucket_at, side, provider_code, cheapest_cents, cheapest_merchant, cheapest_was_ours, cheapest_in_stock, competitor_count, currency',
+      eq: [['variant_id', dto.variant_id]],
+      gte: [['bucket_at', cutoff]],
+      order: { column: 'bucket_at', ascending: true },
+      limit: 5000,
+    });
 
     return { timeline: timeline ?? [] };
   }
