@@ -172,6 +172,11 @@ export const UC_TOKENS = {
   SearchCatalog: Symbol.for('SearchCatalogUseCase'),
   LinkCatalogProduct: Symbol.for('LinkCatalogProductUseCase'),
   LiveSearchProviders: Symbol.for('LiveSearchProvidersUseCase'),
+  GetProcurementConfig: Symbol.for('GetProcurementConfigUseCase'),
+  UpdateProcurementConfig: Symbol.for('UpdateProcurementConfigUseCase'),
+  ListPurchaseQueue: Symbol.for('ListPurchaseQueueUseCase'),
+  CancelQueueItem: Symbol.for('CancelQueueItemUseCase'),
+  ListPurchaseAttempts: Symbol.for('ListPurchaseAttemptsUseCase'),
 
   // Price Match
   ListPriceMatchClaims: Symbol.for('ListPriceMatchClaimsUseCase'),

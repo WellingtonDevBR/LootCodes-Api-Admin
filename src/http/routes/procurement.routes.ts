@@ -13,6 +13,11 @@ import type { RecoverProviderOrderUseCase } from '../../core/use-cases/procureme
 import type { SearchCatalogUseCase } from '../../core/use-cases/procurement/search-catalog.use-case.js';
 import type { LinkCatalogProductUseCase } from '../../core/use-cases/procurement/link-catalog-product.use-case.js';
 import type { LiveSearchProvidersUseCase } from '../../core/use-cases/procurement/live-search-providers.use-case.js';
+import type { GetProcurementConfigUseCase } from '../../core/use-cases/procurement/get-procurement-config.use-case.js';
+import type { UpdateProcurementConfigUseCase } from '../../core/use-cases/procurement/update-procurement-config.use-case.js';
+import type { ListPurchaseQueueUseCase } from '../../core/use-cases/procurement/list-purchase-queue.use-case.js';
+import type { CancelQueueItemUseCase } from '../../core/use-cases/procurement/cancel-queue-item.use-case.js';
+import type { ListPurchaseAttemptsUseCase } from '../../core/use-cases/procurement/list-purchase-attempts.use-case.js';
 
 export async function adminProcurementRoutes(app: FastifyInstance) {
   app.post('/quote', { preHandler: [adminGuard] }, async (request, reply) => {
@@ -141,6 +146,62 @@ export async function adminProcurementRoutes(app: FastifyInstance) {
       max_results: body.max_results as number | undefined,
       exclude_provider_codes: body.exclude_provider_codes as string[] | undefined,
     });
+    return reply.send(result);
+  });
+
+  // --- Procurement Config ---
+
+  app.get('/config', { preHandler: [adminGuard] }, async (_request, reply) => {
+    const uc = container.resolve<GetProcurementConfigUseCase>(UC_TOKENS.GetProcurementConfig);
+    const result = await uc.execute();
+    return reply.send(result);
+  });
+
+  app.put('/config', { preHandler: [adminGuard] }, async (request, reply) => {
+    const uc = container.resolve<UpdateProcurementConfigUseCase>(UC_TOKENS.UpdateProcurementConfig);
+    const body = request.body as Record<string, unknown>;
+    const adminId = (request as unknown as Record<string, string>).adminUserId ?? 'unknown';
+    const result = await uc.execute({
+      auto_buy_enabled: typeof body.auto_buy_enabled === 'boolean' ? body.auto_buy_enabled : undefined,
+      daily_spend_limit_cents: body.daily_spend_limit_cents !== undefined
+        ? (body.daily_spend_limit_cents as number | null)
+        : undefined,
+      max_cost_per_item_cents: body.max_cost_per_item_cents !== undefined
+        ? (body.max_cost_per_item_cents as number | null)
+        : undefined,
+      admin_id: adminId,
+    });
+    return reply.send(result);
+  });
+
+  // --- Purchase Queue ---
+
+  app.get('/queue', { preHandler: [employeeGuard] }, async (request, reply) => {
+    const uc = container.resolve<ListPurchaseQueueUseCase>(UC_TOKENS.ListPurchaseQueue);
+    const query = request.query as Record<string, string>;
+    const result = await uc.execute({
+      status: query.status || undefined,
+      limit: query.limit ? parseInt(query.limit, 10) : undefined,
+      offset: query.offset ? parseInt(query.offset, 10) : undefined,
+    });
+    return reply.send(result);
+  });
+
+  app.post('/queue/:id/cancel', { preHandler: [adminGuard] }, async (request, reply) => {
+    const uc = container.resolve<CancelQueueItemUseCase>(UC_TOKENS.CancelQueueItem);
+    const params = request.params as Record<string, string>;
+    const adminId = (request as unknown as Record<string, string>).adminUserId ?? 'unknown';
+    const result = await uc.execute({
+      queue_id: params.id,
+      admin_id: adminId,
+    });
+    return reply.send(result);
+  });
+
+  app.get('/queue/:id/attempts', { preHandler: [employeeGuard] }, async (request, reply) => {
+    const uc = container.resolve<ListPurchaseAttemptsUseCase>(UC_TOKENS.ListPurchaseAttempts);
+    const params = request.params as Record<string, string>;
+    const result = await uc.execute({ queue_id: params.id });
     return reply.send(result);
   });
 }

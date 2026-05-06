@@ -93,3 +93,81 @@ export interface LiveSearchProviderGroup {
 export interface LiveSearchProvidersResult {
   providers: LiveSearchProviderGroup[];
 }
+
+// --- Procurement Config ---
+
+export interface ProcurementConfig {
+  auto_buy_enabled: boolean;
+  daily_spend_limit_cents: number | null;
+  max_cost_per_item_cents: number | null;
+}
+
+export interface GetProcurementConfigResult {
+  config: ProcurementConfig;
+  today_spend_cents: number;
+}
+
+export interface UpdateProcurementConfigDto {
+  auto_buy_enabled?: boolean;
+  daily_spend_limit_cents?: number | null;
+  max_cost_per_item_cents?: number | null;
+  admin_id: string;
+}
+
+// --- Purchase Queue ---
+
+export interface PurchaseQueueItemRow {
+  id: string;
+  order_id: string;
+  order_item_id: string;
+  variant_id: string;
+  quantity_needed: number;
+  status: string;
+  attempts_total: number;
+  max_attempts: number;
+  last_error: string | null;
+  created_at: string;
+  processed_at: string | null;
+  next_retry_at: string | null;
+}
+
+export interface ListPurchaseQueueDto {
+  status?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface ListPurchaseQueueResult {
+  items: PurchaseQueueItemRow[];
+  total: number;
+}
+
+export interface CancelQueueItemDto {
+  queue_id: string;
+  admin_id: string;
+}
+
+export interface CancelQueueItemResult {
+  success: boolean;
+}
+
+export interface PurchaseAttemptRow {
+  id: string;
+  queue_id: string;
+  provider_account_id: string;
+  attempt_no: number;
+  status: string;
+  provider_order_ref: string | null;
+  error_code: string | null;
+  error_message: string | null;
+  started_at: string;
+  finished_at: string | null;
+}
+
+export interface ListPurchaseAttemptsDto {
+  queue_id: string;
+}
+
+export interface ListPurchaseAttemptsResult {
+  attempts: PurchaseAttemptRow[];
+}

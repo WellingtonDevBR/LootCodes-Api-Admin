@@ -21,6 +21,15 @@ import type {
   LinkCatalogProductResult,
   LiveSearchProvidersDto,
   LiveSearchProvidersResult,
+  GetProcurementConfigResult,
+  UpdateProcurementConfigDto,
+  ProcurementConfig,
+  ListPurchaseQueueDto,
+  ListPurchaseQueueResult,
+  CancelQueueItemDto,
+  CancelQueueItemResult,
+  ListPurchaseAttemptsDto,
+  ListPurchaseAttemptsResult,
 } from '../use-cases/procurement/procurement.types.js';
 
 export interface IAdminProcurementRepository {
@@ -35,4 +44,10 @@ export interface IAdminProcurementRepository {
   searchCatalog(dto: SearchCatalogDto): Promise<SearchCatalogResult>;
   linkCatalogProduct(dto: LinkCatalogProductDto): Promise<LinkCatalogProductResult>;
   liveSearchProviders(dto: LiveSearchProvidersDto): Promise<LiveSearchProvidersResult>;
+
+  getProcurementConfig(): Promise<GetProcurementConfigResult>;
+  updateProcurementConfig(dto: UpdateProcurementConfigDto): Promise<ProcurementConfig>;
+  listPurchaseQueue(dto: ListPurchaseQueueDto): Promise<ListPurchaseQueueResult>;
+  cancelQueueItem(dto: CancelQueueItemDto): Promise<CancelQueueItemResult>;
+  listPurchaseAttempts(dto: ListPurchaseAttemptsDto): Promise<ListPurchaseAttemptsResult>;
 }

@@ -28,6 +28,17 @@ import type {
   LiveSearchProvidersDto,
   LiveSearchProvidersResult,
   LiveSearchProviderGroup,
+  GetProcurementConfigResult,
+  UpdateProcurementConfigDto,
+  ProcurementConfig,
+  ListPurchaseQueueDto,
+  ListPurchaseQueueResult,
+  PurchaseQueueItemRow,
+  CancelQueueItemDto,
+  CancelQueueItemResult,
+  ListPurchaseAttemptsDto,
+  ListPurchaseAttemptsResult,
+  PurchaseAttemptRow,
 } from '../../core/use-cases/procurement/procurement.types.js';
 import { createLogger } from '../../shared/logger.js';
 
@@ -336,6 +347,115 @@ export class SupabaseAdminProcurementRepository implements IAdminProcurementRepo
     }
 
     return { providers };
+  }
+
+  async getProcurementConfig(): Promise<GetProcurementConfigResult> {
+    const setting = await this.db.queryOne<{ value: Record<string, unknown> }>(
+      'platform_settings',
+      { filter: { key: 'provider_procurement_config' }, single: true },
+    );
+
+    const raw = setting?.value ?? {};
+    const config: ProcurementConfig = {
+      auto_buy_enabled: raw.auto_buy_enabled === true,
+      daily_spend_limit_cents: typeof raw.daily_spend_limit_cents === 'number' ? raw.daily_spend_limit_cents : null,
+      max_cost_per_item_cents: typeof raw.max_cost_per_item_cents === 'number' ? raw.max_cost_per_item_cents : null,
+    };
+
+    const todayStart = new Date();
+    todayStart.setUTCHours(0, 0, 0, 0);
+
+    const transactions = await this.db.query<{ amount: number }>(
+      'transactions',
+      {
+        select: 'amount',
+        filter: { type: 'purchase', direction: 'debit' },
+        gte: [['created_at', todayStart.toISOString()]],
+      },
+    );
+
+    const todaySpendCents = transactions.reduce((sum, row) => sum + (row.amount ?? 0), 0);
+
+    return { config, today_spend_cents: todaySpendCents };
+  }
+
+  async updateProcurementConfig(dto: UpdateProcurementConfigDto): Promise<ProcurementConfig> {
+    logger.info('Updating procurement config', { adminId: dto.admin_id });
+
+    const current = await this.db.queryOne<{ value: Record<string, unknown> }>(
+      'platform_settings',
+      { filter: { key: 'provider_procurement_config' }, single: true },
+    );
+
+    const existing = current?.value ?? {};
+    const merged: Record<string, unknown> = { ...existing };
+
+    if (dto.auto_buy_enabled !== undefined) merged.auto_buy_enabled = dto.auto_buy_enabled;
+    if (dto.daily_spend_limit_cents !== undefined) merged.daily_spend_limit_cents = dto.daily_spend_limit_cents;
+    if (dto.max_cost_per_item_cents !== undefined) merged.max_cost_per_item_cents = dto.max_cost_per_item_cents;
+
+    await this.db.upsert(
+      'platform_settings',
+      { key: 'provider_procurement_config', value: merged, updated_at: new Date().toISOString() },
+      'key',
+    );
+
+    return {
+      auto_buy_enabled: merged.auto_buy_enabled === true,
+      daily_spend_limit_cents: typeof merged.daily_spend_limit_cents === 'number' ? merged.daily_spend_limit_cents : null,
+      max_cost_per_item_cents: typeof merged.max_cost_per_item_cents === 'number' ? merged.max_cost_per_item_cents : null,
+    };
+  }
+
+  async listPurchaseQueue(dto: ListPurchaseQueueDto): Promise<ListPurchaseQueueResult> {
+    const limit = dto.limit ?? 20;
+    const offset = dto.offset ?? 0;
+    const from = offset;
+    const to = from + limit - 1;
+
+    const filter: Record<string, unknown> = {};
+    if (dto.status) filter.status = dto.status;
+
+    const { data, total } = await this.db.queryPaginated<PurchaseQueueItemRow>(
+      'provider_purchase_queue',
+      {
+        select: 'id, order_id, order_item_id, variant_id, quantity_needed, status, attempts_total, max_attempts, last_error, created_at, processed_at, next_retry_at',
+        filter: Object.keys(filter).length > 0 ? filter : undefined,
+        order: { column: 'created_at', ascending: false },
+        range: [from, to],
+      },
+    );
+
+    return { items: data, total };
+  }
+
+  async cancelQueueItem(dto: CancelQueueItemDto): Promise<CancelQueueItemResult> {
+    logger.info('Cancelling queue item', { queueId: dto.queue_id, adminId: dto.admin_id });
+
+    await this.db.update(
+      'provider_purchase_queue',
+      { id: dto.queue_id },
+      {
+        status: 'failed',
+        last_error: `Cancelled by admin ${dto.admin_id}`,
+        processed_at: new Date().toISOString(),
+      },
+    );
+
+    return { success: true };
+  }
+
+  async listPurchaseAttempts(dto: ListPurchaseAttemptsDto): Promise<ListPurchaseAttemptsResult> {
+    const attempts = await this.db.query<PurchaseAttemptRow>(
+      'provider_purchase_attempts',
+      {
+        select: 'id, queue_id, provider_account_id, attempt_no, status, provider_order_ref, error_code, error_message, started_at, finished_at',
+        filter: { queue_id: dto.queue_id },
+        order: { column: 'attempt_no', ascending: true },
+      },
+    );
+
+    return { attempts };
   }
 
   private async searchLocalCatalogGrouped(

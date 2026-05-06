@@ -334,6 +334,11 @@ import { RecoverProviderOrderUseCase } from '../core/use-cases/procurement/recov
 import { SearchCatalogUseCase } from '../core/use-cases/procurement/search-catalog.use-case.js';
 import { LinkCatalogProductUseCase } from '../core/use-cases/procurement/link-catalog-product.use-case.js';
 import { LiveSearchProvidersUseCase } from '../core/use-cases/procurement/live-search-providers.use-case.js';
+import { GetProcurementConfigUseCase } from '../core/use-cases/procurement/get-procurement-config.use-case.js';
+import { UpdateProcurementConfigUseCase } from '../core/use-cases/procurement/update-procurement-config.use-case.js';
+import { ListPurchaseQueueUseCase } from '../core/use-cases/procurement/list-purchase-queue.use-case.js';
+import { CancelQueueItemUseCase } from '../core/use-cases/procurement/cancel-queue-item.use-case.js';
+import { ListPurchaseAttemptsUseCase } from '../core/use-cases/procurement/list-purchase-attempts.use-case.js';
 
 // Use cases — Opportunities
 import { ListOpportunitiesUseCase } from '../core/use-cases/opportunities/list-opportunities.use-case.js';
@@ -493,6 +498,11 @@ container.register(UC_TOKENS.RecoverProviderOrder, { useClass: RecoverProviderOr
 container.register(UC_TOKENS.SearchCatalog, { useClass: SearchCatalogUseCase });
 container.register(UC_TOKENS.LinkCatalogProduct, { useClass: LinkCatalogProductUseCase });
 container.register(UC_TOKENS.LiveSearchProviders, { useClass: LiveSearchProvidersUseCase });
+container.register(UC_TOKENS.GetProcurementConfig, { useClass: GetProcurementConfigUseCase });
+container.register(UC_TOKENS.UpdateProcurementConfig, { useClass: UpdateProcurementConfigUseCase });
+container.register(UC_TOKENS.ListPurchaseQueue, { useClass: ListPurchaseQueueUseCase });
+container.register(UC_TOKENS.CancelQueueItem, { useClass: CancelQueueItemUseCase });
+container.register(UC_TOKENS.ListPurchaseAttempts, { useClass: ListPurchaseAttemptsUseCase });
 
 // Use cases — Opportunities
 container.register(UC_TOKENS.ListOpportunities, { useClass: ListOpportunitiesUseCase });
