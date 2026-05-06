@@ -93,6 +93,12 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   registerIpBlocklistHook(app);
 
+  app.get('/eneba-verification.txt', async (_request, reply) => {
+    return reply
+      .type('text/plain')
+      .send('eneba-merchant-verification=9ed945eae2edf4fdd7c4cb59aa8093b1cbc4aef73addd0368bd054c8339defd2');
+  });
+
   await app.register(healthRoutes, { prefix: '/health' });
   await app.register(adminOrderRoutes, { prefix: '/orders' });
   await app.register(adminInventoryRoutes, { prefix: '/inventory' });
