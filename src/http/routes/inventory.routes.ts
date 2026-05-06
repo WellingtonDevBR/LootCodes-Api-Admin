@@ -88,7 +88,7 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
       TOKENS.Database,
     );
 
-    const selectCols = 'id, variant_id, key_state, is_used, created_at, used_at, supplier_reference, order_id, orders(order_number, order_channel, delivery_email, guest_email, contact_email, customer_full_name)';
+    const selectCols = 'id, variant_id, key_state, is_used, created_at, used_at, supplier_reference, order_id, purchase_cost, purchase_currency, orders(order_number, order_channel, delivery_email, guest_email, contact_email, customer_full_name)';
 
     const eqFilters: Array<[string, unknown]> = [];
     const inFilters: Array<[string, unknown[]]> = [];
@@ -179,6 +179,9 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
         orderNumber: order?.order_number || null,
         orderChannel: order?.order_channel || null,
         soldTo,
+        purchaseCost: typeof k.purchase_cost === 'number' ? k.purchase_cost
+          : typeof k.purchase_cost === 'string' ? Number(k.purchase_cost) : null,
+        purchaseCurrency: (k.purchase_currency as string) || null,
         locked: true,
       };
     });
