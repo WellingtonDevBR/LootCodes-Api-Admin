@@ -1,5 +1,11 @@
 export type SellerListingType = 'key_upload' | 'declared_stock';
-export type SellerPriceStrategy = 'fixed' | 'match_lowest' | 'undercut_percent' | 'margin_target' | 'smart_compete';
+export type SellerPriceStrategy =
+  | 'fixed'
+  | 'match_lowest'
+  | 'undercut_percent'
+  | 'undercut_fixed'
+  | 'margin_target'
+  | 'smart_compete';
 
 export interface SellerProviderConfig {
   commission_rate_percent: number;
@@ -63,7 +69,12 @@ export const SELLER_CONFIG_DEFAULTS: SellerProviderConfig = {
 
 const VALID_LISTING_TYPES: SellerListingType[] = ['key_upload', 'declared_stock'];
 const VALID_PRICE_STRATEGIES: SellerPriceStrategy[] = [
-  'fixed', 'match_lowest', 'undercut_percent', 'margin_target', 'smart_compete',
+  'fixed',
+  'match_lowest',
+  'undercut_percent',
+  'undercut_fixed',
+  'margin_target',
+  'smart_compete',
 ];
 
 export function parseSellerConfig(raw: Record<string, unknown>): SellerProviderConfig {
@@ -234,6 +245,8 @@ export interface SellerListingItem {
   updated_at: string;
   provider_code: string | null;
   provider_name: string | null;
+  /** Per-listing JSON overrides (CRM); drives cron via merge into provider seller_config. */
+  pricing_overrides?: Record<string, unknown> | null;
 }
 
 export interface ListSellerListingsResult {

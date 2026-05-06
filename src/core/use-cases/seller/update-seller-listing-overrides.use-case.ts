@@ -5,7 +5,12 @@ import type { UpdateSellerListingOverridesDto, UpdateSellerListingOverridesResul
 import type { SellerPriceStrategy } from './seller.types.js';
 
 const VALID_STRATEGIES: SellerPriceStrategy[] = [
-  'fixed', 'match_lowest', 'undercut_percent', 'margin_target', 'smart_compete',
+  'fixed',
+  'match_lowest',
+  'undercut_percent',
+  'undercut_fixed',
+  'margin_target',
+  'smart_compete',
 ];
 
 @injectable()
@@ -28,6 +33,12 @@ export class UpdateSellerListingOverridesUseCase {
     if (sanitised.price_strategy_value != null) {
       if (typeof sanitised.price_strategy_value !== 'number' || sanitised.price_strategy_value < 0) {
         throw new Error('price_strategy_value must be a non-negative number');
+      }
+    }
+
+    if (sanitised.bypass_profitability_guard != null) {
+      if (typeof sanitised.bypass_profitability_guard !== 'boolean') {
+        throw new Error('bypass_profitability_guard must be a boolean');
       }
     }
 

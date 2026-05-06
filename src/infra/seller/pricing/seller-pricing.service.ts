@@ -21,6 +21,7 @@ import type {
 import type { ISellerPricingService, PriceSuggestionResult, SuggestPriceRequest } from '../../../core/ports/seller-pricing.port.js';
 import type { SellerListingType, SellerPriceStrategy, SellerProviderConfig } from '../../../core/use-cases/seller/seller.types.js';
 import { parseSellerConfig } from '../../../core/use-cases/seller/seller.types.js';
+import { applySellerPriceStrategy } from '../../../core/use-cases/seller/apply-seller-price-strategy.js';
 import { stampCompetitorOwnership } from './seller-price-intelligence.service.js';
 import { createLogger } from '../../../shared/logger.js';
 
@@ -277,24 +278,7 @@ export class SellerPricingService implements ISellerPricingService {
     costCents: number,
     lowestCompetitorCents: number | null,
   ): number {
-    switch (strategy) {
-      case 'match_lowest':
-        return lowestCompetitorCents ?? costCents;
-      case 'undercut_percent': {
-        if (!lowestCompetitorCents) return costCents;
-        const discount = Math.round(lowestCompetitorCents * (strategyValue / 100));
-        return Math.max(lowestCompetitorCents - discount, 1);
-      }
-      case 'margin_target': {
-        const margin = Math.max(0, strategyValue) / 100;
-        return Math.round(costCents / (1 - margin));
-      }
-      case 'smart_compete':
-        return lowestCompetitorCents ?? costCents;
-      case 'fixed':
-      default:
-        return costCents;
-    }
+    return applySellerPriceStrategy(strategy, strategyValue, costCents, lowestCompetitorCents);
   }
 
   async getProviderConfig(providerAccountId: string): Promise<SellerProviderConfig> {

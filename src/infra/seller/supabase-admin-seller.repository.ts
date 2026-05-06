@@ -97,6 +97,7 @@ export class SupabaseAdminSellerRepository implements IAdminSellerRepository {
         updated_at: r.updated_at as string,
         provider_code: account?.provider_code ?? null,
         provider_name: account?.display_name ?? null,
+        pricing_overrides: (r.pricing_overrides as Record<string, unknown> | null) ?? null,
       };
     });
 

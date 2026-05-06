@@ -6,6 +6,11 @@ import type { DryRunPricingDto, DryRunPricingResult } from './seller-pricing.typ
 import { parseSellerConfig } from './seller.types.js';
 import type { SellerPriceIntelligenceService } from '../../../infra/seller/pricing/seller-price-intelligence.service.js';
 import type { SellerCostBasisService } from '../../../infra/seller/pricing/seller-cost-basis.service.js';
+import { mergeSellerListingPricingOverrides } from './listing-pricing-overrides-merge.js';
+import {
+  readsBypassProfitabilityGuard,
+  computeRelaxedEffectiveMinCentsForAutoPricing,
+} from './auto-pricing-profitability-guard.js';
 
 @injectable()
 export class DryRunPricingUseCase {
@@ -30,6 +35,8 @@ export class DryRunPricingUseCase {
     const parsedConfig = parseSellerConfig((account?.seller_config as Record<string, unknown>) ?? {});
     const overrides = (listing.pricing_overrides ?? {}) as Record<string, unknown>;
 
+    const mergedConfig = mergeSellerListingPricingOverrides(parsedConfig, overrides);
+
     const commissionPercent = (overrides.commission_override_percent as number)
       ?? parsedConfig.commission_rate_percent;
 
@@ -44,7 +51,16 @@ export class DryRunPricingUseCase {
       costBasisCents = computed;
     }
 
-    const effectiveFloor = (listing.min_price_cents as number) || costBasisCents || 0;
+    const bypass = readsBypassProfitabilityGuard(overrides);
+    const effectiveFloor = bypass
+      ? computeRelaxedEffectiveMinCentsForAutoPricing(
+          {
+            min_price_mode: String(listing.min_price_mode ?? 'auto'),
+            min_price_override_cents: Number(listing.min_price_override_cents ?? 0),
+          },
+          mergedConfig.min_price_floor_cents,
+        )
+      : ((listing.min_price_cents as number) || costBasisCents || 0);
 
     const floor = await this.db.queryOne<Record<string, unknown>>('seller_competitor_floors', {
       eq: [['seller_listing_id', dto.listing_id]],
@@ -115,7 +131,11 @@ export class DryRunPricingUseCase {
         worth_it: worthIt,
         skip_reason: skipReason,
         floor_data: floor ? { ...(floor as object) } : null,
-        config: { commission_percent: commissionPercent, strategy: parsedConfig.price_strategy },
+        config: {
+          commission_percent: commissionPercent,
+          strategy: mergedConfig.price_strategy,
+          strategy_value: mergedConfig.price_strategy_value,
+        },
         profitability,
       },
     };

@@ -22,6 +22,11 @@ import type {
   ProviderSellerDefaults,
 } from '../../core/use-cases/seller/seller-pricing.types.js';
 import { parseSellerConfig } from '../../core/use-cases/seller/seller.types.js';
+import { mergeSellerListingPricingOverrides } from '../../core/use-cases/seller/listing-pricing-overrides-merge.js';
+import {
+  readsBypassProfitabilityGuard,
+  computeRelaxedEffectiveMinCentsForAutoPricing,
+} from '../../core/use-cases/seller/auto-pricing-profitability-guard.js';
 import { createLogger } from '../../shared/logger.js';
 
 const logger = createLogger('AdminSellerPricingRepository');
@@ -181,10 +186,13 @@ export class SupabaseAdminSellerPricingRepository implements IAdminSellerPricing
       reasoning = `Match lowest competitor at ${lowestCompetitor}.`;
     }
 
-    const minFloor = dto.effective_cost_cents + Math.round(dto.effective_cost_cents * 0.05);
-    if (suggestedCents < minFloor) {
-      suggestedCents = minFloor;
-      reasoning += ' Adjusted up to maintain 5% minimum margin.';
+    const bypassSuggest = readsBypassProfitabilityGuard(overrides);
+    if (!bypassSuggest && dto.effective_cost_cents > 0) {
+      const minFloor = dto.effective_cost_cents + Math.round(dto.effective_cost_cents * 0.05);
+      if (suggestedCents < minFloor) {
+        suggestedCents = minFloor;
+        reasoning += ' Adjusted up to maintain 5% minimum margin.';
+      }
     }
 
     const feeCents = Math.round(suggestedCents * commissionPercent / 100);
@@ -215,6 +223,7 @@ export class SupabaseAdminSellerPricingRepository implements IAdminSellerPricing
     });
     const parsedConfig = resolveSellerConfigFromAccount(account);
     const overrides = (listing.pricing_overrides ?? {}) as Record<string, unknown>;
+    const mergedConfig = mergeSellerListingPricingOverrides(parsedConfig, overrides);
 
     const commissionPercent = (overrides.commission_override_percent as number)
       ?? parsedConfig.commission_rate_percent;
@@ -223,7 +232,16 @@ export class SupabaseAdminSellerPricingRepository implements IAdminSellerPricing
       ?? null;
 
     const currentPriceCents = (listing.price_cents as number) ?? 0;
-    const effectiveFloor = (listing.min_price_cents as number) || costBasis || 0;
+    const bypassDryRun = readsBypassProfitabilityGuard(overrides);
+    const effectiveFloor = bypassDryRun
+      ? computeRelaxedEffectiveMinCentsForAutoPricing(
+          {
+            min_price_mode: String(listing.min_price_mode ?? 'auto'),
+            min_price_override_cents: Number(listing.min_price_override_cents ?? 0),
+          },
+          mergedConfig.min_price_floor_cents,
+        )
+      : ((listing.min_price_cents as number) || costBasis || 0);
 
     const floor = await this.db.queryOne<Record<string, unknown>>('seller_competitor_floors', {
       eq: [['seller_listing_id', dto.listing_id]],

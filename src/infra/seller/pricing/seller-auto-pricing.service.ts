@@ -26,7 +26,13 @@ import {
   type CompetitorSnapshotRow,
 } from './seller-price-intelligence.service.js';
 import { SellerCostBasisService } from './seller-cost-basis.service.js';
-import { computeProfitabilityFloorCents } from './seller-pricing-math.js';
+import {
+  readsBypassProfitabilityGuard,
+  shouldSkipForProfitabilityNoCost,
+  computeRelaxedEffectiveMinCentsForAutoPricing,
+} from '../../../core/use-cases/seller/auto-pricing-profitability-guard.js';
+import { resolveProfitabilityFloorCentsForAutoPricing } from './auto-pricing-floor-resolution.js';
+import { mergeSellerListingPricingOverrides } from '../../../core/use-cases/seller/listing-pricing-overrides-merge.js';
 import { createLogger } from '../../../shared/logger.js';
 
 const logger = createLogger('seller-auto-pricing');
@@ -155,22 +161,7 @@ function mergeListingOverrides(
   baseConfig: SellerProviderConfig,
   listing: SellerListingRow,
 ): SellerProviderConfig {
-  const ov = listing.pricing_overrides;
-  if (!ov || typeof ov !== 'object') return baseConfig;
-  const merged = { ...baseConfig };
-  if (typeof (ov as Record<string, unknown>).commission_rate_percent === 'number') {
-    merged.commission_rate_percent = (ov as Record<string, unknown>).commission_rate_percent as number;
-  }
-  if (typeof (ov as Record<string, unknown>).min_profit_margin_pct === 'number') {
-    merged.min_profit_margin_pct = (ov as Record<string, unknown>).min_profit_margin_pct as number;
-  }
-  if (typeof (ov as Record<string, unknown>).price_strategy === 'string') {
-    merged.price_strategy = (ov as Record<string, unknown>).price_strategy as SellerProviderConfig['price_strategy'];
-  }
-  if (typeof (ov as Record<string, unknown>).price_strategy_value === 'number') {
-    merged.price_strategy_value = (ov as Record<string, unknown>).price_strategy_value as number;
-  }
-  return merged;
+  return mergeSellerListingPricingOverrides(baseConfig, listing.pricing_overrides);
 }
 
 // ─── Service ─────────────────────────────────────────────────────────
@@ -304,39 +295,51 @@ export class SellerAutoPricingService implements ISellerAutoPricingService {
 
           if (!hasPricing || !listing.external_listing_id) continue;
 
-          // Profitability floor
+          const rawOverrides =
+            listing.pricing_overrides != null && typeof listing.pricing_overrides === 'object'
+              ? listing.pricing_overrides
+              : undefined;
+          const bypassProfitabilityGuard = readsBypassProfitabilityGuard(rawOverrides);
+
+          // Profitability floor (read bypass from raw pricing_overrides JSON, not merged config)
           const hasProfitTarget = config.min_profit_margin_pct > 0;
           const hasManualFloor = listing.min_price_mode === 'manual' && listing.min_price_override_cents > 0;
           const effectiveCostCents = costInListingCurrency > 0 ? costInListingCurrency : listing.cost_basis_cents;
 
-          let profitabilityFloorCents: number | null = null;
-          if (hasProfitTarget) {
-            if (effectiveCostCents <= 0 && !hasManualFloor) {
-              await this.recordDecision({
-                seller_listing_id: listing.id,
-                action: 'skipped', reason_code: 'profitability_no_cost',
-                reason_detail: `Profitability target ${config.min_profit_margin_pct}% set but no cost basis available`,
-                price_before_cents: listing.price_cents, target_price_cents: listing.price_cents,
-                price_after_cents: null, effective_floor_cents: 0,
-                competitor_count: 0, lowest_competitor_cents: null,
-                our_position_before: null, our_position_after: null,
-                estimated_fee_cents: 0, estimated_payout_cents: null,
-                config_snapshot: configSnapshot, proposed_price_cents: null,
-                second_lowest_competitor_cents: null,
-                decision_context: { block_stage: 'profitability_no_cost' },
-              });
-              result.decisionsRecorded++;
-              continue;
-            }
-            if (effectiveCostCents > 0) {
-              profitabilityFloorCents = computeProfitabilityFloorCents(
-                effectiveCostCents,
-                isNetPricingModel ? 0 : config.commission_rate_percent,
-                config.min_profit_margin_pct,
-                isNetPricingModel ? 0 : config.fixed_fee_cents,
-              );
-            }
+          if (
+            shouldSkipForProfitabilityNoCost({
+              bypassProfitabilityGuard,
+              hasProfitTarget,
+              effectiveCostCents,
+              hasManualFloor,
+            })
+          ) {
+            await this.recordDecision({
+              seller_listing_id: listing.id,
+              action: 'skipped', reason_code: 'profitability_no_cost',
+              reason_detail: `Profitability target ${config.min_profit_margin_pct}% set but no cost basis available`,
+              price_before_cents: listing.price_cents, target_price_cents: listing.price_cents,
+              price_after_cents: null, effective_floor_cents: 0,
+              competitor_count: 0, lowest_competitor_cents: null,
+              our_position_before: null, our_position_after: null,
+              estimated_fee_cents: 0, estimated_payout_cents: null,
+              config_snapshot: configSnapshot, proposed_price_cents: null,
+              second_lowest_competitor_cents: null,
+              decision_context: { block_stage: 'profitability_no_cost' },
+            });
+            result.decisionsRecorded++;
+            continue;
           }
+
+          const profitabilityFloorCents = resolveProfitabilityFloorCentsForAutoPricing({
+            bypassProfitabilityGuard,
+            hasProfitTarget,
+            effectiveCostCents,
+            commissionRatePercent: config.commission_rate_percent,
+            minProfitMarginPct: config.min_profit_margin_pct,
+            fixedFeeCents: config.fixed_fee_cents,
+            isNetPricingModel,
+          });
 
           // Budget check
           const budget = evaluatePriceChangeBudget(listing, config);
@@ -359,12 +362,14 @@ export class SellerAutoPricingService implements ISellerAutoPricingService {
             continue;
           }
 
-          const effectiveMin = this.costBasisService.getEffectiveMinPrice(
-            { ...listing, cost_basis_cents: effectiveCostCents },
-            config.min_price_floor_cents,
-            isNetPricingModel ? undefined : config.commission_rate_percent,
-            profitabilityFloorCents,
-          );
+          const effectiveMin = bypassProfitabilityGuard
+            ? computeRelaxedEffectiveMinCentsForAutoPricing(listing, config.min_price_floor_cents)
+            : this.costBasisService.getEffectiveMinPrice(
+              { ...listing, cost_basis_cents: effectiveCostCents },
+              config.min_price_floor_cents,
+              isNetPricingModel ? undefined : config.commission_rate_percent,
+              profitabilityFloorCents,
+            );
 
           // Fetch competitors
           let competitors: CompetitorPrice[] = [];

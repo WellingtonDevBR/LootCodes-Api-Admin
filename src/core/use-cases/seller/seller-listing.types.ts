@@ -73,6 +73,8 @@ export interface SellerListingPricingOverrides {
   cost_basis_override_currency?: string | null;
   price_strategy?: SellerPriceStrategy | null;
   price_strategy_value?: number | null;
+  /** When true, auto-pricer ignores profitability/cost-breakeven floors except provider min floor + manual listing min. */
+  bypass_profitability_guard?: boolean | null;
 }
 
 export interface UpdateSellerListingOverridesDto {
