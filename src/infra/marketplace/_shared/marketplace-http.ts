@@ -39,6 +39,12 @@ export interface MarketplaceHttpConfig {
   circuitBreaker?: Partial<CircuitBreakerConfig>;
   rateLimiter?: Partial<RateLimiterConfig>;
   headers?: () => Promise<Record<string, string>>;
+  /**
+   * Optional HMAC signing headers for outbound requests through a reverse proxy
+   * (same semantics as Edge `buildProviderProxyHeaders`).
+   * Receives the wire JSON body string, or empty string for GET/DELETE.
+   */
+  proxySigner?: (rawBody: string) => Promise<Record<string, string>>;
 }
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -161,6 +167,7 @@ export class MarketplaceHttpClient {
   private readonly timeoutMs: number;
   private readonly retryConfig: RetryConfig;
   private readonly resolveHeaders: () => Promise<Record<string, string>>;
+  private readonly proxySigner?: (rawBody: string) => Promise<Record<string, string>>;
   private readonly cb: CircuitBreaker;
   private readonly rl: RateLimiter;
 
@@ -170,6 +177,7 @@ export class MarketplaceHttpClient {
     this.timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.retryConfig = { ...DEFAULT_RETRY, ...config.retry };
     this.resolveHeaders = config.headers ?? (() => Promise.resolve({}));
+    this.proxySigner = config.proxySigner;
     this.cb = new CircuitBreaker({ ...DEFAULT_CB, ...config.circuitBreaker });
     this.rl = new RateLimiter({ ...DEFAULT_RL, ...config.rateLimiter });
   }
@@ -268,8 +276,12 @@ export class MarketplaceHttpClient {
     const url = path ? `${this.baseUrl}/${path.replace(/^\//, '')}` : this.baseUrl;
     const baseHeaders = await this.resolveHeaders();
 
+    const rawBody = body !== undefined ? JSON.stringify(body) : '';
+    const proxyHeaders = this.proxySigner ? await this.proxySigner(rawBody) : {};
+
     const headers: Record<string, string> = {
       ...baseHeaders,
+      ...proxyHeaders,
       ...extraHeaders,
     };
 
@@ -280,7 +292,7 @@ export class MarketplaceHttpClient {
     const fetchPromise = fetch(url, {
       method,
       headers,
-      body: body !== undefined ? JSON.stringify(body) : undefined,
+      body: body !== undefined ? rawBody : undefined,
     });
 
     const timeoutPromise = sleep(this.timeoutMs).then(() => {

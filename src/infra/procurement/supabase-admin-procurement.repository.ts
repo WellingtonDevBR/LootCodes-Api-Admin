@@ -16,8 +16,6 @@ import type {
   IngestProviderCatalogStatusResult,
   RefreshProviderPricesDto,
   RefreshProviderPricesResult,
-  ManualProviderPurchaseDto,
-  ManualProviderPurchaseResult,
   RecoverProviderOrderDto,
   RecoverProviderOrderResult,
   SearchCatalogDto,
@@ -46,6 +44,17 @@ const logger = createLogger('AdminProcurementRepository');
 
 const DEFAULT_SEARCH_LIMIT = 20;
 
+function procurementQuoteProviderLabel(
+  providerCode: string | null | undefined,
+  displayName: string | null | undefined,
+): string {
+  const code = typeof providerCode === 'string' ? providerCode.trim() : '';
+  if (code.length > 0) return code;
+  const name = typeof displayName === 'string' ? displayName.trim() : '';
+  if (name.length > 0) return name;
+  return 'unknown';
+}
+
 @injectable()
 export class SupabaseAdminProcurementRepository implements IAdminProcurementRepository {
   constructor(
@@ -56,20 +65,46 @@ export class SupabaseAdminProcurementRepository implements IAdminProcurementRepo
   async testProviderQuote(dto: TestProviderQuoteDto): Promise<TestProviderQuoteResult> {
     logger.info('Testing provider quote', { variantId: dto.variant_id, provider: dto.provider_code });
 
-    const offers = await this.db.query<{ provider_code: string; last_price_cents: number; available_quantity: number }>(
-      'provider_variant_offers',
-      {
-        filter: dto.provider_code
-          ? { variant_id: dto.variant_id, provider_code: dto.provider_code }
-          : { variant_id: dto.variant_id },
-      },
+    const offers = await this.db.query<{
+      provider_account_id: string;
+      last_price_cents: number | null;
+      available_quantity: number | null;
+    }>('provider_variant_offers', {
+      filter: { variant_id: dto.variant_id },
+    });
+
+    if (offers.length === 0) {
+      return { quotes: [] };
+    }
+
+    const accountIds = [...new Set(offers.map((o) => o.provider_account_id))];
+    const accounts = await this.db.query<{
+      id: string;
+      provider_code: string | null;
+      display_name: string | null;
+    }>('provider_accounts', {
+      in: [['id', accountIds]],
+    });
+
+    const allowedAccountIds = dto.provider_code
+      ? new Set(
+          accounts
+            .filter((a) => (a.provider_code ?? '').trim() === dto.provider_code.trim())
+            .map((a) => a.id),
+        )
+      : null;
+
+    const labelByAccountId = new Map(
+      accounts.map((a) => [a.id, procurementQuoteProviderLabel(a.provider_code, a.display_name)]),
     );
 
-    const quotes = offers.map((offer) => ({
-      provider: offer.provider_code,
-      price_cents: offer.last_price_cents,
-      available: offer.available_quantity > 0,
-    }));
+    const quotes = offers
+      .filter((o) => (allowedAccountIds === null ? true : allowedAccountIds.has(o.provider_account_id)))
+      .map((offer) => ({
+        provider: labelByAccountId.get(offer.provider_account_id) ?? 'unknown',
+        price_cents: offer.last_price_cents ?? 0,
+        available: (offer.available_quantity ?? 0) > 0,
+      }));
 
     return { quotes };
   }
@@ -165,20 +200,6 @@ export class SupabaseAdminProcurementRepository implements IAdminProcurementRepo
     return { success: true, prices_updated: result.prices_updated ?? 0 };
   }
 
-  async manualProviderPurchase(dto: ManualProviderPurchaseDto): Promise<ManualProviderPurchaseResult> {
-    logger.info('Manual provider purchase', { variantId: dto.variant_id, provider: dto.provider_code, quantity: dto.quantity });
-
-    const result = await this.db.insert<{ id: string }>('provider_purchase_queue', {
-      variant_id: dto.variant_id,
-      provider_code: dto.provider_code,
-      quantity: dto.quantity,
-      requested_by: dto.admin_id,
-      status: 'pending',
-    });
-
-    return { success: true, purchase_id: result.id };
-  }
-
   async recoverProviderOrder(dto: RecoverProviderOrderDto): Promise<RecoverProviderOrderResult> {
     logger.info('Recovering provider order', { purchaseId: dto.purchase_id, adminId: dto.admin_id });
 
@@ -239,15 +260,22 @@ export class SupabaseAdminProcurementRepository implements IAdminProcurementRepo
       throw new Error(`No provider account found for provider_code=${dto.provider_code}`);
     }
 
-    const offer = await this.db.insert<{ id: string }>('provider_variant_offers', {
+    const offerRow: Record<string, unknown> = {
       variant_id: dto.variant_id,
-      provider_code: dto.provider_code,
       provider_account_id: account.id,
-      external_product_id: dto.external_product_id,
+      external_offer_id: dto.external_product_id,
       currency: dto.currency,
       last_price_cents: dto.price_cents,
       is_active: true,
-    });
+    };
+    if (dto.platform_code !== undefined && dto.platform_code !== '') {
+      offerRow.external_platform_code = dto.platform_code;
+    }
+    if (dto.region_code !== undefined && dto.region_code !== '') {
+      offerRow.external_region_code = dto.region_code;
+    }
+
+    const offer = await this.db.insert<{ id: string }>('provider_variant_offers', offerRow);
 
     let sellerListingId: string | null = null;
 

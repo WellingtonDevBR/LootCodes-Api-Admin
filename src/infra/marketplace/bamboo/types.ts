@@ -90,5 +90,18 @@ export interface BambooOrderResponse {
   currency: string;
 }
 
+/** GET …/v1.0/accounts — balances and sandbox vs live flags */
+export interface BambooAccount {
+  readonly id: number;
+  readonly currency: string;
+  readonly balance: number;
+  readonly isActive: boolean;
+  readonly sandboxMode: boolean;
+}
+
+export interface BambooAccountsResponse {
+  readonly accounts: BambooAccount[];
+}
+
 // Notification callback types live in core/use-cases/seller-webhook/bamboo/bamboo-parser.ts
 // (core must not depend on infra; the parser owns the payload interface)

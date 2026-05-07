@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { adminGuard, employeeGuard } from '../middleware/auth.guard.js';
+import { adminGuard, employeeGuard, getAuthenticatedUserId } from '../middleware/auth.guard.js';
 import { container } from '../../di/container.js';
 import { UC_TOKENS } from '../../di/tokens.js';
 import type { ListTicketsUseCase } from '../../core/use-cases/support/list-tickets.use-case.js';
@@ -13,7 +13,7 @@ export async function adminSupportRoutes(app: FastifyInstance) {
   // GET /api/admin/support/tickets — list tickets with filters + pagination
   app.get('/tickets', { preHandler: [employeeGuard] }, async (request, reply) => {
     const uc = container.resolve<ListTicketsUseCase>(UC_TOKENS.ListTickets);
-    const adminUserId = (request as unknown as Record<string, string>).adminUserId ?? 'unknown';
+    const adminUserId = getAuthenticatedUserId(request);
     const query = request.query as Record<string, string | undefined>;
 
     const result = await uc.execute({
@@ -31,7 +31,7 @@ export async function adminSupportRoutes(app: FastifyInstance) {
   // GET /api/admin/support/tickets/:ticketNumber — get ticket detail
   app.get('/tickets/:ticketNumber', { preHandler: [employeeGuard] }, async (request, reply) => {
     const uc = container.resolve<GetTicketUseCase>(UC_TOKENS.GetTicket);
-    const adminUserId = (request as unknown as Record<string, string>).adminUserId ?? 'unknown';
+    const adminUserId = getAuthenticatedUserId(request);
     const { ticketNumber } = request.params as { ticketNumber: string };
 
     const result = await uc.execute({
@@ -45,7 +45,7 @@ export async function adminSupportRoutes(app: FastifyInstance) {
   // PATCH /api/admin/support/tickets/:id/status — update ticket status
   app.patch('/tickets/:id/status', { preHandler: [employeeGuard] }, async (request, reply) => {
     const uc = container.resolve<UpdateTicketStatusUseCase>(UC_TOKENS.UpdateTicketStatus);
-    const adminUserId = (request as unknown as Record<string, string>).adminUserId ?? 'unknown';
+    const adminUserId = getAuthenticatedUserId(request);
     const { id } = request.params as { id: string };
     const body = request.body as { status: string; note?: string };
 
@@ -62,7 +62,7 @@ export async function adminSupportRoutes(app: FastifyInstance) {
   // PATCH /api/admin/support/tickets/:id/priority — update ticket priority
   app.patch('/tickets/:id/priority', { preHandler: [employeeGuard] }, async (request, reply) => {
     const uc = container.resolve<UpdateTicketPriorityUseCase>(UC_TOKENS.UpdateTicketPriority);
-    const adminUserId = (request as unknown as Record<string, string>).adminUserId ?? 'unknown';
+    const adminUserId = getAuthenticatedUserId(request);
     const { id } = request.params as { id: string };
     const body = request.body as { priority: string };
 
@@ -78,7 +78,7 @@ export async function adminSupportRoutes(app: FastifyInstance) {
   // POST /api/admin/support/tickets/:id/messages — add a message to a ticket
   app.post('/tickets/:id/messages', { preHandler: [employeeGuard] }, async (request, reply) => {
     const uc = container.resolve<AddTicketMessageUseCase>(UC_TOKENS.AddTicketMessage);
-    const adminUserId = (request as unknown as Record<string, string>).adminUserId ?? 'unknown';
+    const adminUserId = getAuthenticatedUserId(request);
     const { id } = request.params as { id: string };
     const body = request.body as {
       message: string;
@@ -102,7 +102,7 @@ export async function adminSupportRoutes(app: FastifyInstance) {
   // POST /api/admin/support/tickets/:id/refund — process ticket refund
   app.post('/tickets/:id/refund', { preHandler: [adminGuard] }, async (request, reply) => {
     const uc = container.resolve<ProcessTicketRefundUseCase>(UC_TOKENS.ProcessTicketRefund);
-    const adminUserId = (request as unknown as Record<string, string>).adminUserId ?? 'unknown';
+    const adminUserId = getAuthenticatedUserId(request);
     const { id } = request.params as { id: string };
     const body = request.body as {
       order_id: string;

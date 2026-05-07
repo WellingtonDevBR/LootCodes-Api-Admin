@@ -4,6 +4,16 @@ import { TOKENS } from '../../di/tokens.js';
 import type { IAuthProvider } from '../../core/ports/auth.port.js';
 import type { IAdminRoleChecker } from '../../core/ports/admin-role.port.js';
 
+/**
+ * User id from JWT after {@link adminGuard} / {@link employeeGuard} (stored as `authUser`).
+ * Procurement and several routes mistakenly read `adminUserId`, which is never set.
+ */
+export function getAuthenticatedUserId(request: FastifyRequest): string {
+  const authUser = (request as unknown as Record<string, unknown>).authUser as { id?: string } | undefined;
+  const id = authUser?.id;
+  return typeof id === 'string' && id.length > 0 ? id : 'unknown';
+}
+
 export async function adminGuard(request: FastifyRequest, reply: FastifyReply) {
   const user = await resolveAuthUser(request, reply);
   if (!user) return;

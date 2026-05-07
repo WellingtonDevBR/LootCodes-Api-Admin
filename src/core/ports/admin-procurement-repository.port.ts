@@ -11,8 +11,6 @@ import type {
   IngestProviderCatalogStatusResult,
   RefreshProviderPricesDto,
   RefreshProviderPricesResult,
-  ManualProviderPurchaseDto,
-  ManualProviderPurchaseResult,
   RecoverProviderOrderDto,
   RecoverProviderOrderResult,
   SearchCatalogDto,
@@ -39,7 +37,6 @@ export interface IAdminProcurementRepository {
   ingestProviderCatalog(dto: IngestProviderCatalogDto): Promise<IngestProviderCatalogResult>;
   ingestProviderCatalogStatus(dto: IngestProviderCatalogStatusDto): Promise<IngestProviderCatalogStatusResult>;
   refreshProviderPrices(dto: RefreshProviderPricesDto): Promise<RefreshProviderPricesResult>;
-  manualProviderPurchase(dto: ManualProviderPurchaseDto): Promise<ManualProviderPurchaseResult>;
   recoverProviderOrder(dto: RecoverProviderOrderDto): Promise<RecoverProviderOrderResult>;
   searchCatalog(dto: SearchCatalogDto): Promise<SearchCatalogResult>;
   linkCatalogProduct(dto: LinkCatalogProductDto): Promise<LinkCatalogProductResult>;

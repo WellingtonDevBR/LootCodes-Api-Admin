@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { container } from '../../di/container.js';
 import { UC_TOKENS } from '../../di/tokens.js';
-import { adminGuard, employeeGuard } from '../middleware/auth.guard.js';
+import { adminGuard, employeeGuard, getAuthenticatedUserId } from '../middleware/auth.guard.js';
 import type { ListProductsUseCase } from '../../core/use-cases/products/list-products.use-case.js';
 import type { GetProductUseCase } from '../../core/use-cases/products/get-product.use-case.js';
 import type { CreateProductUseCase } from '../../core/use-cases/products/create-product.use-case.js';
@@ -57,7 +57,7 @@ export async function adminProductRoutes(app: FastifyInstance) {
   app.post('/', { preHandler: [adminGuard] }, async (request, reply) => {
     const uc = container.resolve<CreateProductUseCase>(UC_TOKENS.CreateProduct);
     const body = request.body as Record<string, unknown>;
-    const adminId = (request as unknown as Record<string, string>).adminUserId ?? 'unknown';
+    const adminId = getAuthenticatedUserId(request);
     const result = await uc.execute({ ...body, admin_id: adminId } as Parameters<CreateProductUseCase['execute']>[0]);
     return reply.status(201).send(result);
   });
@@ -67,7 +67,7 @@ export async function adminProductRoutes(app: FastifyInstance) {
     const uc = container.resolve<UpdateProductUseCase>(UC_TOKENS.UpdateProduct);
     const { productId } = request.params as { productId: string };
     const body = request.body as Record<string, unknown>;
-    const adminId = (request as unknown as Record<string, string>).adminUserId ?? 'unknown';
+    const adminId = getAuthenticatedUserId(request);
     const result = await uc.execute({
       product_id: productId,
       ...body,
@@ -80,7 +80,7 @@ export async function adminProductRoutes(app: FastifyInstance) {
   app.delete('/:productId', { preHandler: [adminGuard] }, async (request, reply) => {
     const uc = container.resolve<DeleteProductUseCase>(UC_TOKENS.DeleteProduct);
     const { productId } = request.params as { productId: string };
-    const adminId = (request as unknown as Record<string, string>).adminUserId ?? 'unknown';
+    const adminId = getAuthenticatedUserId(request);
     const result = await uc.execute({ product_id: productId, admin_id: adminId });
     return reply.send(result);
   });
@@ -92,7 +92,7 @@ export async function adminProductRoutes(app: FastifyInstance) {
     );
     const { productId } = request.params as { productId: string };
     const body = request.body as { is_active: boolean };
-    const adminId = (request as unknown as Record<string, string>).adminUserId ?? 'unknown';
+    const adminId = getAuthenticatedUserId(request);
     const result = await repo.toggleProductActive({
       product_id: productId,
       is_active: body.is_active,
@@ -108,7 +108,7 @@ export async function adminProductRoutes(app: FastifyInstance) {
     );
     const { productId } = request.params as { productId: string };
     const body = request.body as Record<string, unknown>;
-    const adminId = (request as unknown as Record<string, string>).adminUserId ?? 'unknown';
+    const adminId = getAuthenticatedUserId(request);
     const result = await repo.updateFeaturedFlags({
       product_id: productId,
       ...body,
@@ -122,7 +122,7 @@ export async function adminProductRoutes(app: FastifyInstance) {
     const uc = container.resolve<CreateVariantUseCase>(UC_TOKENS.CreateVariant);
     const { productId } = request.params as { productId: string };
     const body = request.body as Record<string, unknown>;
-    const adminId = (request as unknown as Record<string, string>).adminUserId ?? 'unknown';
+    const adminId = getAuthenticatedUserId(request);
     const result = await uc.execute({
       product_id: productId,
       ...body,
@@ -136,7 +136,7 @@ export async function adminProductRoutes(app: FastifyInstance) {
     const uc = container.resolve<UpdateVariantUseCase>(UC_TOKENS.UpdateVariant);
     const { variantId } = request.params as { variantId: string };
     const body = request.body as Record<string, unknown>;
-    const adminId = (request as unknown as Record<string, string>).adminUserId ?? 'unknown';
+    const adminId = getAuthenticatedUserId(request);
     const result = await uc.execute({
       variant_id: variantId,
       ...body,
@@ -151,7 +151,7 @@ export async function adminProductRoutes(app: FastifyInstance) {
       Symbol.for('IAdminProductRepository'),
     );
     const { variantId } = request.params as { variantId: string };
-    const adminId = (request as unknown as Record<string, string>).adminUserId ?? 'unknown';
+    const adminId = getAuthenticatedUserId(request);
     const result = await repo.deleteVariant({
       variant_id: variantId,
       admin_id: adminId,
@@ -166,7 +166,7 @@ export async function adminProductRoutes(app: FastifyInstance) {
     );
     const { variantId } = request.params as { variantId: string };
     const body = request.body as { is_active: boolean };
-    const adminId = (request as unknown as Record<string, string>).adminUserId ?? 'unknown';
+    const adminId = getAuthenticatedUserId(request);
     const result = await repo.toggleVariantActive({
       variant_id: variantId,
       is_active: body.is_active,
@@ -186,7 +186,7 @@ export async function adminProductRoutes(app: FastifyInstance) {
     const uc = container.resolve<RegenerateContentUseCase>(UC_TOKENS.RegenerateContent);
     const { productId } = request.params as { productId: string };
     const body = request.body as { target: string };
-    const adminId = (request as unknown as Record<string, string>).adminUserId ?? 'unknown';
+    const adminId = getAuthenticatedUserId(request);
     const result = await uc.execute({
       product_id: productId,
       target: body.target as 'description' | 'translations' | 'platform_content' | 'media' | 'all',

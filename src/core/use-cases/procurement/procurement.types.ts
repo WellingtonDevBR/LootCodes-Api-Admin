@@ -16,8 +16,40 @@ export interface IngestProviderCatalogStatusResult { job_id: string; status: str
 export interface RefreshProviderPricesDto { provider_code?: string; admin_id: string }
 export interface RefreshProviderPricesResult { success: boolean; prices_updated: number }
 
-export interface ManualProviderPurchaseDto { variant_id: string; provider_code: string; quantity: number; admin_id: string }
-export interface ManualProviderPurchaseResult { success: boolean; purchase_id?: string }
+export interface ManualProviderPurchaseDto {
+  variant_id: string;
+  provider_code: string;
+  /** Provider-native offer / product id (e.g. Bamboo ProductId), not `provider_variant_offers.id`. */
+  offer_id: string;
+  quantity: number;
+  admin_id: string;
+  /**
+   * Bamboo: wallet currency to debit (GET accounts + catalog TargetCurrency). ISO 4217, e.g. USD, EUR.
+   * Defaults to `api_profile.checkout_wallet_currency` or USD.
+   */
+  wallet_currency?: string;
+}
+
+/** Returned when key ingestion fails after a successful provider charge (admin-only surface). */
+export interface ManualPurchaseFailedIngestion {
+  readonly index: number;
+  readonly stage: string;
+  readonly error: string;
+  readonly plaintext_key: string;
+}
+
+export interface ManualProviderPurchaseResult {
+  success: boolean;
+  purchase_id?: string;
+  error?: string;
+  provider_order_ref?: string;
+  recoverable?: boolean;
+  key_ids?: readonly string[];
+  partial_failure?: boolean;
+  keys_received?: number;
+  keys_ingested?: number;
+  failed_ingestions?: readonly ManualPurchaseFailedIngestion[];
+}
 
 export interface RecoverProviderOrderDto { purchase_id: string; admin_id: string }
 export interface RecoverProviderOrderResult { success: boolean; new_status: string }

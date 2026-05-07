@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { container } from '../../di/container.js';
-import { UC_TOKENS } from '../../di/tokens.js';
-import { adminGuard, employeeGuard } from '../middleware/auth.guard.js';
+import { TOKENS, UC_TOKENS } from '../../di/tokens.js';
+import { adminGuard, employeeGuard, getAuthenticatedUserId } from '../middleware/auth.guard.js';
 import type { TestProviderQuoteUseCase } from '../../core/use-cases/procurement/test-provider-quote.use-case.js';
 import type { SearchProvidersUseCase } from '../../core/use-cases/procurement/search-providers.use-case.js';
 import type { ManageProviderOfferUseCase } from '../../core/use-cases/procurement/manage-provider-offer.use-case.js';
@@ -9,6 +9,7 @@ import type { IngestProviderCatalogUseCase } from '../../core/use-cases/procurem
 import type { IngestProviderCatalogStatusUseCase } from '../../core/use-cases/procurement/ingest-provider-catalog-status.use-case.js';
 import type { RefreshProviderPricesUseCase } from '../../core/use-cases/procurement/refresh-provider-prices.use-case.js';
 import type { ManualProviderPurchaseUseCase } from '../../core/use-cases/procurement/manual-provider-purchase.use-case.js';
+import type { BuyerManualPurchaseService } from '../../infra/procurement/buyer-manual-purchase.service.js';
 import type { RecoverProviderOrderUseCase } from '../../core/use-cases/procurement/recover-provider-order.use-case.js';
 import type { SearchCatalogUseCase } from '../../core/use-cases/procurement/search-catalog.use-case.js';
 import type { LinkCatalogProductUseCase } from '../../core/use-cases/procurement/link-catalog-product.use-case.js';
@@ -23,7 +24,7 @@ export async function adminProcurementRoutes(app: FastifyInstance) {
   app.post('/quote', { preHandler: [adminGuard] }, async (request, reply) => {
     const uc = container.resolve<TestProviderQuoteUseCase>(UC_TOKENS.TestProviderQuote);
     const body = request.body as Record<string, unknown>;
-    const adminId = (request as unknown as Record<string, string>).adminUserId ?? 'unknown';
+    const adminId = getAuthenticatedUserId(request);
     const result = await uc.execute({
       variant_id: body.variant_id as string,
       provider_code: body.provider_code as string | undefined,
@@ -35,7 +36,7 @@ export async function adminProcurementRoutes(app: FastifyInstance) {
   app.post('/offer', { preHandler: [adminGuard] }, async (request, reply) => {
     const uc = container.resolve<ManageProviderOfferUseCase>(UC_TOKENS.ManageProviderOffer);
     const body = request.body as Record<string, unknown>;
-    const adminId = (request as unknown as Record<string, string>).adminUserId ?? 'unknown';
+    const adminId = getAuthenticatedUserId(request);
     const result = await uc.execute({
       variant_id: body.variant_id as string,
       provider_code: body.provider_code as string,
@@ -49,7 +50,7 @@ export async function adminProcurementRoutes(app: FastifyInstance) {
   app.post('/catalog/ingest', { preHandler: [adminGuard] }, async (request, reply) => {
     const uc = container.resolve<IngestProviderCatalogUseCase>(UC_TOKENS.IngestProviderCatalog);
     const body = request.body as Record<string, unknown>;
-    const adminId = (request as unknown as Record<string, string>).adminUserId ?? 'unknown';
+    const adminId = getAuthenticatedUserId(request);
     const result = await uc.execute({
       provider_code: body.provider_code as string,
       admin_id: adminId,
@@ -67,7 +68,7 @@ export async function adminProcurementRoutes(app: FastifyInstance) {
   app.post('/prices/refresh', { preHandler: [adminGuard] }, async (request, reply) => {
     const uc = container.resolve<RefreshProviderPricesUseCase>(UC_TOKENS.RefreshProviderPrices);
     const body = request.body as Record<string, unknown>;
-    const adminId = (request as unknown as Record<string, string>).adminUserId ?? 'unknown';
+    const adminId = getAuthenticatedUserId(request);
     const result = await uc.execute({
       provider_code: body.provider_code as string | undefined,
       admin_id: adminId,
@@ -78,20 +79,30 @@ export async function adminProcurementRoutes(app: FastifyInstance) {
   app.post('/purchase', { preHandler: [adminGuard] }, async (request, reply) => {
     const uc = container.resolve<ManualProviderPurchaseUseCase>(UC_TOKENS.ManualProviderPurchase);
     const body = request.body as Record<string, unknown>;
-    const adminId = (request as unknown as Record<string, string>).adminUserId ?? 'unknown';
+    const adminId = getAuthenticatedUserId(request);
     const result = await uc.execute({
       variant_id: body.variant_id as string,
       provider_code: body.provider_code as string,
+      offer_id: body.offer_id as string,
       quantity: body.quantity as number,
       admin_id: adminId,
+      ...(typeof body.wallet_currency === 'string' && body.wallet_currency.trim()
+        ? { wallet_currency: body.wallet_currency.trim() }
+        : {}),
     });
+    return reply.send(result);
+  });
+
+  app.get('/bamboo/live-wallets', { preHandler: [employeeGuard] }, async (_request, reply) => {
+    const svc = container.resolve<BuyerManualPurchaseService>(TOKENS.BuyerManualPurchaseService);
+    const result = await svc.listBambooLiveWallets();
     return reply.send(result);
   });
 
   app.post('/recover', { preHandler: [adminGuard] }, async (request, reply) => {
     const uc = container.resolve<RecoverProviderOrderUseCase>(UC_TOKENS.RecoverProviderOrder);
     const body = request.body as Record<string, unknown>;
-    const adminId = (request as unknown as Record<string, string>).adminUserId ?? 'unknown';
+    const adminId = getAuthenticatedUserId(request);
     const result = await uc.execute({
       purchase_id: body.purchase_id as string,
       admin_id: adminId,
@@ -124,7 +135,7 @@ export async function adminProcurementRoutes(app: FastifyInstance) {
   app.post('/catalog/link', { preHandler: [adminGuard] }, async (request, reply) => {
     const uc = container.resolve<LinkCatalogProductUseCase>(UC_TOKENS.LinkCatalogProduct);
     const body = request.body as Record<string, unknown>;
-    const adminId = (request as unknown as Record<string, string>).adminUserId ?? 'unknown';
+    const adminId = getAuthenticatedUserId(request);
     const result = await uc.execute({
       variant_id: body.variant_id as string,
       provider_code: body.provider_code as string,
@@ -160,7 +171,7 @@ export async function adminProcurementRoutes(app: FastifyInstance) {
   app.put('/config', { preHandler: [adminGuard] }, async (request, reply) => {
     const uc = container.resolve<UpdateProcurementConfigUseCase>(UC_TOKENS.UpdateProcurementConfig);
     const body = request.body as Record<string, unknown>;
-    const adminId = (request as unknown as Record<string, string>).adminUserId ?? 'unknown';
+    const adminId = getAuthenticatedUserId(request);
     const result = await uc.execute({
       auto_buy_enabled: typeof body.auto_buy_enabled === 'boolean' ? body.auto_buy_enabled : undefined,
       daily_spend_limit_cents: body.daily_spend_limit_cents !== undefined
@@ -190,7 +201,7 @@ export async function adminProcurementRoutes(app: FastifyInstance) {
   app.post('/queue/:id/cancel', { preHandler: [adminGuard] }, async (request, reply) => {
     const uc = container.resolve<CancelQueueItemUseCase>(UC_TOKENS.CancelQueueItem);
     const params = request.params as Record<string, string>;
-    const adminId = (request as unknown as Record<string, string>).adminUserId ?? 'unknown';
+    const adminId = getAuthenticatedUserId(request);
     const result = await uc.execute({
       queue_id: params.id,
       admin_id: adminId,
