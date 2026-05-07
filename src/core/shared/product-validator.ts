@@ -4,6 +4,9 @@ const VALID_CATEGORIES = ['games', 'software', 'gift_cards', 'subscriptions', 'd
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_PRICE_CENTS = 99999999;
 
+/** Next.js RSC / Flight may serialize missing fields as this literal string. */
+const SENTINEL_UNDEFINED = '$undefined';
+
 export type ProductType = typeof VALID_PRODUCT_TYPES[number];
 export type DeliveryType = typeof VALID_DELIVERY_TYPES[number];
 export type ProductCategory = typeof VALID_CATEGORIES[number];
@@ -24,6 +27,32 @@ export function isValidUuid(value: string): boolean {
   return UUID_REGEX.test(value);
 }
 
+/**
+ * Parse optional UUID from JSON/admin proxy bodies. Treats absent values,
+ * empty strings, and the Flight/RSC `"$undefined"` sentinel as missing.
+ */
+export function parseOptionalUuid(value: unknown): string | undefined {
+  if (value === null || value === undefined) return undefined;
+  if (typeof value !== 'string') return undefined;
+  const t = value.trim();
+  if (t === '' || t === SENTINEL_UNDEFINED) return undefined;
+  if (!isValidUuid(t)) return undefined;
+  return t;
+}
+
+export function parseOptionalRetailPriceUsd(value: unknown): number | undefined {
+  if (value === null || value === undefined) return undefined;
+  if (typeof value === 'number' && Number.isFinite(value) && value >= 0) return value;
+  if (typeof value === 'string') {
+    const t = value.trim();
+    if (t === '' || t === SENTINEL_UNDEFINED) return undefined;
+    const n = Number(t);
+    if (!Number.isFinite(n) || n < 0) return undefined;
+    return n;
+  }
+  return undefined;
+}
+
 export function isValidPriceCents(value: number): boolean {
   return Number.isFinite(value) && value >= 0 && value <= MAX_PRICE_CENTS;
 }
@@ -41,15 +70,16 @@ export interface VariantValidationError {
   error: string;
 }
 
-export function validateVariantInputs(variants: Array<{ platform_ids: string[]; region_id?: string; price_usd: number }>): VariantValidationError[] {
+export function validateVariantInputs(variants: Array<{ platform_ids: string[]; region_id?: unknown; price_usd: number }>): VariantValidationError[] {
   const errors: VariantValidationError[] = [];
   for (let i = 0; i < variants.length; i++) {
     const v = variants[i];
     if (!v.platform_ids?.length || v.platform_ids.some(pid => !isValidUuid(pid))) {
       errors.push({ index: i + 1, error: 'at least one valid platform UUID is required' });
     }
-    if (v.region_id && !isValidUuid(v.region_id)) {
-      errors.push({ index: i + 1, error: 'region_id must be a valid UUID' });
+    const regionId = parseOptionalUuid(v.region_id);
+    if (!regionId) {
+      errors.push({ index: i + 1, error: 'region_id is required and must be a valid UUID' });
     }
     if (!isValidPriceCents(v.price_usd)) {
       errors.push({ index: i + 1, error: `price_usd must be 0-${MAX_PRICE_CENTS} (cents)` });

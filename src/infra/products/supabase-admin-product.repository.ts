@@ -1,5 +1,7 @@
+import { randomUUID } from 'node:crypto';
 import { injectable, inject } from 'tsyringe';
 import { TOKENS } from '../../di/tokens.js';
+import { InternalError } from '../../core/errors/domain-errors.js';
 import type { IDatabase, QueryOptions } from '../../core/ports/database.port.js';
 import type { IAdminProductRepository } from '../../core/ports/admin-product-repository.port.js';
 import type {
@@ -26,6 +28,59 @@ export class SupabaseAdminProductRepository implements IAdminProductRepository {
   constructor(
     @inject(TOKENS.Database) private db: IDatabase,
   ) {}
+
+  /**
+   * Inserts a variant with a placeholder SKU (NOT NULL), links platforms, then replaces SKU via
+   * `generate_variant_sku` (RPC reads variant_platforms — cannot run before platform rows exist).
+   */
+  private async insertVariantWithPlatformsAndSku(params: {
+    readonly product_id: string;
+    readonly region_id: string;
+    readonly platform_ids: readonly string[];
+    readonly price_usd: number;
+    readonly retail_price_usd?: number | null;
+    readonly face_value?: string | null;
+    readonly release_date?: string | null;
+    readonly nowIso: string;
+  }): Promise<{ variant_id: string; sku: string }> {
+    const placeholderSku = `SKU-TEMP-${randomUUID().replace(/-/g, '')}`;
+    const variant = await this.db.insert<Record<string, unknown>>('product_variants', {
+      product_id: params.product_id,
+      region_id: params.region_id,
+      price_usd: params.price_usd,
+      retail_price_usd: params.retail_price_usd ?? null,
+      face_value: params.face_value ?? null,
+      release_date: params.release_date ?? null,
+      is_active: true,
+      sku: placeholderSku,
+      created_at: params.nowIso,
+      updated_at: params.nowIso,
+    });
+
+    const variantId = variant.id as string;
+
+    for (const platformId of params.platform_ids) {
+      await this.db.insert('variant_platforms', {
+        variant_id: variantId,
+        platform_id: platformId,
+      });
+    }
+
+    const generated = await this.db.rpc<string>('generate_variant_sku', {
+      p_variant_id: variantId,
+    });
+    const sku = typeof generated === 'string' ? generated.trim() : '';
+    if (!sku) {
+      throw new InternalError('generate_variant_sku returned an empty SKU');
+    }
+
+    await this.db.update('product_variants', { id: variantId }, {
+      sku,
+      updated_at: new Date().toISOString(),
+    });
+
+    return { variant_id: variantId, sku };
+  }
 
   private async batchedQuery<T>(
     table: string,
@@ -238,28 +293,19 @@ export class SupabaseAdminProductRepository implements IAdminProductRepository {
 
     if (dto.variants?.length) {
       for (const v of dto.variants) {
-        const variant = await this.db.insert<Record<string, unknown>>('product_variants', {
+        if (!v.region_id) {
+          throw new InternalError('Each variant requires region_id when creating a product with variants');
+        }
+        await this.insertVariantWithPlatformsAndSku({
           product_id: productId,
-          region_id: v.region_id ?? null,
+          region_id: v.region_id,
+          platform_ids: v.platform_ids,
           price_usd: v.price_usd,
           retail_price_usd: v.retail_price_usd ?? null,
           face_value: v.face_value ?? null,
           release_date: v.release_date ?? null,
-          is_active: true,
-          created_at: now,
-          updated_at: now,
+          nowIso: now,
         });
-
-        const variantId = variant.id as string;
-
-        for (const platformId of v.platform_ids) {
-          await this.db.insert('variant_platforms', {
-            variant_id: variantId,
-            platform_id: platformId,
-          });
-        }
-
-        await this.db.rpc('generate_variant_sku', { p_variant_id: variantId });
       }
     }
 
@@ -349,34 +395,22 @@ export class SupabaseAdminProductRepository implements IAdminProductRepository {
   async createVariant(dto: CreateVariantDto): Promise<CreateVariantResult> {
     const now = new Date().toISOString();
 
-    const variant = await this.db.insert<Record<string, unknown>>('product_variants', {
+    if (!dto.region_id) {
+      throw new InternalError('region_id is required to create a variant');
+    }
+
+    const { variant_id, sku } = await this.insertVariantWithPlatformsAndSku({
       product_id: dto.product_id,
-      region_id: dto.region_id ?? null,
+      region_id: dto.region_id,
+      platform_ids: dto.platform_ids,
       price_usd: dto.price_usd,
       retail_price_usd: dto.retail_price_usd ?? null,
       face_value: dto.face_value ?? null,
       release_date: dto.release_date ?? null,
-      is_active: true,
-      created_at: now,
-      updated_at: now,
+      nowIso: now,
     });
 
-    const variantId = variant.id as string;
-
-    for (const platformId of dto.platform_ids) {
-      await this.db.insert('variant_platforms', {
-        variant_id: variantId,
-        platform_id: platformId,
-      });
-    }
-
-    const skuResult = await this.db.rpc<Record<string, unknown>>('generate_variant_sku', {
-      p_variant_id: variantId,
-    });
-
-    const sku = typeof skuResult === 'string' ? skuResult : (skuResult?.sku as string) ?? '';
-
-    return { success: true, variant_id: variantId, sku };
+    return { success: true, variant_id, sku };
   }
 
   async updateVariant(dto: UpdateVariantDto): Promise<UpdateVariantResult> {
