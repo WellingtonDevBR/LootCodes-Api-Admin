@@ -226,4 +226,81 @@ describe('BuyerManualPurchaseService', () => {
     expect(result.error).toMatch(/Auto-buy is disabled/i);
     expect(mockedCreateBuyer).not.toHaveBeenCalled();
   });
+
+  it('JIT purchase allows omitted admin_user_id (null attempt + keys), tags response_snapshot', async () => {
+    const queryOne = vi.fn().mockImplementation(async (table: string) => {
+      if (table === 'product_variants') {
+        return { sales_blocked_at: null, sales_blocked_reason: null };
+      }
+      if (table === 'provider_accounts') {
+        return {
+          api_profile: {
+            base_url: 'https://api.bamboocardportal.com/api/integration/v1.0',
+            base_url_v2: 'https://api.bamboocardportal.com/api/integration/v2.0',
+            account_id: 1,
+          },
+          provider_code: 'bamboo',
+          is_enabled: true,
+        };
+      }
+      return null;
+    });
+    const query = vi.fn().mockImplementation(async (table: string) => {
+      if (table === 'platform_settings') {
+        return [{ value: { auto_buy_enabled: true, daily_spend_limit_cents: null } }];
+      }
+      if (table === 'transactions') return [];
+      return [];
+    });
+    const insert = vi.fn().mockResolvedValue({ id: 'attempt-row-id' });
+    const update = vi.fn().mockResolvedValue([]);
+    const db = { queryOne, query, insert, update } as unknown as IDatabase;
+
+    const buyer = {
+      quote: vi.fn().mockResolvedValue({
+        price_cents: 500,
+        currency: 'USD',
+        available_quantity: 99,
+        provider_metadata: { min_face_value: 25 },
+      }),
+      purchase: vi.fn().mockResolvedValue({
+        success: true,
+        keys: ['CODE-JIT'],
+        provider_order_ref: 'bamboo-jit-ref',
+        cost_cents: 500,
+        currency: 'USD',
+      }),
+    };
+    mockedCreateBuyer.mockReturnValue(buyer as never);
+
+    const svc = new BuyerManualPurchaseService(db);
+    const result = await svc.executeJitBambooPurchase({
+      variant_id: VARIANT_ID,
+      provider_account_id: ACCOUNT_ID,
+      offer_id: '50',
+      quantity: 1,
+      idempotency_key: 'jit-test-idem-key',
+    });
+
+    expect(result.success).toBe(true);
+    expect(db.insert).toHaveBeenCalledWith(
+      'provider_purchase_attempts',
+      expect.objectContaining({
+        manual_admin_user_id: null,
+        provider_request_id: 'jit-test-idem-key',
+      }),
+    );
+    const ingestPayload = mockedIngest.mock.calls[0]![1] as Record<string, unknown>;
+    expect(ingestPayload.created_by).toBeUndefined();
+    expect(db.update).toHaveBeenCalledWith(
+      'provider_purchase_attempts',
+      { id: 'attempt-row-id' },
+      expect.objectContaining({
+        status: 'success',
+        response_snapshot: expect.objectContaining({
+          procurement_trigger: 'seller_reserve_jit',
+        }),
+      }),
+    );
+  });
 });

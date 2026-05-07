@@ -41,6 +41,15 @@ const envSchema = z.object({
     (val) => (val === '' || val === undefined ? undefined : val),
     z.string().url().optional(),
   ),
+
+/**
+   * Optional: if set, `provider_purchase_attempts.manual_admin_user_id` and ingested keys’ `created_by`
+   * are attributed to this auth user. If unset, JIT uses `null` (API/automation — not tied to a person).
+   */
+  JIT_PROCUREMENT_ACTOR_USER_ID: z.preprocess(
+    (val) => (val === '' || val === undefined ? undefined : val),
+    z.string().uuid().optional(),
+  ),
 });
 
 export type Env = z.infer<typeof envSchema>;

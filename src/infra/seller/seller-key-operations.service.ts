@@ -2,7 +2,7 @@
  * Seller key operations service — atomic key claim, decrypt, provision, release.
  *
  * Implements ISellerKeyOperationsPort.
- * Mirrors `provider-procurement/services/seller-key-operations.service.ts`.
+ * Uses native JIT procurement (`SellerJitProcurementService`) + in-process Bamboo buying when stock is insufficient.
  *
  * Key decryption delegates to IKeyDecryptionPort (Node.js in-process crypto).
  */
@@ -21,6 +21,7 @@ import type {
 } from '../../core/ports/seller-key-operations.port.js';
 import type { ISellerDomainEventPort } from '../../core/ports/seller-domain-event.port.js';
 import type { IKeyDecryptionPort } from '../../core/ports/key-decryption.port.js';
+import { SellerJitProcurementService } from './seller-jit-procurement.service.js';
 import { createLogger } from '../../shared/logger.js';
 
 const logger = createLogger('seller-key-operations');
@@ -31,6 +32,7 @@ export class SellerKeyOperationsService implements ISellerKeyOperationsPort {
     @inject(TOKENS.Database) private readonly db: IDatabase,
     @inject(TOKENS.SellerDomainEvents) private readonly events: ISellerDomainEventPort,
     @inject(TOKENS.KeyDecryption) private readonly keyDecryption: IKeyDecryptionPort,
+    @inject(TOKENS.SellerJitProcurementService) private readonly jitProcurement: SellerJitProcurementService,
   ) {}
 
   async claimKeysForReservation(params: ClaimKeysParams): Promise<ClaimKeysResult> {
@@ -370,14 +372,10 @@ export class SellerKeyOperationsService implements ISellerKeyOperationsPort {
         quantity: params.quantity,
       });
 
-      await this.db.invokeInternalFunction('provider-procurement', {
-        action: 'jit-purchase',
-        variant_id: params.variantId,
-        quantity: params.quantity,
-        sale_price_cents: params.salePriceCents,
-        fee_cents: params.feesCents,
-        min_margin_cents: params.minMarginCents,
-      });
+      const purchased = await this.jitProcurement.tryJitPurchaseForReservation(params);
+      if (!purchased) {
+        return null;
+      }
 
       const retryResult = await this.db.rpc<{
         reservation_id: string;

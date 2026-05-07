@@ -78,7 +78,7 @@ export interface DecryptPendingResult {
 
 export interface ISellerKeyOperationsPort {
   /**
-   * Atomically claim keys for a seller reservation with JIT fallback.
+   * Atomically claim keys for a seller reservation with native JIT fallback (linked Bamboo offers).
    * Uses `claim_and_reserve_atomic` RPC internally.
    */
   claimKeysForReservation(params: ClaimKeysParams): Promise<ClaimKeysResult>;

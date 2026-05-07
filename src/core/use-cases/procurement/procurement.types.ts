@@ -40,6 +40,24 @@ export interface ManualProviderPurchaseDto {
   wallet_currency?: string;
 }
 
+/** Native in-process JIT purchase (marketplace reserve) — Bamboo only; uses linked `provider_variant_offers` row. */
+export interface JitBambooPurchaseDto {
+  variant_id: string;
+  /** Must match the linked offer row (`provider_variant_offers.provider_account_id`). */
+  provider_account_id: string;
+  /** Bamboo catalog product id (`provider_variant_offers.external_offer_id`). */
+  offer_id: string;
+  quantity: number;
+  /**
+   * When set, attributes the attempt to this user. When omitted, `manual_admin_user_id` / key `created_by`
+   * stay null — marketplace JIT is recorded as API automation (`response_snapshot.procurement_trigger`).
+   */
+  admin_user_id?: string;
+  /** Stable per-attempt idempotency key (e.g. `jit-{variant}-{reservation}-{random}`). */
+  idempotency_key: string;
+  wallet_currency?: string;
+}
+
 /** Returned when key ingestion fails after a successful provider charge (admin-only surface). */
 export interface ManualPurchaseFailedIngestion {
   readonly index: number;

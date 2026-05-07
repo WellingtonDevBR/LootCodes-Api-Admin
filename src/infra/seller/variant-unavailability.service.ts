@@ -5,11 +5,12 @@
  * pushes zero declared stock to every active auto-sync listing so marketplaces
  * stop accepting orders for that product.
  *
- * Simplified port of the Edge Function `unavailability-propagator.service.ts`.
+ * Uses in-process marketplace adapters (no Edge invoke).
  */
 import { injectable, inject } from 'tsyringe';
 import { TOKENS } from '../../di/tokens.js';
 import type { IDatabase } from '../../core/ports/database.port.js';
+import type { IMarketplaceAdapterRegistry } from '../../core/ports/marketplace-adapter.port.js';
 import type { ISellerDomainEventPort } from '../../core/ports/seller-domain-event.port.js';
 import type {
   IVariantUnavailabilityPort,
@@ -24,7 +25,7 @@ const CONCURRENCY_CHUNK_SIZE = 5;
 
 interface ActiveListingRow {
   id: string;
-  external_listing_id: string;
+  external_listing_id: string | null;
   listing_type: string;
   provider_account_id: string;
 }
@@ -39,6 +40,7 @@ export class VariantUnavailabilityService implements IVariantUnavailabilityPort 
   constructor(
     @inject(TOKENS.Database) private readonly db: IDatabase,
     @inject(TOKENS.SellerDomainEvents) private readonly events: ISellerDomainEventPort,
+    @inject(TOKENS.MarketplaceAdapterRegistry) private readonly registry: IMarketplaceAdapterRegistry,
   ) {}
 
   async propagateVariantUnavailable(
@@ -114,7 +116,7 @@ export class VariantUnavailabilityService implements IVariantUnavailabilityPort 
   }
 
   /**
-   * Push zero stock to a single listing via the `provider-procurement` Edge Function.
+   * Push zero stock to a single listing via marketplace adapters (declared_stock or key_upload sync).
    * Returns true if successfully updated, false if skipped/no-op.
    */
   private async pushZeroStock(listing: ActiveListingRow, variantId: string): Promise<boolean> {
@@ -133,20 +135,59 @@ export class VariantUnavailabilityService implements IVariantUnavailabilityPort 
         return false;
       }
 
-      const subAction = listing.listing_type === 'declared_stock' ? 'declare-stock' : 'sync';
+      if (!listing.external_listing_id?.trim()) {
+        logger.warn('Listing has no external_listing_id — cannot push zero stock', {
+          listingId: listing.id,
+          variantId,
+        });
+        return false;
+      }
 
-      await this.db.invokeFunction('provider-procurement', {
-        action: 'seller-stock',
-        sub_action: subAction,
-        provider_account_id: provider.id,
-        provider_code: provider.provider_code,
-        variant_id: variantId,
-        listing_id: listing.id,
-        external_listing_id: listing.external_listing_id,
-        quantity: 0,
-        reason: 'variant_unavailable',
+      const extId = listing.external_listing_id.trim();
+      const providerCode = provider.provider_code.trim().toLowerCase();
+
+      if (listing.listing_type === 'declared_stock') {
+        const adapter = this.registry.getDeclaredStockAdapter(providerCode);
+        if (!adapter) {
+          logger.warn('No declared-stock adapter for provider — skip zero stock push', {
+            listingId: listing.id,
+            providerCode,
+          });
+          return false;
+        }
+        const declared = await adapter.declareStock(extId, 0);
+        if (!declared.success) {
+          throw new Error(declared.error ?? 'declare_stock_failed');
+        }
+        const appliedQty = typeof declared.declaredQuantity === 'number' && Number.isFinite(declared.declaredQuantity)
+          ? declared.declaredQuantity
+          : 0;
+        await this.db.update('seller_listings', { id: listing.id }, {
+          declared_stock: appliedQty,
+          last_synced_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          error_message: null,
+        });
+        return true;
+      }
+
+      const syncAdapter = this.registry.getStockSyncAdapter(providerCode);
+      if (!syncAdapter) {
+        logger.warn('No stock-sync adapter for provider — skip zero stock push', {
+          listingId: listing.id,
+          providerCode,
+        });
+        return false;
+      }
+      const synced = await syncAdapter.syncStockLevel(extId, 0);
+      if (!synced.success) {
+        throw new Error(synced.error ?? 'sync_stock_failed');
+      }
+      await this.db.update('seller_listings', { id: listing.id }, {
+        last_synced_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        error_message: null,
       });
-
       return true;
     } catch (err) {
       logger.error('Failed to push zero stock to listing', err as Error, {

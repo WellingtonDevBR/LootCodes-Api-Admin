@@ -7,6 +7,7 @@ import { injectable, inject } from 'tsyringe';
 import { TOKENS } from '../../di/tokens.js';
 import type { IDatabase } from '../../core/ports/database.port.js';
 import type {
+  JitBambooPurchaseDto,
   ManualProviderPurchaseDto,
   ManualProviderPurchaseResult,
   ManualPurchaseFailedIngestion,
@@ -45,12 +46,12 @@ function asApiProfile(raw: unknown): Record<string, unknown> {
 
 /** Bamboo manual checkout: catalog TargetCurrency + wallet selection (ISO 4217). */
 function resolveCheckoutWalletCurrency(
-  dto: ManualProviderPurchaseDto,
+  walletCurrencyHint: string | undefined,
   apiProfile: Record<string, unknown>,
 ): string | null {
   const rawDto =
-    typeof dto.wallet_currency === 'string' && dto.wallet_currency.trim().length > 0
-      ? dto.wallet_currency.trim()
+    typeof walletCurrencyHint === 'string' && walletCurrencyHint.trim().length > 0
+      ? walletCurrencyHint.trim()
       : '';
   const rawProfile =
     typeof apiProfile.checkout_wallet_currency === 'string' &&
@@ -118,7 +119,7 @@ export class BuyerManualPurchaseService {
       };
     }
 
-    const walletCurrency = resolveCheckoutWalletCurrency(dto, apiProfile);
+    const walletCurrency = resolveCheckoutWalletCurrency(dto.wallet_currency, apiProfile);
     if (!walletCurrency) {
       return {
         success: false,
@@ -128,6 +129,142 @@ export class BuyerManualPurchaseService {
     }
 
     const idempotencyKey = `manual-${variantId}-${requestId}`;
+
+    return this.runBambooPurchaseAfterSetup({
+      requestId,
+      variantId,
+      providerCode,
+      offerId,
+      quantity,
+      adminUserId,
+      idempotencyKey,
+      providerAccountId,
+      bambooBuyer,
+      walletCurrency,
+      attemptSource: 'manual',
+    });
+  }
+
+  /**
+   * JIT marketplace reserve: purchase from the Bamboo account attached to the linked offer row
+   * (not necessarily the first enabled Bamboo account).
+   */
+  async executeJitBambooPurchase(dto: JitBambooPurchaseDto): Promise<ManualProviderPurchaseResult> {
+    const requestId = randomUUID();
+
+    if (!dto.variant_id?.trim() || !dto.offer_id?.trim() || !dto.provider_account_id?.trim()) {
+      return { success: false, error: 'variant_id, offer_id, and provider_account_id are required' };
+    }
+
+    const quantity = Number(dto.quantity ?? 1);
+    if (!Number.isFinite(quantity) || quantity < 1 || quantity > MAX_QUANTITY) {
+      return { success: false, error: `quantity must be between 1 and ${MAX_QUANTITY}` };
+    }
+
+    const rawActor = dto.admin_user_id;
+    let adminUserId: string | null = null;
+    if (rawActor != null && String(rawActor).trim() !== '') {
+      const t = String(rawActor).trim();
+      if (!isUuid(t)) {
+        return {
+          success: false,
+          error: 'admin_user_id must be a valid UUID when provided (optional attribution for JIT).',
+        };
+      }
+      adminUserId = t;
+    }
+
+    if (!dto.idempotency_key?.trim()) {
+      return { success: false, error: 'idempotency_key is required for JIT purchases' };
+    }
+
+    const variantId = dto.variant_id.trim();
+    const providerAccountId = dto.provider_account_id.trim();
+    const offerId = dto.offer_id.trim();
+    const idempotencyKey = dto.idempotency_key.trim();
+
+    const guardrailBlock = await this.checkSpendGuardrails(requestId, variantId);
+    if (guardrailBlock) return guardrailBlock;
+
+    const accountRow = await this.db.queryOne<{
+      api_profile: unknown;
+      provider_code: string;
+      is_enabled: boolean;
+    }>('provider_accounts', {
+      select: 'api_profile, provider_code, is_enabled',
+      filter: { id: providerAccountId },
+    });
+
+    if (!accountRow?.is_enabled) {
+      return { success: false, error: 'Provider account is disabled or not found' };
+    }
+
+    const providerCode = accountRow.provider_code.trim().toLowerCase();
+    if (providerCode !== 'bamboo') {
+      return { success: false, error: 'JIT native purchase only supports bamboo for this provider account' };
+    }
+
+    const apiProfile = asApiProfile(accountRow.api_profile);
+
+    const secrets = await resolveProviderSecrets(this.db, providerAccountId);
+    const bambooBuyer = createBambooManualBuyer({ secrets, profile: apiProfile });
+    if (!bambooBuyer) {
+      return {
+        success: false,
+        error: 'Bamboo credentials or api_profile (account_id, base URLs) are not configured for this provider account',
+      };
+    }
+
+    const walletCurrency = resolveCheckoutWalletCurrency(dto.wallet_currency, apiProfile);
+    if (!walletCurrency) {
+      return {
+        success: false,
+        error:
+          'wallet_currency must be a 3-letter ISO code (e.g. USD, EUR), or set api_profile.checkout_wallet_currency',
+      };
+    }
+
+    return this.runBambooPurchaseAfterSetup({
+      requestId,
+      variantId,
+      providerCode,
+      offerId,
+      quantity,
+      adminUserId,
+      idempotencyKey,
+      providerAccountId,
+      bambooBuyer,
+      walletCurrency,
+      attemptSource: 'seller_jit',
+    });
+  }
+
+  private async runBambooPurchaseAfterSetup(params: {
+    requestId: string;
+    variantId: string;
+    providerCode: string;
+    offerId: string;
+    quantity: number;
+    adminUserId: string | null;
+    idempotencyKey: string;
+    providerAccountId: string;
+    bambooBuyer: BambooManualBuyer;
+    walletCurrency: string;
+    attemptSource: 'manual' | 'seller_jit';
+  }): Promise<ManualProviderPurchaseResult> {
+    const {
+      requestId,
+      variantId,
+      providerCode,
+      offerId,
+      quantity,
+      adminUserId,
+      idempotencyKey,
+      providerAccountId,
+      bambooBuyer,
+      walletCurrency,
+      attemptSource,
+    } = params;
 
     const preflight = await this.preflightQuote(
       bambooBuyer,
@@ -165,7 +302,7 @@ export class BuyerManualPurchaseService {
         return {
           success: false,
           error:
-            'Duplicate manual purchase idempotency key — wait for the in-flight attempt to finish or use a new session.',
+            'Duplicate purchase idempotency key — wait for the in-flight attempt to finish or generate a new key.',
         };
       }
       logger.error('Failed to insert pending provider_purchase_attempts row', err as Error, {
@@ -175,7 +312,7 @@ export class BuyerManualPurchaseService {
       return {
         success: false,
         error:
-          'Could not record purchase attempt (database error). Fix admin user id / constraints and retry.',
+          'Could not record purchase attempt (database error). Check provider_purchase_attempts constraints and retry.',
       };
     }
 
@@ -239,7 +376,7 @@ export class BuyerManualPurchaseService {
               purchase_cost_cents: result.cost_cents ?? null,
               purchase_currency: result.currency ?? 'EUR',
               supplier_reference: `${providerCode}:${providerRef}`,
-              created_by: adminUserId,
+              created_by: adminUserId ?? undefined,
             },
             requestId,
           );
@@ -265,12 +402,15 @@ export class BuyerManualPurchaseService {
           keys_ingested: ingestedKeyIds.length,
           cost_cents: result.cost_cents,
           currency: result.currency,
+          ...(attemptSource === 'seller_jit'
+            ? { procurement_trigger: 'seller_reserve_jit' as const }
+            : {}),
         },
       });
 
       const allFailed = ingestedKeyIds.length === 0 && failedIngestions.length > 0;
 
-      logger.info('Manual purchase completed', {
+      logger.info('Bamboo purchase completed', {
         requestId,
         variantId,
         providerCode,
@@ -312,7 +452,7 @@ export class BuyerManualPurchaseService {
         error_code: 'EXCEPTION',
         error_message: err instanceof Error ? err.message : String(err),
       });
-      logger.error('Manual purchase threw', err as Error, { requestId, providerCode });
+      logger.error('Bamboo purchase threw', err as Error, { requestId, providerCode });
       return {
         success: false,
         error: err instanceof Error ? err.message : 'Purchase request failed',

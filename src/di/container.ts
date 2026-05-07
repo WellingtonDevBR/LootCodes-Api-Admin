@@ -34,6 +34,7 @@ import { SupabaseAdminPricingRepository } from '../infra/pricing/supabase-admin-
 import { SupabaseAdminProductRepository } from '../infra/products/supabase-admin-product.repository.js';
 import { SupabaseAdminSellerRepository } from '../infra/seller/supabase-admin-seller.repository.js';
 import { SupabaseAdminSellerPricingRepository } from '../infra/seller/supabase-admin-seller-pricing.repository.js';
+import { SellerJitProcurementService } from '../infra/seller/seller-jit-procurement.service.js';
 import { SellerKeyOperationsService } from '../infra/seller/seller-key-operations.service.js';
 import { SellerDomainEventsService } from '../infra/seller/seller-domain-events.service.js';
 import { KeyDecryptionService } from '../infra/crypto/key-decryption.service.js';
@@ -369,6 +370,7 @@ container.register(TOKENS.AdminCurrencyRepository, { useClass: SupabaseAdminCurr
 container.register(TOKENS.AdminSupportRepository, { useClass: SupabaseAdminSupportRepository });
 container.register(TOKENS.AdminProcurementRepository, { useClass: SupabaseAdminProcurementRepository });
 container.register(TOKENS.BuyerManualPurchaseService, { useClass: BuyerManualPurchaseService });
+container.register(TOKENS.SellerJitProcurementService, { useClass: SellerJitProcurementService });
 container.register(TOKENS.AdminInventorySourceRepository, { useClass: SupabaseAdminInventorySourceRepository });
 container.register(TOKENS.AdminPriceMatchRepository, { useClass: SupabaseAdminPriceMatchRepository });
 container.register(TOKENS.AdminReferralRepository, { useClass: SupabaseAdminReferralRepository });

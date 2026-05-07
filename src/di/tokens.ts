@@ -19,6 +19,7 @@ export const TOKENS = {
   AdminCurrencyRepository: Symbol.for('IAdminCurrencyRepository'),
   AdminProcurementRepository: Symbol.for('IAdminProcurementRepository'),
   BuyerManualPurchaseService: Symbol.for('BuyerManualPurchaseService'),
+  SellerJitProcurementService: Symbol.for('SellerJitProcurementService'),
   AdminPriceMatchRepository: Symbol.for('IAdminPriceMatchRepository'),
   AdminReferralRepository: Symbol.for('IAdminReferralRepository'),
   AdminReviewRepository: Symbol.for('IAdminReviewRepository'),

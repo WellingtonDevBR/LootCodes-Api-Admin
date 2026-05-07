@@ -586,24 +586,28 @@ export class SupabaseAdminSellerRepository implements IAdminSellerRepository {
     const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
 
     if (dto.reset_metrics) {
-      updates.callback_fail_count = 0;
-      updates.callback_success_count = 0;
+      updates.reservation_consecutive_failures = 0;
+      updates.reservation_success_count = 0;
+      updates.reservation_failure_count = 0;
+      updates.provision_success_count = 0;
+      updates.provision_failure_count = 0;
     }
     if (dto.clear_pause_message) {
       updates.error_message = null;
     }
     if (dto.resume_active) {
       updates.status = 'active';
-      updates.health_status = 'healthy';
     }
 
     const rows = await this.db.update<Record<string, unknown>>('seller_listings', { id: dto.listing_id }, updates);
     if (rows.length === 0) throw new Error(`Seller listing ${dto.listing_id} not found`);
 
+    const status = rows[0].status as string;
+
     return {
       listing_id: dto.listing_id,
-      status: rows[0].status as string,
-      health_status: (rows[0].health_status as string) ?? 'healthy',
+      status,
+      health_status: status === 'active' ? 'healthy' : 'degraded',
     };
   }
 
