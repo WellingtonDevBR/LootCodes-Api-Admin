@@ -30,7 +30,8 @@ export async function internalCronRoutes(app: FastifyInstance): Promise<void> {
 
       const body = (request.body ?? {}) as Record<string, unknown>;
       const variant_ids = parseUuidList(body.variant_ids);
-      const dry_run = body.dry_run === true;
+      /** HTTP cron always applies: pushes declared qty to marketplaces (procurement only when local stock is zero; see computeDeclaredStockTarget). */
+      const dry_run = false;
       const batch_limit =
         typeof body.batch_limit === 'number' && Number.isFinite(body.batch_limit)
           ? Math.floor(body.batch_limit)

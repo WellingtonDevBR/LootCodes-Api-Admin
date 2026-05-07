@@ -21,6 +21,7 @@ import { BambooMarketplaceAdapter } from './bamboo/adapter.js';
 import { resolveProviderSecrets } from './resolve-provider-secrets.js';
 import { kinguinBuyerApiKeyFromSecrets } from './kinguin-buyer-api-key.js';
 import { createLogger } from '../../shared/logger.js';
+import { getEnv } from '../../config/env.js';
 
 const logger = createLogger('marketplace-bootstrap');
 
@@ -34,6 +35,9 @@ interface ProviderAccountRow {
 const ENEBA_BASE_URL = 'https://api.eneba.com';
 const ENEBA_TOKEN_URL_FALLBACK = 'https://user.eneba.com/oauth/token';
 
+/** Match typical EC2 reverse-proxy hostnames stored in `api_profile` (OAuth often fails with Invalid signature). */
+const ENEBA_RELAY_HOST = /^ec2-\d+-\d+-\d+-\d+\.compute-[a-z0-9-]+\.amazonaws\.com$/i;
+
 let initialized = false;
 
 function asProfile(raw: Record<string, unknown> | null | undefined): Record<string, unknown> {
@@ -46,6 +50,16 @@ function asProfile(raw: Record<string, unknown> | null | undefined): Record<stri
 function profileStr(profile: Record<string, unknown>, key: string): string | undefined {
   const v = profile[key];
   return typeof v === 'string' && v.length > 0 ? v : undefined;
+}
+
+function shouldReplaceEnebaProfileUrlWithPublic(url: string): boolean {
+  try {
+    const u = new URL(url.trim());
+    if (u.protocol === 'http:' && u.hostname.includes('amazonaws.com')) return true;
+    return ENEBA_RELAY_HOST.test(u.hostname);
+  } catch {
+    return false;
+  }
 }
 
 export async function bootstrapMarketplaceAdapters(
@@ -128,8 +142,45 @@ function buildEnebaAdapter(
   const authId = secrets['ENEBA_AUTH_ID'];
   const authSecret = secrets['ENEBA_AUTH_SECRET'];
   const clientId = profileStr(profile, 'client_id');
-  const baseUrl = profileStr(profile, 'base_url') ?? ENEBA_BASE_URL;
-  const tokenEndpoint = profileStr(profile, 'token_endpoint') ?? ENEBA_TOKEN_URL_FALLBACK;
+  let baseUrl = profileStr(profile, 'base_url') ?? ENEBA_BASE_URL;
+  let tokenEndpoint = profileStr(profile, 'token_endpoint') ?? ENEBA_TOKEN_URL_FALLBACK;
+
+  let baseFromEnv = false;
+  let tokenFromEnv = false;
+  try {
+    const env = getEnv();
+    const overrideBase = env.ENEBA_GRAPHQL_BASE_URL;
+    const overrideToken = env.ENEBA_OAUTH_TOKEN_URL;
+    if (overrideBase) {
+      baseUrl = overrideBase;
+      baseFromEnv = true;
+    }
+    if (overrideToken) {
+      tokenEndpoint = overrideToken;
+      tokenFromEnv = true;
+    }
+    if (overrideBase || overrideToken) {
+      logger.info('Eneba API URLs overridden from environment', {
+        baseFromEnv: !!overrideBase,
+        tokenFromEnv: !!overrideToken,
+      });
+    }
+  } catch {
+    // Should not happen after server startup (loadEnv before bootstrap).
+  }
+
+  if (!baseFromEnv && shouldReplaceEnebaProfileUrlWithPublic(baseUrl)) {
+    logger.warn('Eneba api_profile base_url looks like an HTTP/AWS relay; using official GraphQL host', {
+      previousBaseUrl: baseUrl,
+    });
+    baseUrl = ENEBA_BASE_URL;
+  }
+  if (!tokenFromEnv && shouldReplaceEnebaProfileUrlWithPublic(tokenEndpoint)) {
+    logger.warn('Eneba api_profile token_endpoint looks like an HTTP/AWS relay; using official OAuth URL', {
+      previousTokenUrl: tokenEndpoint,
+    });
+    tokenEndpoint = ENEBA_TOKEN_URL_FALLBACK;
+  }
 
   if (!authId || !authSecret || !clientId) {
     logger.warn('Eneba seller adapter skipped — need ENEBA_AUTH_ID, ENEBA_AUTH_SECRET, api_profile.client_id', {

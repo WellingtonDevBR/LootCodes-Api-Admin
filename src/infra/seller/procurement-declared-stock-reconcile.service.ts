@@ -44,7 +44,7 @@ export class ProcurementDeclaredStockReconcileService implements IProcurementDec
     const listings = await this.loadEligibleListings(dto.variant_ids, batchLimit);
     if (listings.length === 0) {
       logger.info('No eligible procurement-linked seller listings', { requestId });
-      return { scanned: 0, updated: 0, skipped: 0, failures: [] };
+      return { dry_run: dryRun, scanned: 0, updated: 0, skipped: 0, failures: [] };
     }
 
     const variantIds = [...new Set(listings.map((l) => l.variant_id))];
@@ -84,10 +84,9 @@ export class ProcurementDeclaredStockReconcileService implements IProcurementDec
         listingType: listing.listing_type,
       });
 
-      if (targetQty === listing.declared_stock) {
-        skipped++;
-        continue;
-      }
+      // Do not skip when target matches `seller_listings.declared_stock`. That column can match
+      // the computed target while Eneba is still wrong (never pushed, partial failure, or manual
+      // drift). This job must call declareStock to reconcile marketplace state.
 
       const adapter = this.registry.getDeclaredStockAdapter(providerCode);
       if (!adapter) {
@@ -104,6 +103,16 @@ export class ProcurementDeclaredStockReconcileService implements IProcurementDec
       }
 
       try {
+        logger.info('Procurement reconcile pushing declared stock', {
+          requestId,
+          listingId: listing.id,
+          providerCode,
+          auctionId: listing.external_listing_id,
+          targetQty,
+          internalQty,
+          procurementQty: procurementQty ?? null,
+          dbDeclaredStock: listing.declared_stock,
+        });
         const declareResult = await adapter.declareStock(listing.external_listing_id, targetQty);
         if (!declareResult.success) {
           failures.push({
@@ -117,8 +126,21 @@ export class ProcurementDeclaredStockReconcileService implements IProcurementDec
           continue;
         }
 
+        const appliedQty = typeof declareResult.declaredQuantity === 'number' && Number.isFinite(declareResult.declaredQuantity)
+          ? declareResult.declaredQuantity
+          : targetQty;
+        if (appliedQty !== targetQty) {
+          logger.warn('Marketplace applied declared qty differs from target (provider cap or API behavior)', {
+            requestId,
+            listingId: listing.id,
+            providerCode,
+            targetQty,
+            appliedQty,
+          });
+        }
+
         await this.db.update('seller_listings', { id: listing.id }, {
-          declared_stock: targetQty,
+          declared_stock: appliedQty,
           last_synced_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
           error_message: null,
@@ -152,7 +174,7 @@ export class ProcurementDeclaredStockReconcileService implements IProcurementDec
       failures: failures.length,
     });
 
-    return { scanned, updated, skipped, failures };
+    return { dry_run: dryRun, scanned, updated, skipped, failures };
   }
 
   private async loadEligibleListings(

@@ -171,9 +171,9 @@ export class SellerAutoPricingService implements ISellerAutoPricingService {
   constructor(
     @inject(TOKENS.Database) private db: IDatabase,
     @inject(TOKENS.MarketplaceAdapterRegistry) private registry: IMarketplaceAdapterRegistry,
-    private pricingService: SellerPricingService,
-    private intelligenceService: SellerPriceIntelligenceService,
-    private costBasisService: SellerCostBasisService,
+    @inject(TOKENS.SellerPricingService) private pricingService: SellerPricingService,
+    @inject(TOKENS.SellerPriceIntelligenceService) private intelligenceService: SellerPriceIntelligenceService,
+    @inject(TOKENS.SellerCostBasisService) private costBasisService: SellerCostBasisService,
   ) {}
 
   // ─── Cost-basis refresh (runs for ALL active listings) ────────────

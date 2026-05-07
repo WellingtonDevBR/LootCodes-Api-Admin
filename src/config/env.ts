@@ -30,6 +30,17 @@ const envSchema = z.object({
   SENTRY_DSN: z.string().url().optional().or(z.literal('')),
   SENTRY_ENVIRONMENT: z.string().optional(),
   SENTRY_RELEASE: z.string().optional(),
+
+  /** When set, overrides `provider_accounts.api_profile.base_url` for Eneba GraphQL (e.g. force https://api.eneba.com). */
+  ENEBA_GRAPHQL_BASE_URL: z.preprocess(
+    (val) => (val === '' || val === undefined ? undefined : val),
+    z.string().url().optional(),
+  ),
+  /** When set, overrides `provider_accounts.api_profile.token_endpoint` for Eneba OAuth (e.g. https://user.eneba.com/oauth/token). */
+  ENEBA_OAUTH_TOKEN_URL: z.preprocess(
+    (val) => (val === '' || val === undefined ? undefined : val),
+    z.string().url().optional(),
+  ),
 });
 
 export type Env = z.infer<typeof envSchema>;

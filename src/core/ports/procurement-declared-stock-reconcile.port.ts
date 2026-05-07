@@ -11,6 +11,8 @@ export interface ProcurementDeclaredStockReconcileFailure {
 }
 
 export interface ProcurementDeclaredStockReconcileResult {
+  /** When true, no marketplace APIs were called; `updated` is a simulation count only. */
+  readonly dry_run: boolean;
   readonly scanned: number;
   readonly updated: number;
   readonly skipped: number;
