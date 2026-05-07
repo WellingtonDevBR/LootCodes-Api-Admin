@@ -129,7 +129,7 @@ describe('PublishSellerListingToMarketplaceUseCase', () => {
         currency: 'EUR',
         status: 'draft',
       } satisfies SellerListingPublishContext),
-      countAvailableProductKeysForVariant: vi.fn(),
+      countAvailableProductKeysForVariant: vi.fn().mockResolvedValue(3),
       finalizeSellerListingMarketplacePublishSuccess: vi.fn(),
       markSellerListingPublishFailure: markFail,
     };
@@ -183,5 +183,50 @@ describe('PublishSellerListingToMarketplaceUseCase', () => {
       expect.stringContaining('Listing price must be greater than zero'),
     );
     expect(registry.getListingAdapter).not.toHaveBeenCalled();
+  });
+
+  it('records failure when declared_stock listing has no available keys', async () => {
+    const listingAdapter: Partial<ISellerListingAdapter> = {
+      createListing: vi.fn(),
+    };
+
+    const registry: IMarketplaceAdapterRegistry = {
+      getListingAdapter: vi.fn().mockReturnValue(listingAdapter),
+    } as unknown as IMarketplaceAdapterRegistry;
+
+    const markFail = vi.fn().mockResolvedValue(undefined);
+
+    const sellerRepo: Pick<
+      IAdminSellerRepository,
+      'getSellerListingPublishContext' | 'countAvailableProductKeysForVariant' | 'finalizeSellerListingMarketplacePublishSuccess' | 'markSellerListingPublishFailure'
+    > = {
+      getSellerListingPublishContext: vi.fn().mockResolvedValue({
+        listing_id: 'lst-n-keys',
+        variant_id: 'var-n-keys',
+        provider_account_id: 'pa-e',
+        provider_code: 'eneba',
+        external_product_id: 'prod-z',
+        external_listing_id: null,
+        listing_type: 'declared_stock',
+        price_cents: 999,
+        currency: 'EUR',
+        status: 'draft',
+      } satisfies SellerListingPublishContext),
+      countAvailableProductKeysForVariant: vi.fn().mockResolvedValue(0),
+      finalizeSellerListingMarketplacePublishSuccess: vi.fn(),
+      markSellerListingPublishFailure: markFail,
+    };
+
+    const uc = new PublishSellerListingToMarketplaceUseCase(registry, sellerRepo as IAdminSellerRepository);
+
+    await expect(uc.execute({ listing_id: 'lst-n-keys', admin_id: 'adm-1' })).rejects.toThrow(
+      /at least one available key/,
+    );
+    expect(markFail).toHaveBeenCalledWith(
+      'lst-n-keys',
+      expect.stringContaining('Declared-stock publish requires at least one available key'),
+    );
+    expect(registry.getListingAdapter).not.toHaveBeenCalled();
+    expect(listingAdapter.createListing).not.toHaveBeenCalled();
   });
 });

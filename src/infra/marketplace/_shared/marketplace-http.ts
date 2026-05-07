@@ -307,11 +307,13 @@ export class MarketplaceHttpClient {
 
       if (!response.ok) {
         const responseBody = await response.text().catch(() => '');
+        const trimmed = responseBody.slice(0, 2000).trim();
+        const detail = trimmed.length > 0 ? `: ${trimmed}` : '';
         throw new MarketplaceApiError(
-          `${this.providerCode} API error: ${response.status} ${response.statusText}`,
+          `${this.providerCode} API error: ${response.status} ${response.statusText}${detail}`,
           this.providerCode,
           response.status,
-          responseBody.slice(0, 2000),
+          trimmed.length > 0 ? trimmed : undefined,
         );
       }
 

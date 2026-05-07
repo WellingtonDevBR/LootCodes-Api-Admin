@@ -43,16 +43,24 @@ export class PublishSellerListingToMarketplaceUseCase {
       throw new Error(msg);
     }
 
+    let quantity: number | undefined;
+    if (ctx.listing_type === 'declared_stock') {
+      quantity = await this.sellerRepo.countAvailableProductKeysForVariant(ctx.variant_id);
+      const qty = quantity ?? 0;
+      if (qty <= 0) {
+        const msg =
+          'Declared-stock publish requires at least one available key for this variant ' +
+          '(Eneba S_createAuction rejects declaredStock ≤ 0)';
+        await this.sellerRepo.markSellerListingPublishFailure(dto.listing_id, msg);
+        throw new Error(msg);
+      }
+    }
+
     const adapter = this.registry.getListingAdapter(ctx.provider_code);
     if (!adapter) {
       const msg = `Provider "${ctx.provider_code}" does not support automated marketplace listing publish`;
       await this.sellerRepo.markSellerListingPublishFailure(dto.listing_id, msg);
       throw new Error(msg);
-    }
-
-    let quantity: number | undefined;
-    if (ctx.listing_type === 'declared_stock') {
-      quantity = await this.sellerRepo.countAvailableProductKeysForVariant(ctx.variant_id);
     }
 
     try {
@@ -61,10 +69,10 @@ export class PublishSellerListingToMarketplaceUseCase {
         priceCents: ctx.price_cents,
         currency: ctx.currency,
         listingType: ctx.listing_type,
-        ...(ctx.listing_type === 'declared_stock' ? { quantity: quantity ?? 0 } : {}),
+        ...(ctx.listing_type === 'declared_stock' ? { quantity: quantity as number } : {}),
       });
 
-      const declaredStock = ctx.listing_type === 'declared_stock' ? (quantity ?? 0) : 0;
+      const declaredStock = ctx.listing_type === 'declared_stock' ? (quantity as number) : 0;
 
       return await this.sellerRepo.finalizeSellerListingMarketplacePublishSuccess({
         listing_id: dto.listing_id,

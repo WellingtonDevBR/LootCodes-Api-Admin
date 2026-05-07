@@ -626,7 +626,7 @@ export class SupabaseAdminSellerRepository implements IAdminSellerRepository {
     const availableKeys = await this.db.query<Record<string, unknown>>('product_keys', {
       eq: [
         ['variant_id', listing.variant_id as string],
-        ['status', 'available'],
+        ['key_state', 'available'],
       ],
     });
 
@@ -663,7 +663,7 @@ export class SupabaseAdminSellerRepository implements IAdminSellerRepository {
     const availableKeys = await this.db.query<Record<string, unknown>>('product_keys', {
       eq: [
         ['variant_id', listing.variant_id as string],
-        ['status', 'available'],
+        ['key_state', 'available'],
       ],
     });
 
