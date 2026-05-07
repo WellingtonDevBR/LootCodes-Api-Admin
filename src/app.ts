@@ -39,6 +39,7 @@ import { adminSellerPricingRoutes } from './http/routes/seller-pricing.routes.js
 import { adminOpportunitiesRoutes } from './http/routes/opportunities.routes.js';
 import { adminAlertsRoutes } from './http/routes/alerts.routes.js';
 import { sellerWebhookRoutes } from './http/routes/seller-webhook.routes.js';
+import { internalCronRoutes } from './http/routes/internal-cron.routes.js';
 import { registerCronJobs } from './infra/scheduler/cron-registry.js';
 import { bootstrapMarketplaceAdapters } from './infra/marketplace/marketplace-adapter-bootstrap.js';
 
@@ -128,6 +129,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(adminOpportunitiesRoutes, { prefix: '/opportunities' });
   await app.register(adminAlertsRoutes, { prefix: '/alerts' });
   await app.register(sellerWebhookRoutes, { prefix: '/webhooks' });
+  await app.register(internalCronRoutes, { prefix: '/internal/cron' });
 
   Sentry.setupFastifyErrorHandler(app);
 

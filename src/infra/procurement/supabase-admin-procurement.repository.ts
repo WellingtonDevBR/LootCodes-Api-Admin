@@ -46,6 +46,7 @@ import {
   liveSearchOffersToCatalogUpsertRows,
   productSearchResultsToLiveSearchOffers,
 } from './live-search-mapping.js';
+import { refreshBambooOfferSnapshotsForVariant } from './bamboo-variant-offer-quote-refresh.js';
 
 const logger = createLogger('AdminProcurementRepository');
 
@@ -72,23 +73,31 @@ export class SupabaseAdminProcurementRepository implements IAdminProcurementRepo
   async testProviderQuote(dto: TestProviderQuoteDto): Promise<TestProviderQuoteResult> {
     logger.info('Testing provider quote', { variantId: dto.variant_id, provider: dto.provider_code });
 
-    const offers = await this.db.query<{
-      provider_account_id: string;
+    type OfferRow = {
+      readonly id: string;
+      readonly provider_account_id: string;
+      readonly external_offer_id: string | null;
+      currency: string | null;
       last_price_cents: number | null;
       available_quantity: number | null;
-    }>('provider_variant_offers', {
+    };
+
+    const rawOffers = await this.db.query<OfferRow>('provider_variant_offers', {
       filter: { variant_id: dto.variant_id },
     });
 
-    if (offers.length === 0) {
+    if (rawOffers.length === 0) {
       return { quotes: [] };
     }
+
+    const offers = rawOffers.map((o) => ({ ...o }));
 
     const accountIds = [...new Set(offers.map((o) => o.provider_account_id))];
     const accounts = await this.db.query<{
       id: string;
       provider_code: string | null;
       display_name: string | null;
+      api_profile: unknown;
     }>('provider_accounts', {
       in: [['id', accountIds]],
     });
@@ -106,13 +115,40 @@ export class SupabaseAdminProcurementRepository implements IAdminProcurementRepo
       accounts.map((a) => [a.id, procurementQuoteProviderLabel(a.provider_code, a.display_name)]),
     );
 
+    const accountsById = new Map(
+      accounts.map((a) => {
+        const raw = a.api_profile;
+        const api_profile =
+          raw != null && typeof raw === 'object' && !Array.isArray(raw)
+            ? (raw as Record<string, unknown>)
+            : null;
+        return [
+          a.id,
+          {
+            id: a.id,
+            provider_code: a.provider_code,
+            api_profile,
+          },
+        ] as const;
+      }),
+    );
+
+    await refreshBambooOfferSnapshotsForVariant(this.db, offers, accountsById, {
+      providerCodeFilter: filterCode.length > 0 ? filterCode : undefined,
+    });
+
     const quotes = offers
       .filter((o) => (allowedAccountIds === null ? true : allowedAccountIds.has(o.provider_account_id)))
-      .map((offer) => ({
-        provider: labelByAccountId.get(offer.provider_account_id) ?? 'unknown',
-        price_cents: offer.last_price_cents ?? 0,
-        available: (offer.available_quantity ?? 0) > 0,
-      }));
+      .map((offer) => {
+        const qty = offer.available_quantity;
+        const available = qty !== null && qty > 0;
+        return {
+          provider: labelByAccountId.get(offer.provider_account_id) ?? 'unknown',
+          price_cents: offer.last_price_cents ?? 0,
+          available,
+          available_quantity: qty,
+        };
+      });
 
     return { quotes };
   }

@@ -4,12 +4,18 @@
  * Queries all active listings with auto_sync_stock=true, computes
  * available key count per variant, and calls marketplace adapter
  * declareStock() or syncStockLevel().
+ *
+ * Listings with listing_type=declared_stock and auto_sync_stock_follows_provider=true
+ * use procurement `provider_variant_offers` supply when internal inventory is zero
+ * (capped at MAX_PROCUREMENT_DECLARED_STOCK).
  */
 import { injectable, inject } from 'tsyringe';
 import { TOKENS } from '../../../di/tokens.js';
 import type { IDatabase } from '../../../core/ports/database.port.js';
 import type { IMarketplaceAdapterRegistry } from '../../../core/ports/marketplace-adapter.port.js';
 import type { ISellerStockSyncService, RefreshStockResult } from '../../../core/ports/seller-pricing.port.js';
+import { computeDeclaredStockTarget } from '../../../core/shared/procurement-declared-stock.js';
+import { loadBestProcurementQtyByVariant } from '../load-procurement-offer-supply.js';
 import { createLogger } from '../../../shared/logger.js';
 
 const logger = createLogger('seller-stock-sync');
@@ -23,6 +29,7 @@ interface StockListingRow {
   status: string;
   declared_stock: number;
   provider_code: string;
+  follows_provider: boolean;
 }
 
 @injectable()
@@ -42,6 +49,15 @@ export class SellerStockSyncService implements ISellerStockSyncService {
     const variantIds = [...new Set(listings.map((l) => l.variant_id))];
     const stockMap = await this.computeAvailableStock(variantIds);
 
+    const variantIdsProcurement = [
+      ...new Set(
+        listings
+          .filter((l) => l.listing_type === 'declared_stock' && l.follows_provider)
+          .map((l) => l.variant_id),
+      ),
+    ];
+    const procurementMap = await loadBestProcurementQtyByVariant(this.db, variantIdsProcurement);
+
     const result: RefreshStockResult = { listingsProcessed: 0, stockUpdated: 0, errors: 0 };
 
     for (const listing of listings) {
@@ -49,17 +65,24 @@ export class SellerStockSyncService implements ISellerStockSyncService {
       if (!listing.external_listing_id) continue;
 
       try {
-        const availableQty = stockMap.get(listing.variant_id) ?? 0;
+        const internalQty = stockMap.get(listing.variant_id) ?? 0;
+        const procurementQty = procurementMap.get(listing.variant_id);
+        const targetQty = computeDeclaredStockTarget({
+          internalQty,
+          procurementQtyRaw: procurementQty,
+          followsProvider: listing.follows_provider,
+          listingType: listing.listing_type,
+        });
 
         if (listing.listing_type === 'declared_stock') {
           const adapter = this.registry.getDeclaredStockAdapter(listing.provider_code);
           if (!adapter) continue;
 
-          if (availableQty !== listing.declared_stock) {
-            const declareResult = await adapter.declareStock(listing.external_listing_id, availableQty);
+          if (targetQty !== listing.declared_stock) {
+            const declareResult = await adapter.declareStock(listing.external_listing_id, targetQty);
             if (declareResult.success) {
               await this.db.update('seller_listings', { id: listing.id }, {
-                declared_stock: availableQty,
+                declared_stock: targetQty,
                 last_synced_at: new Date().toISOString(),
                 error_message: null,
               });
@@ -70,10 +93,10 @@ export class SellerStockSyncService implements ISellerStockSyncService {
           const adapter = this.registry.getStockSyncAdapter(listing.provider_code);
           if (!adapter) continue;
 
-          const syncResult = await adapter.syncStockLevel(listing.external_listing_id, availableQty);
+          const syncResult = await adapter.syncStockLevel(listing.external_listing_id, internalQty);
           if (syncResult.success) {
             await this.db.update('seller_listings', { id: listing.id }, {
-              declared_stock: availableQty,
+              declared_stock: internalQty,
               last_synced_at: new Date().toISOString(),
               error_message: null,
             });
@@ -156,6 +179,7 @@ export class SellerStockSyncService implements ISellerStockSyncService {
         status: row.status as string,
         declared_stock: (row.declared_stock as number) ?? 0,
         provider_code: providerCode,
+        follows_provider: row.auto_sync_stock_follows_provider === true,
       });
     }
 

@@ -1,5 +1,15 @@
 export interface TestProviderQuoteDto { variant_id: string; provider_code?: string; admin_id: string }
-export interface TestProviderQuoteResult { quotes: Array<{ provider: string; price_cents: number; available: boolean }> }
+
+/** One row per linked `provider_variant_offers` snapshot returned by POST `/procurement/quote`. */
+export interface TestProviderQuoteQuoteRow {
+  readonly provider: string;
+  readonly price_cents: number;
+  /** True only when quantity is known and positive (never inferred from unknown stock). */
+  readonly available: boolean;
+  readonly available_quantity: number | null;
+}
+
+export interface TestProviderQuoteResult { quotes: TestProviderQuoteQuoteRow[] }
 
 export interface SearchProvidersDto { query: string; limit?: number }
 export interface SearchProvidersResult { providers: unknown[] }

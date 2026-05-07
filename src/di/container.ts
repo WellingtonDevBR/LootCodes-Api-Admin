@@ -45,6 +45,7 @@ import { SellerAutoPricingService } from '../infra/seller/pricing/seller-auto-pr
 import { SellerPriceIntelligenceService } from '../infra/seller/pricing/seller-price-intelligence.service.js';
 import { SellerCostBasisService } from '../infra/seller/pricing/seller-cost-basis.service.js';
 import { SellerStockSyncService } from '../infra/seller/pricing/seller-stock-sync.service.js';
+import { ProcurementDeclaredStockReconcileService } from '../infra/seller/procurement-declared-stock-reconcile.service.js';
 import { SupabaseAdminOpportunitiesRepository } from '../infra/opportunities/supabase-admin-opportunities.repository.js';
 import { SupabaseAdminAlertsRepository } from '../infra/alerts/supabase-admin-alerts.repository.js';
 
@@ -671,6 +672,9 @@ container.register(TOKENS.SellerPriceIntelligenceService, { useClass: SellerPric
 container.register(TOKENS.SellerPricingService, { useClass: SellerPricingService });
 container.register(TOKENS.SellerAutoPricingService, { useClass: SellerAutoPricingService });
 container.register(TOKENS.SellerStockSyncService, { useClass: SellerStockSyncService });
+container.register(TOKENS.ProcurementDeclaredStockReconcileService, {
+  useClass: ProcurementDeclaredStockReconcileService,
+});
 
 // Use cases — Seller Webhooks
 container.register(UC_TOKENS.HandleDeclaredStockReserve, { useClass: HandleDeclaredStockReserveUseCase });

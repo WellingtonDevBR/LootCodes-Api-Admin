@@ -57,6 +57,7 @@ export const TOKENS = {
   SellerPriceIntelligenceService: Symbol.for('SellerPriceIntelligenceService'),
   SellerCostBasisService: Symbol.for('SellerCostBasisService'),
   SellerStockSyncService: Symbol.for('ISellerStockSyncService'),
+  ProcurementDeclaredStockReconcileService: Symbol.for('IProcurementDeclaredStockReconcileService'),
 
   // Shared infra
   EventBus: Symbol.for('IEventBus'),
