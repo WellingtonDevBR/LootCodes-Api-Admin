@@ -130,14 +130,40 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
 
     const variantIds = [...new Set(keys.map(k => k.variant_id as string))];
     const variantProductMap = new Map<string, string>();
+    const variantMetaMap = new Map<string, { sku: string; face_value: string | null; region_id: string | null }>();
+    const regionNameMap = new Map<string, string>();
     const productMap = new Map<string, string>();
 
     if (variantIds.length > 0) {
-      const variants = await db.query<{ id: string; product_id: string }>('product_variants', {
-        select: 'id, product_id',
+      const variants = await db.query<{
+        id: string;
+        product_id: string;
+        sku: string;
+        face_value: string | null;
+        region_id: string | null;
+      }>('product_variants', {
+        select: 'id, product_id, sku, face_value, region_id',
         in: [['id', variantIds]],
       });
-      for (const v of variants) variantProductMap.set(v.id, v.product_id);
+      for (const v of variants) {
+        variantProductMap.set(v.id, v.product_id);
+        variantMetaMap.set(v.id, {
+          sku: v.sku,
+          face_value: v.face_value,
+          region_id: v.region_id,
+        });
+      }
+
+      const regionIds = [...new Set(
+        variants.map(v => v.region_id).filter((id): id is string => typeof id === 'string' && id.length > 0),
+      )];
+      if (regionIds.length > 0) {
+        const regions = await db.query<{ id: string; name: string }>('product_regions', {
+          select: 'id, name',
+          in: [['id', regionIds]],
+        });
+        for (const r of regions) regionNameMap.set(r.id, r.name);
+      }
 
       const productIds = [...new Set(variants.map(v => v.product_id))];
       if (productIds.length > 0) {
@@ -150,8 +176,11 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
     }
 
     const mapped = keys.map(k => {
-      const productId = variantProductMap.get(k.variant_id as string) ?? '';
+      const vid = k.variant_id as string;
+      const productId = variantProductMap.get(vid) ?? '';
       const productName = productMap.get(productId) ?? '';
+      const meta = variantMetaMap.get(vid);
+      const regionName = meta?.region_id ? regionNameMap.get(meta.region_id) ?? null : null;
       const order = k.orders as { order_number?: string; order_channel?: string; delivery_email?: string; guest_email?: string; contact_email?: string; customer_full_name?: string } | null;
 
       let soldTo: string | null = null;
@@ -167,7 +196,10 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
         id: k.id as string,
         productId,
         productName,
-        variantId: k.variant_id as string,
+        variantId: vid,
+        variantSku: meta?.sku ?? null,
+        variantFaceValue: meta?.face_value ?? null,
+        variantRegionName: regionName,
         key: '••••••••',
         status: mapKeyState(k.key_state as string | null, k.is_used as boolean),
         keyState: k.key_state as string,
