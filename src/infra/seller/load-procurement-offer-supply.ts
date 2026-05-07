@@ -1,6 +1,6 @@
 import type { IDatabase } from '../../core/ports/database.port.js';
 import {
-  compareProcurementOffers,
+  compareProcurementOffersForDeclaredStockReconcile,
   type ProcurementOfferSortRow,
 } from '../../core/shared/procurement-declared-stock.js';
 
@@ -9,6 +9,19 @@ interface OfferRow extends ProcurementOfferSortRow {
 }
 
 const BATCH = 500;
+
+/** Normalize DB/driver shapes (Postgres int/bigint may arrive as string). */
+export function coerceProcurementAvailableQuantity(raw: unknown): number | null {
+  if (raw == null) return null;
+  if (typeof raw === 'number' && Number.isFinite(raw)) return Math.trunc(raw);
+  if (typeof raw === 'string') {
+    const t = raw.trim();
+    if (t === '') return null;
+    const n = Number(t);
+    if (Number.isFinite(n)) return Math.trunc(n);
+  }
+  return null;
+}
 
 export async function loadBestProcurementQtyByVariant(
   db: IDatabase,
@@ -34,7 +47,7 @@ export async function loadBestProcurementQtyByVariant(
         variant_id: vid,
         prioritize_quote_sync: raw.prioritize_quote_sync === true,
         last_price_cents: typeof raw.last_price_cents === 'number' ? raw.last_price_cents : null,
-        available_quantity: typeof raw.available_quantity === 'number' ? raw.available_quantity : null,
+        available_quantity: coerceProcurementAvailableQuantity(raw.available_quantity),
       };
       const list = grouped.get(vid) ?? [];
       list.push(row);
@@ -44,7 +57,7 @@ export async function loadBestProcurementQtyByVariant(
 
   for (const [vid, offers] of grouped) {
     if (offers.length === 0) continue;
-    const sorted = [...offers].sort(compareProcurementOffers);
+    const sorted = [...offers].sort(compareProcurementOffersForDeclaredStockReconcile);
     const best = sorted[0];
     if (!best) continue;
     result.set(vid, best.available_quantity);

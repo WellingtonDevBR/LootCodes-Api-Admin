@@ -20,6 +20,31 @@ export function compareProcurementOffers(a: ProcurementOfferSortRow, b: Procurem
 }
 
 /**
+ * Supplier-reported quantity tiers for declared-stock reconciliation:
+ * prefer rows with known positive stock before cheapest/prioritized rows with unknown qty (null).
+ */
+function procurementQuantityConfidenceTier(row: ProcurementOfferSortRow): number {
+  const q = row.available_quantity;
+  if (typeof q !== 'number' || !Number.isFinite(q)) return 0;
+  if (q > 0) return 2;
+  return 1;
+}
+
+/**
+ * Pick procurement rows for mirroring onto marketplace declared stock: **known in-stock signal first**,
+ * then `prioritize_quote_sync`, then lowest `last_price_cents` (same as `compareProcurementOffers`).
+ */
+export function compareProcurementOffersForDeclaredStockReconcile(
+  a: ProcurementOfferSortRow,
+  b: ProcurementOfferSortRow,
+): number {
+  const ta = procurementQuantityConfidenceTier(a);
+  const tb = procurementQuantityConfidenceTier(b);
+  if (ta !== tb) return tb - ta;
+  return compareProcurementOffers(a, b);
+}
+
+/**
  * Target marketplace declared quantity for `declared_stock` listings.
  * When `followsProvider` is true and internal keys are zero, use capped procurement quantity (unknown qty → 0).
  */
