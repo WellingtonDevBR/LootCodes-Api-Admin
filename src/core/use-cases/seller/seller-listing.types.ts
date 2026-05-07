@@ -113,6 +113,24 @@ export interface DeactivateSellerListingResult {
   status: string;
 }
 
+// --- Unlink marketplace catalog binding (row retained) ---
+
+export interface UnlinkSellerListingMarketplaceProductDto {
+  listing_id: string;
+  admin_id: string;
+}
+
+export interface UnlinkSellerListingMarketplaceProductResult {
+  listing_id: string;
+  variant_id: string;
+  provider_account_id: string;
+  external_product_id: string | null;
+  external_listing_id: string | null;
+  status: string;
+  previous_external_product_id: string | null;
+  previous_external_listing_id: string | null;
+}
+
 // --- Delete ---
 
 export interface DeleteSellerListingDto {

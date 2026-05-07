@@ -18,6 +18,7 @@ import type { UpdateSellerListingMinPriceUseCase } from '../../core/use-cases/se
 import type { UpdateSellerListingOverridesUseCase } from '../../core/use-cases/seller/update-seller-listing-overrides.use-case.js';
 import type { SetSellerListingVisibilityUseCase } from '../../core/use-cases/seller/set-seller-listing-visibility.use-case.js';
 import type { DeactivateSellerListingUseCase } from '../../core/use-cases/seller/deactivate-seller-listing.use-case.js';
+import type { UnlinkSellerListingMarketplaceProductUseCase } from '../../core/use-cases/seller/unlink-seller-listing-marketplace-product.use-case.js';
 import type { DeleteSellerListingUseCase } from '../../core/use-cases/seller/delete-seller-listing.use-case.js';
 import type { RecoverSellerListingHealthUseCase } from '../../core/use-cases/seller/recover-seller-listing-health.use-case.js';
 import type { SyncSellerStockUseCase } from '../../core/use-cases/seller/sync-seller-stock.use-case.js';
@@ -285,6 +286,16 @@ export async function adminSellerRoutes(app: FastifyInstance) {
 
   app.post('/listings/:id/deactivate', { preHandler: [adminGuard] }, async (request, reply) => {
     const uc = container.resolve<DeactivateSellerListingUseCase>(UC_TOKENS.DeactivateSellerListing);
+    const { id } = request.params as { id: string };
+    const admin_id = (request as unknown as Record<string, unknown>).adminId as string;
+    const result = await uc.execute({ listing_id: id, admin_id });
+    return reply.send(result);
+  });
+
+  app.post('/listings/:id/unlink-marketplace-product', { preHandler: [adminGuard] }, async (request, reply) => {
+    const uc = container.resolve<UnlinkSellerListingMarketplaceProductUseCase>(
+      UC_TOKENS.UnlinkSellerListingMarketplaceProduct,
+    );
     const { id } = request.params as { id: string };
     const admin_id = (request as unknown as Record<string, unknown>).adminId as string;
     const result = await uc.execute({ listing_id: id, admin_id });

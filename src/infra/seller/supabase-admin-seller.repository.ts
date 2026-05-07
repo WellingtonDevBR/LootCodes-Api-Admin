@@ -41,6 +41,8 @@ import type {
   SetSellerListingVisibilityResult,
   DeactivateSellerListingDto,
   DeactivateSellerListingResult,
+  UnlinkSellerListingMarketplaceProductDto,
+  UnlinkSellerListingMarketplaceProductResult,
   DeleteSellerListingDto,
   RecoverSellerListingHealthDto,
   RecoverSellerListingHealthResult,
@@ -82,7 +84,7 @@ export class SupabaseAdminSellerRepository implements IAdminSellerRepository {
         variant_id: r.variant_id as string,
         provider_account_id: r.provider_account_id as string,
         external_listing_id: (r.external_listing_id as string) ?? null,
-        external_product_id: r.external_product_id as string,
+        external_product_id: (r.external_product_id as string) ?? null,
         listing_type: r.listing_type as 'key_upload' | 'declared_stock',
         status: r.status as string,
         currency: r.currency as string,
@@ -511,6 +513,57 @@ export class SupabaseAdminSellerRepository implements IAdminSellerRepository {
     });
 
     return { listing_id: dto.listing_id, status: 'inactive' };
+  }
+
+  async unlinkSellerListingMarketplaceProduct(
+    dto: UnlinkSellerListingMarketplaceProductDto,
+  ): Promise<UnlinkSellerListingMarketplaceProductResult> {
+    logger.info('Unlinking marketplace product from seller listing', { listingId: dto.listing_id });
+
+    const listing = await this.db.queryOne<Record<string, unknown>>('seller_listings', {
+      filter: { id: dto.listing_id },
+    });
+    if (!listing) throw new Error(`Seller listing ${dto.listing_id} not found`);
+
+    const previousExternalProductId = (listing.external_product_id as string | null) ?? null;
+    const previousExternalListingId = (listing.external_listing_id as string | null) ?? null;
+
+    const now = new Date().toISOString();
+    const rows = await this.db.update<Record<string, unknown>>('seller_listings', { id: dto.listing_id }, {
+      external_product_id: null,
+      external_listing_id: null,
+      status: 'draft',
+      auto_sync_stock: false,
+      auto_sync_price: false,
+      error_message: null,
+      updated_at: now,
+    });
+
+    if (rows.length === 0) throw new Error(`Seller listing ${dto.listing_id} not found`);
+
+    await this.db.insert('domain_events', {
+      event_type: 'seller.listing_marketplace_unlinked',
+      payload: {
+        listing_id: dto.listing_id,
+        variant_id: listing.variant_id as string,
+        provider_account_id: listing.provider_account_id as string,
+        admin_id: dto.admin_id,
+        previous_external_product_id: previousExternalProductId,
+        previous_external_listing_id: previousExternalListingId,
+      },
+      created_at: now,
+    });
+
+    return {
+      listing_id: dto.listing_id,
+      variant_id: listing.variant_id as string,
+      provider_account_id: listing.provider_account_id as string,
+      external_product_id: null,
+      external_listing_id: null,
+      status: rows[0].status as string,
+      previous_external_product_id: previousExternalProductId,
+      previous_external_listing_id: previousExternalListingId,
+    };
   }
 
   async deleteSellerListing(dto: DeleteSellerListingDto): Promise<void> {

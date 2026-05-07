@@ -44,7 +44,7 @@ interface SellerListingRow {
   variant_id: string;
   provider_account_id: string;
   external_listing_id: string | null;
-  external_product_id: string;
+  external_product_id: string | null;
   listing_type: string;
   status: string;
   currency: string;
@@ -293,7 +293,7 @@ export class SellerAutoPricingService implements ISellerAutoPricingService {
             result.costBasisUpdated++;
           }
 
-          if (!hasPricing || !listing.external_listing_id) continue;
+          if (!hasPricing || !listing.external_listing_id || !listing.external_product_id) continue;
 
           const rawOverrides =
             listing.pricing_overrides != null && typeof listing.pricing_overrides === 'object'

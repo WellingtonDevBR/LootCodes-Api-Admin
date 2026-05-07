@@ -262,6 +262,7 @@ import { UpdateSellerListingMinPriceUseCase } from '../core/use-cases/seller/upd
 import { UpdateSellerListingOverridesUseCase } from '../core/use-cases/seller/update-seller-listing-overrides.use-case.js';
 import { SetSellerListingVisibilityUseCase } from '../core/use-cases/seller/set-seller-listing-visibility.use-case.js';
 import { DeactivateSellerListingUseCase } from '../core/use-cases/seller/deactivate-seller-listing.use-case.js';
+import { UnlinkSellerListingMarketplaceProductUseCase } from '../core/use-cases/seller/unlink-seller-listing-marketplace-product.use-case.js';
 import { DeleteSellerListingUseCase } from '../core/use-cases/seller/delete-seller-listing.use-case.js';
 import { RecoverSellerListingHealthUseCase } from '../core/use-cases/seller/recover-seller-listing-health.use-case.js';
 import { SyncSellerStockUseCase } from '../core/use-cases/seller/sync-seller-stock.use-case.js';
@@ -629,6 +630,7 @@ container.register(UC_TOKENS.UpdateSellerListingMinPrice, { useClass: UpdateSell
 container.register(UC_TOKENS.UpdateSellerListingOverrides, { useClass: UpdateSellerListingOverridesUseCase });
 container.register(UC_TOKENS.SetSellerListingVisibility, { useClass: SetSellerListingVisibilityUseCase });
 container.register(UC_TOKENS.DeactivateSellerListing, { useClass: DeactivateSellerListingUseCase });
+container.register(UC_TOKENS.UnlinkSellerListingMarketplaceProduct, { useClass: UnlinkSellerListingMarketplaceProductUseCase });
 container.register(UC_TOKENS.DeleteSellerListing, { useClass: DeleteSellerListingUseCase });
 container.register(UC_TOKENS.RecoverSellerListingHealth, { useClass: RecoverSellerListingHealthUseCase });
 container.register(UC_TOKENS.SyncSellerStock, { useClass: SyncSellerStockUseCase });

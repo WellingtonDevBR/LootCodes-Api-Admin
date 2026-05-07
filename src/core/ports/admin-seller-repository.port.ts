@@ -31,6 +31,8 @@ import type {
   SetSellerListingVisibilityResult,
   DeactivateSellerListingDto,
   DeactivateSellerListingResult,
+  UnlinkSellerListingMarketplaceProductDto,
+  UnlinkSellerListingMarketplaceProductResult,
   DeleteSellerListingDto,
   RecoverSellerListingHealthDto,
   RecoverSellerListingHealthResult,
@@ -64,6 +66,9 @@ export interface IAdminSellerRepository {
   updateSellerListingOverrides(dto: UpdateSellerListingOverridesDto): Promise<UpdateSellerListingOverridesResult>;
   setSellerListingVisibility(dto: SetSellerListingVisibilityDto): Promise<SetSellerListingVisibilityResult>;
   deactivateSellerListing(dto: DeactivateSellerListingDto): Promise<DeactivateSellerListingResult>;
+  unlinkSellerListingMarketplaceProduct(
+    dto: UnlinkSellerListingMarketplaceProductDto,
+  ): Promise<UnlinkSellerListingMarketplaceProductResult>;
   deleteSellerListing(dto: DeleteSellerListingDto): Promise<void>;
   recoverSellerListingHealth(dto: RecoverSellerListingHealthDto): Promise<RecoverSellerListingHealthResult>;
   syncSellerStock(dto: SyncSellerStockDto): Promise<SyncSellerStockResult>;

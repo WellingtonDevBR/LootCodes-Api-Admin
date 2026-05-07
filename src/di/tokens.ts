@@ -297,6 +297,7 @@ export const UC_TOKENS = {
   UpdateSellerListingOverrides: Symbol.for('UpdateSellerListingOverridesUseCase'),
   SetSellerListingVisibility: Symbol.for('SetSellerListingVisibilityUseCase'),
   DeactivateSellerListing: Symbol.for('DeactivateSellerListingUseCase'),
+  UnlinkSellerListingMarketplaceProduct: Symbol.for('UnlinkSellerListingMarketplaceProductUseCase'),
   DeleteSellerListing: Symbol.for('DeleteSellerListingUseCase'),
   RecoverSellerListingHealth: Symbol.for('RecoverSellerListingHealthUseCase'),
   SyncSellerStock: Symbol.for('SyncSellerStockUseCase'),

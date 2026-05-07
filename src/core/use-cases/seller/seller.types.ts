@@ -230,7 +230,7 @@ export interface SellerListingItem {
   variant_id: string;
   provider_account_id: string;
   external_listing_id: string | null;
-  external_product_id: string;
+  external_product_id: string | null;
   listing_type: SellerListingType;
   status: string;
   currency: string;

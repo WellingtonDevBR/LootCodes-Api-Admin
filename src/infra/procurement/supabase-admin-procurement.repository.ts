@@ -260,6 +260,7 @@ export class SupabaseAdminProcurementRepository implements IAdminProcurementRepo
         },
       );
 
+      const relinkNow = new Date().toISOString();
       if (existingListings.length === 0) {
         const listing = await this.db.insert<{ id: string }>('seller_listings', {
           variant_id: dto.variant_id,
@@ -270,6 +271,20 @@ export class SupabaseAdminProcurementRepository implements IAdminProcurementRepo
           price_cents: dto.price_cents,
         });
         sellerListingId = listing.id;
+      } else {
+        const listingId = existingListings[0].id;
+        await this.db.update('seller_listings', { id: listingId }, {
+          external_product_id: dto.external_product_id,
+          currency: dto.currency,
+          price_cents: dto.price_cents,
+          external_listing_id: null,
+          status: 'draft',
+          auto_sync_stock: false,
+          auto_sync_price: false,
+          error_message: null,
+          updated_at: relinkNow,
+        });
+        sellerListingId = listingId;
       }
     }
 
