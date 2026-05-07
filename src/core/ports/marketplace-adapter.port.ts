@@ -94,6 +94,8 @@ export interface UpdateListingParams {
   externalListingId: string;
   priceCents?: number;
   quantity?: number;
+  /** Listing currency (e.g. Eneba `S_MoneyInput.currency`). Defaults per adapter. */
+  currency?: string;
 }
 
 export interface UpdateListingResult {
@@ -111,6 +113,8 @@ export interface ListingStatusResult {
 export interface BatchPriceUpdate {
   externalListingId: string;
   priceCents: number;
+  /** Defaults to EUR in the Eneba adapter when omitted. */
+  currency?: string;
 }
 
 export interface BatchPriceUpdateResult {
@@ -131,6 +135,11 @@ export interface ISellerListingAdapter {
   updateListing(params: UpdateListingParams): Promise<UpdateListingResult>;
   deactivateListing(externalListingId: string): Promise<{ success: boolean }>;
   getListingStatus(externalListingId: string): Promise<ListingStatusResult>;
+  /**
+   * When implemented, publish flows query the marketplace for an auction already tied to this
+   * catalog product (e.g. Eneba `S_stock(productId: …)`) and prefer `updateListing` over create.
+   */
+  discoverExistingAuctionId?(externalProductId: string): Promise<string | null>;
 }
 
 export interface ISellerKeyUploadAdapter {

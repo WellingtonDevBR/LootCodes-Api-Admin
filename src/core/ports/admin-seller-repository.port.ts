@@ -86,6 +86,8 @@ export interface IAdminSellerRepository {
     external_listing_id: string;
     declared_stock: number;
     admin_id: string;
+    /** When Eneba publish bridges `key_upload` → declared-stock auction, persist `declared_stock` listing type. */
+    listing_type?: 'declared_stock';
   }): Promise<PublishSellerListingToMarketplaceResult>;
   markSellerListingPublishFailure(listing_id: string, error_message: string): Promise<void>;
   finalizeSellerListingBindExistingAuction(

@@ -52,6 +52,27 @@ const DEFAULT_RETRY: RetryConfig = { maxRetries: 2, baseDelayMs: 500, maxDelayMs
 const DEFAULT_CB: CircuitBreakerConfig = { failureThreshold: 5, resetTimeoutMs: 60_000 };
 const DEFAULT_RL: RateLimiterConfig = { maxRequests: 50, windowMs: 60_000 };
 
+/** Prefer GraphQL `errors[].message` when present (many gateways use HTTP 4xx + JSON errors body). */
+function summarizeMarketplaceErrorBody(body: string): string {
+  const trimmed = body.trim().slice(0, 2000);
+  if (!trimmed) return '';
+  try {
+    const parsed = JSON.parse(trimmed) as {
+      errors?: ReadonlyArray<{ message?: string | undefined }>;
+    };
+    const errs = parsed.errors;
+    if (Array.isArray(errs) && errs.length > 0) {
+      const msgs = errs
+        .map((e) => (typeof e?.message === 'string' ? e.message.trim() : ''))
+        .filter(Boolean);
+      if (msgs.length > 0) return msgs.join('; ');
+    }
+  } catch {
+    /* plain text or truncated JSON */
+  }
+  return trimmed;
+}
+
 // ─── Error Types ─────────────────────────────────────────────────────
 
 export class MarketplaceApiError extends Error {
@@ -307,13 +328,13 @@ export class MarketplaceHttpClient {
 
       if (!response.ok) {
         const responseBody = await response.text().catch(() => '');
-        const trimmed = responseBody.slice(0, 2000).trim();
-        const detail = trimmed.length > 0 ? `: ${trimmed}` : '';
+        const summary = summarizeMarketplaceErrorBody(responseBody);
+        const detail = summary.length > 0 ? `: ${summary}` : '';
         throw new MarketplaceApiError(
           `${this.providerCode} API error: ${response.status} ${response.statusText}${detail}`,
           this.providerCode,
           response.status,
-          trimmed.length > 0 ? trimmed : undefined,
+          summary.length > 0 ? summary : undefined,
         );
       }
 

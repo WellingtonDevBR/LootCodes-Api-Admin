@@ -721,12 +721,14 @@ export class SupabaseAdminSellerRepository implements IAdminSellerRepository {
     external_listing_id: string;
     declared_stock: number;
     admin_id: string;
+    listing_type?: 'declared_stock';
   }): Promise<PublishSellerListingToMarketplaceResult> {
     const now = new Date().toISOString();
     await this.db.update('seller_listings', { id: params.listing_id }, {
       external_listing_id: params.external_listing_id,
       status: 'active',
       declared_stock: params.declared_stock,
+      ...(params.listing_type != null ? { listing_type: params.listing_type } : {}),
       error_message: null,
       auto_sync_stock: true,
       updated_at: now,

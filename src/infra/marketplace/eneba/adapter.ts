@@ -117,12 +117,18 @@ export class EnebaAdapter
     const variables: Record<string, unknown> = {
       productId: params.externalProductId,
       enabled: true,
-      autoRenew: true,
+      autoRenew: false,
       price: { amount: params.priceCents, currency: params.currency },
     };
 
     if (isDeclaredStock) {
-      variables.declaredStock = params.quantity ?? 0;
+      const qty = params.quantity;
+      if (qty == null || qty < 1) {
+        throw new Error(
+          'Eneba declared-stock S_createAuction requires quantity ≥ 1 (matches inventory available keys)',
+        );
+      }
+      variables.declaredStock = qty;
     } else {
       variables.keys = [];
     }
@@ -132,10 +138,28 @@ export class EnebaAdapter
     logger.info('S_createAuction', {
       productId: params.externalProductId,
       listingType: params.listingType,
+      declaredStock: isDeclaredStock ? params.quantity : undefined,
+      priceCents: params.priceCents,
+      currency: params.currency,
       isSandbox: this.isSandbox,
     });
 
-    const data = await this.gqlClient.execute<EnebaCreateAuctionData>(mutation, variables);
+    let data: EnebaCreateAuctionData;
+    try {
+      data = await this.gqlClient.execute<EnebaCreateAuctionData>(mutation, variables);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!isDeclaredStock) throw err instanceof Error ? err : new Error(msg);
+
+      const env = this.isSandbox ? 'sandbox' : 'production';
+      throw new Error(
+        `Eneba ${env} declined or failed S_createAuction for declared stock. Upstream: ${msg}. ` +
+          `Typical causes: merchant Declared Stock not enabled (${this.isSandbox ? 'sandbox may lack P_enableDeclaredStock — contact Eneba' : 'run Providers → Enable declared stock / P_enableDeclaredStock'}), ` +
+          `price below marketplace minimum for product ${params.externalProductId}, ` +
+          `or currency mismatch (${params.currency}). declaredStock=${params.quantity ?? 'n/a'}, price=${params.priceCents} ${params.currency}.`,
+      );
+    }
+
     const result = data.S_createAuction;
 
     return {
@@ -145,26 +169,105 @@ export class EnebaAdapter
   }
 
   async updateListing(params: UpdateListingParams): Promise<UpdateListingResult> {
-    const variables: Record<string, unknown> = {
-      auctionId: params.externalListingId,
-    };
+    const currency = params.currency ?? 'EUR';
 
-    if (params.priceCents != null) {
-      variables.price = { amount: params.priceCents, currency: 'EUR' };
-    }
-    if (params.quantity != null) {
-      variables.declaredStock = params.quantity === 0 ? null : params.quantity;
+    const hasPrice = params.priceCents != null && params.priceCents > 0;
+    const hasQuantity = params.quantity != null;
+
+    if (!hasPrice && !hasQuantity) {
+      return { success: true };
     }
 
-    const data = await this.gqlClient.execute<EnebaUpdateAuctionData>(
-      UPDATE_AUCTION_MUTATION,
-      variables,
-    );
+    // Eneba deprecated listing prices on S_updateAuction; production often returns HTTP 400 if
+    // price is sent there. Mirror Edge: P_updateAuctionPrice for money, then stock mutations.
+    if (hasPrice) {
+      const data = await this.gqlClient.execute<EnebaUpdateAuctionPriceData>(
+        UPDATE_AUCTION_PRICE_MUTATION,
+        {
+          items: [
+            {
+              auctionId: params.externalListingId,
+              price: { amount: params.priceCents as number, currency },
+            },
+          ],
+        },
+      );
+      const item = data.P_updateAuctionPrice.items[0];
+      if (!item?.success) {
+        return {
+          success: false,
+          error: item?.error ?? 'P_updateAuctionPrice failed',
+        };
+      }
+    }
 
-    return {
-      success: data.S_updateAuction.success,
-      error: data.S_updateAuction.success ? undefined : 'S_updateAuction returned success: false',
-    };
+    if (hasQuantity) {
+      if (params.quantity === 0) {
+        const data = await this.gqlClient.execute<EnebaUpdateAuctionData>(
+          UPDATE_AUCTION_MUTATION,
+          { auctionId: params.externalListingId, declaredStock: null },
+        );
+        if (!data.S_updateAuction.success) {
+          return {
+            success: false,
+            error: 'S_updateAuction (clear declared stock) returned success: false',
+          };
+        }
+      } else {
+        const data = await this.gqlClient.execute<EnebaUpdateDeclaredStockData>(
+          UPDATE_DECLARED_STOCK_MUTATION,
+          {
+            statuses: [{ auctionId: params.externalListingId, declaredStock: params.quantity }],
+          },
+        );
+        if (!data.P_updateDeclaredStock.success) {
+          return {
+            success: false,
+            error: 'P_updateDeclaredStock returned success: false',
+          };
+        }
+      }
+    }
+
+    return { success: true };
+  }
+
+  /**
+   * Matches Edge `discoverExistingListingId`: `S_stock(productId)` returns this merchant's auctions
+   * for the catalog product — avoids duplicate `S_createAuction` when CRM lost `external_listing_id`.
+   */
+  async discoverExistingAuctionId(externalProductId: string): Promise<string | null> {
+    let cursor: string | null = null;
+    const maxPages = 10;
+
+    for (let page = 0; page < maxPages; page++) {
+      const variables: Record<string, unknown> = {
+        first: 100,
+        productId: externalProductId,
+      };
+      if (cursor) variables.after = cursor;
+
+      const data = await this.gqlClient.execute<EnebaGetStockData>(GET_STOCK_QUERY, variables);
+      const conn = data.S_stock;
+      const edges = conn?.edges ?? [];
+
+      if (edges.length > 0) {
+        const auctionId = edges[0].node.id;
+        logger.info('discoverExistingAuctionId: found auction via S_stock', {
+          externalProductId,
+          auctionId,
+          page,
+        });
+        return auctionId;
+      }
+
+      if (!conn?.pageInfo?.hasNextPage || !conn.pageInfo.endCursor) {
+        return null;
+      }
+      cursor = conn.pageInfo.endCursor;
+    }
+
+    return null;
   }
 
   async deactivateListing(externalListingId: string): Promise<{ success: boolean }> {
@@ -374,7 +477,7 @@ export class EnebaAdapter
 
     const items = updates.map((u) => ({
       auctionId: u.externalListingId,
-      price: { amount: u.priceCents, currency: 'EUR' },
+      price: { amount: u.priceCents, currency: u.currency ?? 'EUR' },
     }));
 
     const data = await this.gqlClient.execute<EnebaUpdateAuctionPriceData>(

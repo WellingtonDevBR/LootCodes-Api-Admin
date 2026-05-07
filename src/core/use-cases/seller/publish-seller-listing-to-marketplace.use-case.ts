@@ -43,18 +43,31 @@ export class PublishSellerListingToMarketplaceUseCase {
       throw new Error(msg);
     }
 
+    /**
+     * Eneba `S_createAuction` does not accept plain auctions with `keys: []` — you must send either
+     * plaintext keys or `declaredStock`. CRM publish never uploads keys here, so we always derive
+     * declared stock from available inventory keys for Eneba (`declared_stock` and `key_upload` rows).
+     */
     let quantity: number | undefined;
-    if (ctx.listing_type === 'declared_stock') {
-      quantity = await this.sellerRepo.countAvailableProductKeysForVariant(ctx.variant_id);
-      const qty = quantity ?? 0;
+    const enebaDeclaredStockFromInventory =
+      ctx.provider_code === 'eneba' &&
+      (ctx.listing_type === 'declared_stock' || ctx.listing_type === 'key_upload');
+
+    if (enebaDeclaredStockFromInventory) {
+      const qty = await this.sellerRepo.countAvailableProductKeysForVariant(ctx.variant_id);
+      quantity = qty;
       if (qty <= 0) {
         const msg =
-          'Declared-stock publish requires at least one available key for this variant ' +
-          '(Eneba S_createAuction rejects declaredStock ≤ 0)';
+          'Eneba marketplace publish requires at least one available key for this variant ' +
+          '(declared stock is taken from inventory; creating an auction without keys or stock is not supported)';
         await this.sellerRepo.markSellerListingPublishFailure(dto.listing_id, msg);
         throw new Error(msg);
       }
     }
+
+    const bridgeEnebaKeyUploadToDeclaredStock =
+      ctx.provider_code === 'eneba' && ctx.listing_type === 'key_upload';
+    const wireListingType = bridgeEnebaKeyUploadToDeclaredStock ? 'declared_stock' : ctx.listing_type;
 
     const adapter = this.registry.getListingAdapter(ctx.provider_code);
     if (!adapter) {
@@ -64,21 +77,45 @@ export class PublishSellerListingToMarketplaceUseCase {
     }
 
     try {
-      const remote = await adapter.createListing({
-        externalProductId: extProduct,
-        priceCents: ctx.price_cents,
-        currency: ctx.currency,
-        listingType: ctx.listing_type,
-        ...(ctx.listing_type === 'declared_stock' ? { quantity: quantity as number } : {}),
-      });
+      const discoveredAuctionId =
+        (await adapter.discoverExistingAuctionId?.(extProduct).catch(() => null)) ?? null;
 
-      const declaredStock = ctx.listing_type === 'declared_stock' ? (quantity as number) : 0;
+      const declaredStockForPersist =
+        wireListingType === 'declared_stock' ? (quantity as number) : 0;
+
+      let externalListingId: string;
+
+      if (discoveredAuctionId) {
+        const upd = await adapter.updateListing({
+          externalListingId: discoveredAuctionId,
+          priceCents: ctx.price_cents,
+          currency: ctx.currency,
+          ...(wireListingType === 'declared_stock' ? { quantity: quantity as number } : {}),
+        });
+        if (!upd.success) {
+          const msg =
+            upd.error ??
+            'Marketplace already has an auction for this product; update failed (try again after rate limit or bind auction manually)';
+          throw new Error(msg);
+        }
+        externalListingId = discoveredAuctionId;
+      } else {
+        const remote = await adapter.createListing({
+          externalProductId: extProduct,
+          priceCents: ctx.price_cents,
+          currency: ctx.currency,
+          listingType: wireListingType,
+          ...(wireListingType === 'declared_stock' ? { quantity: quantity as number } : {}),
+        });
+        externalListingId = remote.externalListingId;
+      }
 
       return await this.sellerRepo.finalizeSellerListingMarketplacePublishSuccess({
         listing_id: dto.listing_id,
-        external_listing_id: remote.externalListingId,
-        declared_stock: declaredStock,
+        external_listing_id: externalListingId,
+        declared_stock: declaredStockForPersist,
         admin_id: dto.admin_id,
+        ...(bridgeEnebaKeyUploadToDeclaredStock ? { listing_type: 'declared_stock' as const } : {}),
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Marketplace publish failed';

@@ -106,6 +106,181 @@ describe('PublishSellerListingToMarketplaceUseCase', () => {
     expect(result.skipped_already_published).toBe(false);
   });
 
+  it('maps Eneba key_upload to declared_stock create using available key count', async () => {
+    const listingAdapter: Partial<ISellerListingAdapter> = {
+      createListing: vi.fn().mockResolvedValue({
+        externalListingId: 'auction-keys-bridge',
+        status: 'active',
+      }),
+    };
+
+    const registry: IMarketplaceAdapterRegistry = {
+      getListingAdapter: vi.fn().mockReturnValue(listingAdapter),
+    } as unknown as IMarketplaceAdapterRegistry;
+
+    const finalize = vi.fn().mockResolvedValue({
+      listing_id: 'lst-ku',
+      external_listing_id: 'auction-keys-bridge',
+      status: 'active',
+      skipped_already_published: false,
+    });
+
+    const sellerRepo: Pick<
+      IAdminSellerRepository,
+      'getSellerListingPublishContext' | 'countAvailableProductKeysForVariant' | 'finalizeSellerListingMarketplacePublishSuccess' | 'markSellerListingPublishFailure'
+    > = {
+      getSellerListingPublishContext: vi.fn().mockResolvedValue({
+        listing_id: 'lst-ku',
+        variant_id: 'var-ku',
+        provider_account_id: 'pa-ku',
+        provider_code: 'eneba',
+        external_product_id: 'prod-ku',
+        external_listing_id: null,
+        listing_type: 'key_upload',
+        price_cents: 1000,
+        currency: 'EUR',
+        status: 'draft',
+      } satisfies SellerListingPublishContext),
+      countAvailableProductKeysForVariant: vi.fn().mockResolvedValue(4),
+      finalizeSellerListingMarketplacePublishSuccess: finalize,
+      markSellerListingPublishFailure: vi.fn(),
+    };
+
+    const uc = new PublishSellerListingToMarketplaceUseCase(registry, sellerRepo as IAdminSellerRepository);
+    await uc.execute({ listing_id: 'lst-ku', admin_id: 'adm-1' });
+
+    expect(listingAdapter.createListing).toHaveBeenCalledWith(
+      expect.objectContaining({
+        externalProductId: 'prod-ku',
+        listingType: 'declared_stock',
+        quantity: 4,
+      }),
+    );
+    expect(finalize).toHaveBeenCalledWith({
+      listing_id: 'lst-ku',
+      external_listing_id: 'auction-keys-bridge',
+      declared_stock: 4,
+      admin_id: 'adm-1',
+      listing_type: 'declared_stock',
+    });
+  });
+
+  it('uses updateListing when discoverExistingAuctionId returns an auction (link existing)', async () => {
+    const listingAdapter: Partial<ISellerListingAdapter> = {
+      discoverExistingAuctionId: vi.fn().mockResolvedValue('auction-remote'),
+      updateListing: vi.fn().mockResolvedValue({ success: true }),
+      createListing: vi.fn(),
+    };
+
+    const registry: IMarketplaceAdapterRegistry = {
+      getListingAdapter: vi.fn().mockReturnValue(listingAdapter),
+    } as unknown as IMarketplaceAdapterRegistry;
+
+    const finalize = vi.fn().mockResolvedValue({
+      listing_id: 'lst-disc',
+      external_listing_id: 'auction-remote',
+      status: 'active',
+      skipped_already_published: false,
+    });
+
+    const sellerRepo: Pick<
+      IAdminSellerRepository,
+      'getSellerListingPublishContext' | 'countAvailableProductKeysForVariant' | 'finalizeSellerListingMarketplacePublishSuccess' | 'markSellerListingPublishFailure'
+    > = {
+      getSellerListingPublishContext: vi.fn().mockResolvedValue({
+        listing_id: 'lst-disc',
+        variant_id: 'var-disc',
+        provider_account_id: 'pa-d',
+        provider_code: 'eneba',
+        external_product_id: 'prod-linked',
+        external_listing_id: null,
+        listing_type: 'declared_stock',
+        price_cents: 1500,
+        currency: 'USD',
+        status: 'draft',
+      } satisfies SellerListingPublishContext),
+      countAvailableProductKeysForVariant: vi.fn().mockResolvedValue(7),
+      finalizeSellerListingMarketplacePublishSuccess: finalize,
+      markSellerListingPublishFailure: vi.fn(),
+    };
+
+    const uc = new PublishSellerListingToMarketplaceUseCase(registry, sellerRepo as IAdminSellerRepository);
+    const result = await uc.execute({ listing_id: 'lst-disc', admin_id: 'adm-1' });
+
+    expect(listingAdapter.discoverExistingAuctionId).toHaveBeenCalledWith('prod-linked');
+    expect(listingAdapter.updateListing).toHaveBeenCalledWith({
+      externalListingId: 'auction-remote',
+      priceCents: 1500,
+      currency: 'USD',
+      quantity: 7,
+    });
+    expect(listingAdapter.createListing).not.toHaveBeenCalled();
+    expect(finalize).toHaveBeenCalledWith({
+      listing_id: 'lst-disc',
+      external_listing_id: 'auction-remote',
+      declared_stock: 7,
+      admin_id: 'adm-1',
+    });
+    expect(result.external_listing_id).toBe('auction-remote');
+  });
+
+  it('links discovered Eneba key_upload auction using declared stock from inventory', async () => {
+    const listingAdapter: Partial<ISellerListingAdapter> = {
+      discoverExistingAuctionId: vi.fn().mockResolvedValue('auction-remote-ku'),
+      updateListing: vi.fn().mockResolvedValue({ success: true }),
+      createListing: vi.fn(),
+    };
+
+    const registry: IMarketplaceAdapterRegistry = {
+      getListingAdapter: vi.fn().mockReturnValue(listingAdapter),
+    } as unknown as IMarketplaceAdapterRegistry;
+
+    const finalize = vi.fn().mockResolvedValue({
+      listing_id: 'lst-disc-ku',
+      external_listing_id: 'auction-remote-ku',
+      status: 'active',
+      skipped_already_published: false,
+    });
+
+    const sellerRepo: Pick<
+      IAdminSellerRepository,
+      'getSellerListingPublishContext' | 'countAvailableProductKeysForVariant' | 'finalizeSellerListingMarketplacePublishSuccess' | 'markSellerListingPublishFailure'
+    > = {
+      getSellerListingPublishContext: vi.fn().mockResolvedValue({
+        listing_id: 'lst-disc-ku',
+        variant_id: 'var-disc-ku',
+        provider_account_id: 'pa-dku',
+        provider_code: 'eneba',
+        external_product_id: 'prod-linked-ku',
+        external_listing_id: null,
+        listing_type: 'key_upload',
+        price_cents: 800,
+        currency: 'EUR',
+        status: 'draft',
+      } satisfies SellerListingPublishContext),
+      countAvailableProductKeysForVariant: vi.fn().mockResolvedValue(3),
+      finalizeSellerListingMarketplacePublishSuccess: finalize,
+      markSellerListingPublishFailure: vi.fn(),
+    };
+
+    const uc = new PublishSellerListingToMarketplaceUseCase(registry, sellerRepo as IAdminSellerRepository);
+    await uc.execute({ listing_id: 'lst-disc-ku', admin_id: 'adm-1' });
+
+    expect(listingAdapter.updateListing).toHaveBeenCalledWith({
+      externalListingId: 'auction-remote-ku',
+      priceCents: 800,
+      currency: 'EUR',
+      quantity: 3,
+    });
+    expect(finalize).toHaveBeenCalledWith({
+      listing_id: 'lst-disc-ku',
+      external_listing_id: 'auction-remote-ku',
+      declared_stock: 3,
+      admin_id: 'adm-1',
+      listing_type: 'declared_stock',
+    });
+  });
+
   it('records failure when listing adapter is missing', async () => {
     const registry: IMarketplaceAdapterRegistry = {
       getListingAdapter: vi.fn().mockReturnValue(null),
@@ -224,7 +399,7 @@ describe('PublishSellerListingToMarketplaceUseCase', () => {
     );
     expect(markFail).toHaveBeenCalledWith(
       'lst-n-keys',
-      expect.stringContaining('Declared-stock publish requires at least one available key'),
+      expect.stringContaining('Eneba marketplace publish requires at least one available key'),
     );
     expect(registry.getListingAdapter).not.toHaveBeenCalled();
     expect(listingAdapter.createListing).not.toHaveBeenCalled();
