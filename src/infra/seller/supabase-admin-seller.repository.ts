@@ -381,7 +381,8 @@ export class SupabaseAdminSellerRepository implements IAdminSellerRepository {
       updated_at: now,
     });
 
-    await this.db.insert('domain_events', {
+    await this.recordSellerListingDomainEvent({
+      listing_id: row.id as string,
       event_type: 'seller.listing_created',
       payload: {
         listing_id: row.id,
@@ -410,7 +411,8 @@ export class SupabaseAdminSellerRepository implements IAdminSellerRepository {
 
     if (rows.length === 0) throw new Error(`Seller listing ${dto.listing_id} not found`);
 
-    await this.db.insert('domain_events', {
+    await this.recordSellerListingDomainEvent({
+      listing_id: dto.listing_id,
       event_type: 'seller.listing_updated',
       payload: { listing_id: dto.listing_id, field: 'price_cents', value: dto.price_cents, admin_id: dto.admin_id },
       created_at: now,
@@ -510,7 +512,8 @@ export class SupabaseAdminSellerRepository implements IAdminSellerRepository {
 
     if (rows.length === 0) throw new Error(`Seller listing ${dto.listing_id} not found`);
 
-    await this.db.insert('domain_events', {
+    await this.recordSellerListingDomainEvent({
+      listing_id: dto.listing_id,
       event_type: 'seller.listing_removed',
       payload: { listing_id: dto.listing_id, admin_id: dto.admin_id },
       created_at: now,
@@ -545,7 +548,8 @@ export class SupabaseAdminSellerRepository implements IAdminSellerRepository {
 
     if (rows.length === 0) throw new Error(`Seller listing ${dto.listing_id} not found`);
 
-    await this.db.insert('domain_events', {
+    await this.recordSellerListingDomainEvent({
+      listing_id: dto.listing_id,
       event_type: 'seller.listing_marketplace_unlinked',
       payload: {
         listing_id: dto.listing_id,
@@ -735,7 +739,8 @@ export class SupabaseAdminSellerRepository implements IAdminSellerRepository {
       last_synced_at: now,
     });
 
-    await this.db.insert('domain_events', {
+    await this.recordSellerListingDomainEvent({
+      listing_id: params.listing_id,
       event_type: 'seller.listing_updated',
       payload: {
         listing_id: params.listing_id,
@@ -775,7 +780,8 @@ export class SupabaseAdminSellerRepository implements IAdminSellerRepository {
       updated_at: now,
     });
 
-    await this.db.insert('domain_events', {
+    await this.recordSellerListingDomainEvent({
+      listing_id: dto.listing_id,
       event_type: 'seller.listing_updated',
       payload: {
         listing_id: dto.listing_id,
@@ -795,6 +801,23 @@ export class SupabaseAdminSellerRepository implements IAdminSellerRepository {
   }
 
   // --- Private Helpers ---
+
+  /** Matches `public.domain_events`: `aggregate_type` / `aggregate_id` are NOT NULL (seller aggregate = listing row). */
+  private async recordSellerListingDomainEvent(params: {
+    readonly listing_id: string;
+    readonly event_type: string;
+    readonly payload: Record<string, unknown>;
+    readonly created_at: string;
+  }): Promise<void> {
+    await this.db.insert('domain_events', {
+      event_type: params.event_type,
+      aggregate_type: 'seller',
+      aggregate_id: params.listing_id,
+      payload: params.payload,
+      version: 1,
+      created_at: params.created_at,
+    });
+  }
 
   private async buildAccountMap(): Promise<Map<string, { provider_code: string; display_name: string }>> {
     const accounts = await this.db.query<Record<string, unknown>>('provider_accounts', {});
