@@ -189,6 +189,48 @@ export interface FetchRemoteStockResult {
   items: RemoteStockItem[];
 }
 
+// --- Publish listing to marketplace (create remote auction) ---
+
+export interface PublishSellerListingToMarketplaceDto {
+  listing_id: string;
+  admin_id: string;
+}
+
+export interface PublishSellerListingToMarketplaceResult {
+  listing_id: string;
+  external_listing_id: string;
+  status: string;
+  skipped_already_published: boolean;
+}
+
+export interface SellerListingPublishContext {
+  listing_id: string;
+  variant_id: string;
+  provider_account_id: string;
+  provider_code: string;
+  external_product_id: string | null;
+  external_listing_id: string | null;
+  listing_type: SellerListingType;
+  price_cents: number;
+  currency: string;
+  status: string;
+}
+
+// --- Bind existing remote auction id ---
+
+export interface BindSellerListingExternalAuctionDto {
+  listing_id: string;
+  external_listing_id: string;
+  admin_id: string;
+}
+
+export interface BindSellerListingExternalAuctionResult {
+  listing_id: string;
+  external_listing_id: string;
+  status: string;
+  verified_remote_status: string;
+}
+
 // --- Batch Price Update ---
 
 export interface BatchUpdatePricesDto {

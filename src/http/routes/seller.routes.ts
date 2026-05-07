@@ -23,6 +23,9 @@ import type { DeleteSellerListingUseCase } from '../../core/use-cases/seller/del
 import type { RecoverSellerListingHealthUseCase } from '../../core/use-cases/seller/recover-seller-listing-health.use-case.js';
 import type { SyncSellerStockUseCase } from '../../core/use-cases/seller/sync-seller-stock.use-case.js';
 import type { FetchRemoteStockUseCase } from '../../core/use-cases/seller/fetch-remote-stock.use-case.js';
+import type { PublishSellerListingToMarketplaceUseCase } from '../../core/use-cases/seller/publish-seller-listing-to-marketplace.use-case.js';
+import type { BindSellerListingExternalAuctionUseCase } from '../../core/use-cases/seller/bind-seller-listing-external-auction.use-case.js';
+import type { PublishSellerListingToMarketplaceResult } from '../../core/use-cases/seller/seller-listing.types.js';
 import type { GetProviderAccountDetailUseCase } from '../../core/use-cases/seller/get-provider-account-detail.use-case.js';
 import type { RegisterWebhooksUseCase } from '../../core/use-cases/seller/register-webhooks.use-case.js';
 import type { GetWebhookStatusUseCase } from '../../core/use-cases/seller/get-webhook-status.use-case.js';
@@ -200,21 +203,82 @@ export async function adminSellerRoutes(app: FastifyInstance) {
   // --- Seller Listing Mutations ---
 
   app.post('/listings', { preHandler: [adminGuard] }, async (request, reply) => {
-    const uc = container.resolve<CreateSellerListingUseCase>(UC_TOKENS.CreateSellerListing);
+    const createUc = container.resolve<CreateSellerListingUseCase>(UC_TOKENS.CreateSellerListing);
+    const publishUc = container.resolve<PublishSellerListingToMarketplaceUseCase>(
+      UC_TOKENS.PublishSellerListingToMarketplace,
+    );
     const body = request.body as Record<string, unknown>;
     const admin_id = (request as unknown as Record<string, unknown>).adminId as string;
-    const result = await uc.execute({
+    const extRaw = body.external_product_id;
+    const external_product_id =
+      typeof extRaw === 'string' && extRaw.trim().length > 0 ? extRaw.trim() : undefined;
+    const publishToMarketplace = Boolean(external_product_id) && body.publish_to_marketplace !== false;
+
+    const result = await createUc.execute({
       variant_id: body.variant_id as string,
       provider_account_id: body.provider_account_id as string,
       price_cents: body.price_cents as number,
       currency: body.currency as string,
       listing_type: body.listing_type as 'key_upload' | 'declared_stock',
-      external_product_id: body.external_product_id as string | undefined,
+      ...(external_product_id ? { external_product_id } : {}),
       auto_sync_stock: body.auto_sync_stock as boolean | undefined,
       auto_sync_price: body.auto_sync_price as boolean | undefined,
       admin_id,
     });
-    return reply.status(201).send(result);
+
+    let marketplace_publish: PublishSellerListingToMarketplaceResult | null = null;
+    let marketplace_publish_error: string | null = null;
+    if (publishToMarketplace && result.listing_id) {
+      try {
+        marketplace_publish = await publishUc.execute({
+          listing_id: result.listing_id,
+          admin_id,
+        });
+      } catch (err) {
+        marketplace_publish_error = err instanceof Error ? err.message : 'Marketplace publish failed';
+      }
+    }
+
+    return reply.status(201).send({
+      ...result,
+      ...(marketplace_publish ? { marketplace_publish } : {}),
+      ...(marketplace_publish_error ? { marketplace_publish_error } : {}),
+    });
+  });
+
+  app.post('/listings/:id/publish-marketplace', { preHandler: [adminGuard] }, async (request, reply) => {
+    const uc = container.resolve<PublishSellerListingToMarketplaceUseCase>(
+      UC_TOKENS.PublishSellerListingToMarketplace,
+    );
+    const { id } = request.params as { id: string };
+    const admin_id = (request as unknown as Record<string, unknown>).adminId as string;
+    try {
+      const result = await uc.execute({ listing_id: id, admin_id });
+      return reply.send(result);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Marketplace publish failed';
+      return reply.status(400).send({ error: message });
+    }
+  });
+
+  app.post('/listings/:id/bind-marketplace-auction', { preHandler: [adminGuard] }, async (request, reply) => {
+    const uc = container.resolve<BindSellerListingExternalAuctionUseCase>(
+      UC_TOKENS.BindSellerListingExternalAuction,
+    );
+    const { id } = request.params as { id: string };
+    const body = request.body as Record<string, unknown>;
+    const admin_id = (request as unknown as Record<string, unknown>).adminId as string;
+    try {
+      const result = await uc.execute({
+        listing_id: id,
+        external_listing_id: body.external_listing_id as string,
+        admin_id,
+      });
+      return reply.send(result);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Bind auction failed';
+      return reply.status(400).send({ error: message });
+    }
   });
 
   app.patch('/listings/:id/price', { preHandler: [adminGuard] }, async (request, reply) => {

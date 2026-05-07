@@ -50,6 +50,10 @@ import type {
   SyncSellerStockResult,
   FetchRemoteStockDto,
   FetchRemoteStockResult,
+  SellerListingPublishContext,
+  PublishSellerListingToMarketplaceResult,
+  BindSellerListingExternalAuctionDto,
+  BindSellerListingExternalAuctionResult,
 } from '../../core/use-cases/seller/seller-listing.types.js';
 import { createLogger } from '../../shared/logger.js';
 
@@ -676,6 +680,115 @@ export class SupabaseAdminSellerRepository implements IAdminSellerRepository {
     return {
       listing_id: dto.listing_id,
       items,
+    };
+  }
+
+  async getSellerListingPublishContext(listingId: string): Promise<SellerListingPublishContext | null> {
+    const listing = await this.db.queryOne<Record<string, unknown>>('seller_listings', {
+      filter: { id: listingId },
+    });
+    if (!listing) return null;
+    const account = await this.db.queryOne<Record<string, unknown>>('provider_accounts', {
+      filter: { id: listing.provider_account_id as string },
+    });
+    if (!account) return null;
+    return {
+      listing_id: listing.id as string,
+      variant_id: listing.variant_id as string,
+      provider_account_id: listing.provider_account_id as string,
+      provider_code: account.provider_code as string,
+      external_product_id: (listing.external_product_id as string | null) ?? null,
+      external_listing_id: (listing.external_listing_id as string | null) ?? null,
+      listing_type: listing.listing_type as 'key_upload' | 'declared_stock',
+      price_cents: listing.price_cents as number,
+      currency: listing.currency as string,
+      status: listing.status as string,
+    };
+  }
+
+  async countAvailableProductKeysForVariant(variantId: string): Promise<number> {
+    const keys = await this.db.query<Record<string, unknown>>('product_keys', {
+      eq: [
+        ['variant_id', variantId],
+        ['key_state', 'available'],
+      ],
+    });
+    return keys.length;
+  }
+
+  async finalizeSellerListingMarketplacePublishSuccess(params: {
+    listing_id: string;
+    external_listing_id: string;
+    declared_stock: number;
+    admin_id: string;
+  }): Promise<PublishSellerListingToMarketplaceResult> {
+    const now = new Date().toISOString();
+    await this.db.update('seller_listings', { id: params.listing_id }, {
+      external_listing_id: params.external_listing_id,
+      status: 'active',
+      declared_stock: params.declared_stock,
+      error_message: null,
+      auto_sync_stock: true,
+      updated_at: now,
+      last_synced_at: now,
+    });
+
+    await this.db.insert('domain_events', {
+      event_type: 'seller.listing_updated',
+      payload: {
+        listing_id: params.listing_id,
+        field: 'marketplace_publish',
+        external_listing_id: params.external_listing_id,
+        admin_id: params.admin_id,
+      },
+      created_at: now,
+    });
+
+    return {
+      listing_id: params.listing_id,
+      external_listing_id: params.external_listing_id,
+      status: 'active',
+      skipped_already_published: false,
+    };
+  }
+
+  async markSellerListingPublishFailure(listing_id: string, error_message: string): Promise<void> {
+    await this.db.update('seller_listings', { id: listing_id }, {
+      error_message,
+      /** Matches Postgres `seller_listings_status_check` (there is no `error` value). */
+      status: 'failed',
+      updated_at: new Date().toISOString(),
+    });
+  }
+
+  async finalizeSellerListingBindExistingAuction(
+    dto: BindSellerListingExternalAuctionDto & { verified_remote_status: string },
+  ): Promise<BindSellerListingExternalAuctionResult> {
+    const now = new Date().toISOString();
+    const extId = dto.external_listing_id.trim();
+    await this.db.update('seller_listings', { id: dto.listing_id }, {
+      external_listing_id: extId,
+      status: 'active',
+      error_message: null,
+      updated_at: now,
+    });
+
+    await this.db.insert('domain_events', {
+      event_type: 'seller.listing_updated',
+      payload: {
+        listing_id: dto.listing_id,
+        field: 'external_listing_id_manual_bind',
+        external_listing_id: extId,
+        admin_id: dto.admin_id,
+      },
+      created_at: now,
+    });
+
+    return {
+      listing_id: dto.listing_id,
+      external_listing_id: extId,
+      status: 'active',
+      verified_remote_status: dto.verified_remote_status,
     };
   }
 

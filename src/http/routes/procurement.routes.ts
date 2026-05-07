@@ -14,11 +14,13 @@ import type { RecoverProviderOrderUseCase } from '../../core/use-cases/procureme
 import type { SearchCatalogUseCase } from '../../core/use-cases/procurement/search-catalog.use-case.js';
 import type { LinkCatalogProductUseCase } from '../../core/use-cases/procurement/link-catalog-product.use-case.js';
 import type { LiveSearchProvidersUseCase } from '../../core/use-cases/procurement/live-search-providers.use-case.js';
+import type { PublishSellerListingToMarketplaceUseCase } from '../../core/use-cases/seller/publish-seller-listing-to-marketplace.use-case.js';
 import type { GetProcurementConfigUseCase } from '../../core/use-cases/procurement/get-procurement-config.use-case.js';
 import type { UpdateProcurementConfigUseCase } from '../../core/use-cases/procurement/update-procurement-config.use-case.js';
 import type { ListPurchaseQueueUseCase } from '../../core/use-cases/procurement/list-purchase-queue.use-case.js';
 import type { CancelQueueItemUseCase } from '../../core/use-cases/procurement/cancel-queue-item.use-case.js';
 import type { ListPurchaseAttemptsUseCase } from '../../core/use-cases/procurement/list-purchase-attempts.use-case.js';
+import type { LinkCatalogProductMarketplacePublishSnap } from '../../core/use-cases/procurement/procurement.types.js';
 
 export async function adminProcurementRoutes(app: FastifyInstance) {
   app.post('/quote', { preHandler: [adminGuard] }, async (request, reply) => {
@@ -132,11 +134,16 @@ export async function adminProcurementRoutes(app: FastifyInstance) {
     return reply.send(result);
   });
 
-  app.post('/catalog/link', { preHandler: [adminGuard] }, async (request, reply) => {
+  app.post('/catalog/link', { preHandler: [employeeGuard] }, async (request, reply) => {
     const uc = container.resolve<LinkCatalogProductUseCase>(UC_TOKENS.LinkCatalogProduct);
+    const publishUc = container.resolve<PublishSellerListingToMarketplaceUseCase>(
+      UC_TOKENS.PublishSellerListingToMarketplace,
+    );
     const body = request.body as Record<string, unknown>;
     const adminId = getAuthenticatedUserId(request);
-    const result = await uc.execute({
+    const publishNow = body.publish_now !== false;
+
+    const baseResult = await uc.execute({
       variant_id: body.variant_id as string,
       provider_code: body.provider_code as string,
       external_product_id: body.external_product_id as string,
@@ -146,7 +153,36 @@ export async function adminProcurementRoutes(app: FastifyInstance) {
       region_code: body.region_code as string | undefined,
       admin_id: adminId,
     });
-    return reply.send(result);
+
+    let marketplace_publish: LinkCatalogProductMarketplacePublishSnap | null = null;
+    let marketplace_publish_error: string | null = null;
+
+    if (
+      publishNow &&
+      baseResult.seller_listing_id &&
+      typeof baseResult.seller_listing_id === 'string'
+    ) {
+      try {
+        const pub = await publishUc.execute({
+          listing_id: baseResult.seller_listing_id,
+          admin_id: adminId,
+        });
+        marketplace_publish = {
+          listing_id: pub.listing_id,
+          external_listing_id: pub.external_listing_id,
+          status: pub.status,
+          skipped_already_published: pub.skipped_already_published,
+        };
+      } catch (err) {
+        marketplace_publish_error = err instanceof Error ? err.message : 'Marketplace publish failed';
+      }
+    }
+
+    return reply.send({
+      ...baseResult,
+      ...(marketplace_publish ? { marketplace_publish } : {}),
+      ...(marketplace_publish_error ? { marketplace_publish_error } : {}),
+    });
   });
 
   app.post('/providers/live-search', { preHandler: [employeeGuard] }, async (request, reply) => {

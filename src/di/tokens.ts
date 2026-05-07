@@ -305,6 +305,8 @@ export const UC_TOKENS = {
   RecoverSellerListingHealth: Symbol.for('RecoverSellerListingHealthUseCase'),
   SyncSellerStock: Symbol.for('SyncSellerStockUseCase'),
   FetchRemoteStock: Symbol.for('FetchRemoteStockUseCase'),
+  PublishSellerListingToMarketplace: Symbol.for('PublishSellerListingToMarketplaceUseCase'),
+  BindSellerListingExternalAuction: Symbol.for('BindSellerListingExternalAuctionUseCase'),
   GetProviderAccountDetail: Symbol.for('GetProviderAccountDetailUseCase'),
   RegisterWebhooks: Symbol.for('RegisterWebhooksUseCase'),
   GetWebhookStatus: Symbol.for('GetWebhookStatusUseCase'),

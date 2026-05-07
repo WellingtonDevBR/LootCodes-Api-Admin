@@ -270,6 +270,8 @@ import { DeleteSellerListingUseCase } from '../core/use-cases/seller/delete-sell
 import { RecoverSellerListingHealthUseCase } from '../core/use-cases/seller/recover-seller-listing-health.use-case.js';
 import { SyncSellerStockUseCase } from '../core/use-cases/seller/sync-seller-stock.use-case.js';
 import { FetchRemoteStockUseCase } from '../core/use-cases/seller/fetch-remote-stock.use-case.js';
+import { PublishSellerListingToMarketplaceUseCase } from '../core/use-cases/seller/publish-seller-listing-to-marketplace.use-case.js';
+import { BindSellerListingExternalAuctionUseCase } from '../core/use-cases/seller/bind-seller-listing-external-auction.use-case.js';
 import { GetProviderAccountDetailUseCase } from '../core/use-cases/seller/get-provider-account-detail.use-case.js';
 import { RegisterWebhooksUseCase } from '../core/use-cases/seller/register-webhooks.use-case.js';
 import { GetWebhookStatusUseCase } from '../core/use-cases/seller/get-webhook-status.use-case.js';
@@ -640,6 +642,8 @@ container.register(UC_TOKENS.DeleteSellerListing, { useClass: DeleteSellerListin
 container.register(UC_TOKENS.RecoverSellerListingHealth, { useClass: RecoverSellerListingHealthUseCase });
 container.register(UC_TOKENS.SyncSellerStock, { useClass: SyncSellerStockUseCase });
 container.register(UC_TOKENS.FetchRemoteStock, { useClass: FetchRemoteStockUseCase });
+container.register(UC_TOKENS.PublishSellerListingToMarketplace, { useClass: PublishSellerListingToMarketplaceUseCase });
+container.register(UC_TOKENS.BindSellerListingExternalAuction, { useClass: BindSellerListingExternalAuctionUseCase });
 container.register(UC_TOKENS.GetProviderAccountDetail, { useClass: GetProviderAccountDetailUseCase });
 container.register(UC_TOKENS.RegisterWebhooks, { useClass: RegisterWebhooksUseCase });
 container.register(UC_TOKENS.GetWebhookStatus, { useClass: GetWebhookStatusUseCase });

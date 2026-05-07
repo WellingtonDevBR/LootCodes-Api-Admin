@@ -122,9 +122,17 @@ export interface LinkCatalogProductDto {
   admin_id: string;
 }
 
+export interface LinkCatalogProductMarketplacePublishSnap {
+  listing_id: string;
+  external_listing_id: string;
+  status: string;
+  skipped_already_published: boolean;
+}
+
 export interface LinkCatalogProductResult {
   offer_id: string;
   seller_listing_id: string | null;
+  marketplace_publish?: LinkCatalogProductMarketplacePublishSnap | null;
 }
 
 export interface LiveSearchProvidersDto {

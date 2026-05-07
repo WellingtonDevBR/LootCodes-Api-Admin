@@ -40,6 +40,10 @@ import type {
   SyncSellerStockResult,
   FetchRemoteStockDto,
   FetchRemoteStockResult,
+  SellerListingPublishContext,
+  PublishSellerListingToMarketplaceResult,
+  BindSellerListingExternalAuctionDto,
+  BindSellerListingExternalAuctionResult,
 } from '../use-cases/seller/seller-listing.types.js';
 
 export interface IAdminSellerRepository {
@@ -73,6 +77,20 @@ export interface IAdminSellerRepository {
   recoverSellerListingHealth(dto: RecoverSellerListingHealthDto): Promise<RecoverSellerListingHealthResult>;
   syncSellerStock(dto: SyncSellerStockDto): Promise<SyncSellerStockResult>;
   fetchRemoteStock(dto: FetchRemoteStockDto): Promise<FetchRemoteStockResult>;
+
+  /** Loads seller_listings joined with provider_accounts.provider_code for marketplace adapter routing. */
+  getSellerListingPublishContext(listingId: string): Promise<SellerListingPublishContext | null>;
+  countAvailableProductKeysForVariant(variantId: string): Promise<number>;
+  finalizeSellerListingMarketplacePublishSuccess(params: {
+    listing_id: string;
+    external_listing_id: string;
+    declared_stock: number;
+    admin_id: string;
+  }): Promise<PublishSellerListingToMarketplaceResult>;
+  markSellerListingPublishFailure(listing_id: string, error_message: string): Promise<void>;
+  finalizeSellerListingBindExistingAuction(
+    dto: BindSellerListingExternalAuctionDto & { verified_remote_status: string },
+  ): Promise<BindSellerListingExternalAuctionResult>;
 
   // Variant offers
   getVariantOffers(dto: GetVariantOffersDto): Promise<GetVariantOffersResult>;
