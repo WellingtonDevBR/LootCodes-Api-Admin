@@ -122,6 +122,14 @@ export class SupabaseDbAdapter implements IDatabase {
     return result as T;
   }
 
+  async upsertMany(table: string, rows: Record<string, unknown>[], onConflict: string): Promise<void> {
+    if (rows.length === 0) return;
+    const { error } = await this.getClient()
+      .from(table)
+      .upsert(rows, { onConflict });
+    if (error) throw new InternalError(`UpsertMany failed on ${table}: ${error.message}`);
+  }
+
   async delete(table: string, filter: Record<string, unknown>): Promise<number> {
     let query = this.getClient().from(table).delete();
     for (const [key, value] of Object.entries(filter)) {

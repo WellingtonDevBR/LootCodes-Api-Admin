@@ -617,13 +617,13 @@ export class SellerAutoPricingService implements ISellerAutoPricingService {
           providerCode, providerAccountId,
           listing.price_cents, listing.currency, listing.listing_type as 'key_upload' | 'declared_stock',
           config.commission_rate_percent,
-          listing.external_listing_id, listing.external_product_id,
+          listing.external_listing_id, listing.external_product_id ?? undefined,
         );
         effectiveMinGross = await this.pricingService.reverseNetToGross(
           providerCode, providerAccountId,
           effectiveMin, listing.currency, listing.listing_type as 'key_upload' | 'declared_stock',
           config.commission_rate_percent,
-          listing.external_listing_id, listing.external_product_id,
+          listing.external_listing_id, listing.external_product_id ?? undefined,
         );
       }
 
@@ -639,7 +639,7 @@ export class SellerAutoPricingService implements ISellerAutoPricingService {
             providerCode, providerAccountId,
             gross, listing.currency, listing.listing_type as 'key_upload' | 'declared_stock',
             config.commission_rate_percent,
-            listing.external_listing_id, listing.external_product_id,
+            listing.external_listing_id, listing.external_product_id ?? undefined,
           );
         }
         return gross;
@@ -661,7 +661,7 @@ export class SellerAutoPricingService implements ISellerAutoPricingService {
     // Fallback to simple strategy-based suggestion
     const suggestion = await this.pricingService.suggestPrice({
       listingId: listing.id,
-      externalProductId: listing.external_product_id,
+      externalProductId: listing.external_product_id ?? '',
       costCents: costInListingCurrency,
       listingType: listing.listing_type as 'key_upload' | 'declared_stock',
       listingMinCents: effectiveMin,

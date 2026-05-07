@@ -26,6 +26,8 @@ import type {
   LiveSearchProvidersDto,
   LiveSearchProvidersResult,
   LiveSearchProviderGroup,
+  LiveSearchDiagnostics,
+  LiveSearchOffer,
   GetProcurementConfigResult,
   UpdateProcurementConfigDto,
   ProcurementConfig,
@@ -39,6 +41,11 @@ import type {
   PurchaseAttemptRow,
 } from '../../core/use-cases/procurement/procurement.types.js';
 import { createLogger } from '../../shared/logger.js';
+import {
+  catalogProductRowToLiveSearchOffer,
+  liveSearchOffersToCatalogUpsertRows,
+  productSearchResultsToLiveSearchOffers,
+} from './live-search-mapping.js';
 
 const logger = createLogger('AdminProcurementRepository');
 
@@ -86,10 +93,11 @@ export class SupabaseAdminProcurementRepository implements IAdminProcurementRepo
       in: [['id', accountIds]],
     });
 
-    const allowedAccountIds = dto.provider_code
+    const filterCode = typeof dto.provider_code === 'string' ? dto.provider_code.trim() : '';
+    const allowedAccountIds = filterCode
       ? new Set(
           accounts
-            .filter((a) => (a.provider_code ?? '').trim() === dto.provider_code.trim())
+            .filter((a) => (a.provider_code ?? '').trim() === filterCode)
             .map((a) => a.id),
         )
       : null;
@@ -323,7 +331,8 @@ export class SupabaseAdminProcurementRepository implements IAdminProcurementRepo
     const maxResults = dto.max_results ?? 10;
     const excludeSet = new Set(dto.exclude_provider_codes ?? []);
 
-    const allProviders = this.registry.getSupportedProviders()
+    const allProviders = this.registry
+      .getSupportedProviders()
       .filter((code) => !excludeSet.has(code));
 
     logger.info('Live searching marketplace APIs + local catalog', {
@@ -332,64 +341,130 @@ export class SupabaseAdminProcurementRepository implements IAdminProcurementRepo
       providers: allProviders,
     });
 
-    const liveProviders: string[] = [];
-    const catalogOnlyProviders: string[] = [];
-
-    for (const code of allProviders) {
-      if (this.registry.hasCapability(code, 'product_search')) {
-        liveProviders.push(code);
-      } else {
-        catalogOnlyProviders.push(code);
-      }
+    if (allProviders.length === 0) {
+      return {
+        providers: [],
+        diagnostics: this.buildLiveSearchDiagnostics([], [], []),
+      };
     }
 
-    const livePromises = liveProviders.map(async (providerCode): Promise<LiveSearchProviderGroup> => {
-      const adapter = this.registry.getProductSearchAdapter(providerCode)!;
-      try {
-        const results = await adapter.searchProducts(dto.query, maxResults);
-        return {
-          provider_code: providerCode,
-          offers: results.map((r) => ({
-            provider_code: providerCode,
-            external_product_id: r.externalProductId,
-            product_name: r.productName,
-            platform: r.platform,
-            region: r.region,
-            price_cents: r.priceCents,
-            currency: r.currency,
-            available: r.available,
-            thumbnail: null,
-          })),
-        };
-      } catch (err) {
-        logger.warn(`Live search failed for provider ${providerCode}`, err as Error);
-        return { provider_code: providerCode, offers: [] };
-      }
-    });
+    const liveProviders = allProviders.filter((c) => this.registry.hasCapability(c, 'product_search'));
+    const catalogOnlyProviders = allProviders.filter(
+      (c) => !this.registry.hasCapability(c, 'product_search'),
+    );
 
-    let catalogPromise: Promise<LiveSearchProviderGroup[]> = Promise.resolve([]);
-    if (catalogOnlyProviders.length > 0) {
-      catalogPromise = this.searchLocalCatalogGrouped(dto.query, catalogOnlyProviders, maxResults);
-    }
+    const accountByCode = await this.resolveCanonicalAccountIdsByProviderCode(allProviders);
 
-    const [liveResults, catalogResults] = await Promise.all([
+    const localGroupedPromise = this.searchLocalCatalogGrouped(dto.query, allProviders, maxResults);
+
+    const livePromises = liveProviders.map(
+      async (providerCode): Promise<{ providerCode: string; offers: LiveSearchOffer[] }> => {
+        const adapter = this.registry.getProductSearchAdapter(providerCode)!;
+        try {
+          const results = await adapter.searchProducts(dto.query, maxResults);
+          const offers = productSearchResultsToLiveSearchOffers(providerCode, results);
+
+          const accountId = accountByCode.get(providerCode);
+          if (offers.length > 0 && accountId) {
+            this.scheduleLiveSearchCatalogUpsert(offers, providerCode, accountId);
+          }
+
+          return { providerCode, offers };
+        } catch (err) {
+          logger.warn(`Live search failed for provider ${providerCode}`, err as Error);
+          return { providerCode, offers: [] };
+        }
+      },
+    );
+
+    const [localGroups, liveSettled] = await Promise.all([
+      localGroupedPromise,
       Promise.allSettled(livePromises),
-      catalogPromise,
     ]);
+
+    const localByCode = new Map(localGroups.map((g) => [g.provider_code, g]));
 
     const providers: LiveSearchProviderGroup[] = [];
 
-    for (const result of liveResults) {
-      if (result.status === 'fulfilled') {
-        providers.push(result.value);
+    for (const settled of liveSettled) {
+      if (settled.status !== 'fulfilled') continue;
+      const { providerCode, offers: liveOffers } = settled.value;
+      const localGroup = localByCode.get(providerCode);
+      const merged = this.mergeLiveAndLocalOffers(
+        liveOffers,
+        localGroup?.offers ?? [],
+        maxResults,
+      );
+      providers.push({ provider_code: providerCode, offers: merged });
+      if (localGroup) localByCode.delete(providerCode);
+    }
+
+    for (const group of localByCode.values()) {
+      providers.push({
+        provider_code: group.provider_code,
+        offers: group.offers.slice(0, maxResults),
+      });
+    }
+
+    const orderIdx = new Map(allProviders.map((c, i) => [c, i]));
+    providers.sort(
+      (a, b) => (orderIdx.get(a.provider_code) ?? 0) - (orderIdx.get(b.provider_code) ?? 0),
+    );
+
+    const diagnostics = this.buildLiveSearchDiagnostics(
+      allProviders,
+      liveProviders,
+      catalogOnlyProviders,
+    );
+
+    return { providers, diagnostics };
+  }
+
+  private buildLiveSearchDiagnostics(
+    selectedCodes: string[],
+    liveHttpParticipants: string[],
+    catalogFallbackParticipants: string[],
+  ): LiveSearchDiagnostics {
+    const registered = [...this.registry.getSupportedProviders()].sort();
+    const live_http = registered.filter((c) => this.registry.hasCapability(c, 'product_search')).sort();
+    const catalog_fallback = registered.filter((c) => !this.registry.hasCapability(c, 'product_search')).sort();
+    const hints: string[] = [];
+
+    if (registered.length === 0) {
+      hints.push(
+        'No marketplace adapters are registered. Check Vault secrets and api_profile for enabled provider_accounts (bootstrap log: Marketplace adapters bootstrapped).',
+      );
+    }
+
+    for (const code of selectedCodes) {
+      if (code !== 'kinguin') continue;
+      const adapter = this.registry.getProductSearchAdapter('kinguin');
+      if (!adapter) continue;
+      const probe = adapter as { isBuyerProductSearchConfigured?: () => boolean };
+      if (typeof probe.isBuyerProductSearchConfigured === 'function' && !probe.isBuyerProductSearchConfigured()) {
+        hints.push(
+          'Kinguin live marketplace search needs buyer_base_url and a buyer API key: set Vault `KINGUIN_BUYER_API_KEY`, or reuse Edge naming `KINGUIN_API_KEY`. Seller credentials alone return empty live results.',
+        );
       }
     }
 
-    for (const group of catalogResults) {
-      providers.push(group);
+    if (
+      registered.length > 0 &&
+      selectedCodes.length > 0 &&
+      liveHttpParticipants.length === 0 &&
+      catalogFallbackParticipants.length > 0
+    ) {
+      hints.push(
+        'Every adapter participating in this search uses catalog DB fallback only (no HTTP product_search). Run catalog ingestion or add buyer/search credentials for marketplace APIs.',
+      );
     }
 
-    return { providers };
+    return {
+      registered_provider_codes: registered,
+      live_http_provider_codes: live_http,
+      catalog_fallback_provider_codes: catalog_fallback,
+      hints,
+    };
   }
 
   async getProcurementConfig(): Promise<GetProcurementConfigResult> {
@@ -501,6 +576,70 @@ export class SupabaseAdminProcurementRepository implements IAdminProcurementRepo
     return { attempts };
   }
 
+  private async resolveCanonicalAccountIdsByProviderCode(
+    providerCodes: string[],
+  ): Promise<Map<string, string>> {
+    if (providerCodes.length === 0) return new Map();
+
+    const rows = await this.db.query<{ id: string; provider_code: string }>('provider_accounts', {
+      select: 'id, provider_code',
+      filter: { is_enabled: true },
+      in: [['provider_code', providerCodes]],
+    });
+
+    const byCode = new Map<string, string[]>();
+    for (const row of rows) {
+      const list = byCode.get(row.provider_code) ?? [];
+      list.push(row.id);
+      byCode.set(row.provider_code, list);
+    }
+
+    const map = new Map<string, string>();
+    for (const code of providerCodes) {
+      const ids = byCode.get(code);
+      if (ids === undefined || ids.length === 0) continue;
+      ids.sort();
+      map.set(code, ids[ids.length - 1]!);
+    }
+
+    return map;
+  }
+
+  private mergeLiveAndLocalOffers(
+    live: LiveSearchOffer[],
+    local: LiveSearchOffer[],
+    maxResults: number,
+  ): LiveSearchOffer[] {
+    const merged = new Map<string, LiveSearchOffer>();
+    for (const o of live) merged.set(o.external_product_id, o);
+    for (const o of local) {
+      if (!merged.has(o.external_product_id)) merged.set(o.external_product_id, o);
+    }
+    return [...merged.values()].slice(0, maxResults);
+  }
+
+  private scheduleLiveSearchCatalogUpsert(
+    offers: LiveSearchOffer[],
+    providerCode: string,
+    providerAccountId: string,
+  ): void {
+    const rows = liveSearchOffersToCatalogUpsertRows(
+      offers,
+      providerCode,
+      providerAccountId,
+      new Date().toISOString(),
+    );
+
+    void this.db
+      .upsertMany('provider_product_catalog', rows, 'provider_account_id,external_product_id')
+      .catch((err) => {
+        logger.warn('Auto-catalog upsert failed (non-blocking)', {
+          provider: providerCode,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+  }
+
   private async searchLocalCatalogGrouped(
     query: string,
     providerCodes: string[],
@@ -526,17 +665,7 @@ export class SupabaseAdminProcurementRepository implements IAdminProcurementRepo
           grouped.set(row.provider_code, group);
         }
         if (group.offers.length >= maxPerProvider) continue;
-        group.offers.push({
-          provider_code: row.provider_code,
-          external_product_id: row.external_product_id,
-          product_name: row.product_name,
-          platform: row.platform ?? null,
-          region: row.region ?? null,
-          price_cents: row.min_price_cents ?? 0,
-          currency: row.currency ?? 'EUR',
-          available: row.available_to_buy ?? true,
-          thumbnail: row.thumbnail ?? null,
-        });
+        group.offers.push(catalogProductRowToLiveSearchOffer(row));
       }
 
       return [...grouped.values()];

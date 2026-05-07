@@ -656,7 +656,8 @@ container.register(UC_TOKENS.RemoveCallback, { useClass: RemoveCallbackUseCase }
 container.register(UC_TOKENS.ExpireReservations, { useClass: ExpireReservationsUseCase });
 
 // Infrastructure — Marketplace & Seller Services
-container.register(TOKENS.MarketplaceAdapterRegistry, { useClass: MarketplaceAdapterRegistry });
+// Singleton: tsyringe defaults to Transient; bootstrap and repositories must share one registry.
+container.registerSingleton(TOKENS.MarketplaceAdapterRegistry, MarketplaceAdapterRegistry);
 container.register(TOKENS.KeyDecryption, { useClass: KeyDecryptionService });
 container.register(TOKENS.ListingHealth, { useClass: ListingHealthService });
 container.register(TOKENS.VariantUnavailability, { useClass: VariantUnavailabilityService });

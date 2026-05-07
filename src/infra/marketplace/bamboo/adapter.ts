@@ -8,7 +8,7 @@
  * It does NOT support seller/marketplace listings.
  *
  * Auth: HTTP Basic (ClientId:ClientSecret)
- * Catalog: GET /api/integration/v2.0/catalog?Name={term}&TargetCurrency=USD
+ * Catalog: GET /api/integration/v2.0/catalog?Name={term}&TargetCurrency={from_profile_or_USD}
  * Orders:  GET /api/integration/v1.0/orders/{requestId}
  */
 import type {
@@ -23,7 +23,6 @@ import { floatToCents } from '../../../shared/pricing.js';
 const logger = createLogger('bamboo-adapter');
 
 const CATALOG_PAGE_SIZE = 50;
-const TARGET_CURRENCY = 'USD';
 
 function detectPlatformFromName(name: string): string | null {
   const lower = name.toLowerCase();
@@ -50,17 +49,25 @@ export function mapCardToKey(card: BambooCard): string {
 export class BambooMarketplaceAdapter implements IProductSearchAdapter {
   private readonly catalogClient: MarketplaceHttpClient;
   private readonly ordersClient: MarketplaceHttpClient;
+  private readonly catalogTargetCurrency: string;
 
-  constructor(catalogClient: MarketplaceHttpClient, ordersClient: MarketplaceHttpClient) {
+  constructor(
+    catalogClient: MarketplaceHttpClient,
+    ordersClient: MarketplaceHttpClient,
+    catalogTargetCurrency = 'USD',
+  ) {
     this.catalogClient = catalogClient;
     this.ordersClient = ordersClient;
+    this.catalogTargetCurrency = /^[A-Za-z]{3}$/.test(catalogTargetCurrency.trim())
+      ? catalogTargetCurrency.trim().toUpperCase()
+      : 'USD';
   }
 
   async searchProducts(query: string, limit?: number): Promise<ProductSearchResult[]> {
     const maxResults = limit ?? 20;
 
     try {
-      const path = `catalog?Name=${encodeURIComponent(query)}&TargetCurrency=${TARGET_CURRENCY}&PageSize=${CATALOG_PAGE_SIZE}&PageIndex=0`;
+      const path = `catalog?Name=${encodeURIComponent(query)}&TargetCurrency=${encodeURIComponent(this.catalogTargetCurrency)}&PageSize=${CATALOG_PAGE_SIZE}&PageIndex=0`;
 
       const response = await this.catalogClient.get<BambooCatalogResponse>(path);
 

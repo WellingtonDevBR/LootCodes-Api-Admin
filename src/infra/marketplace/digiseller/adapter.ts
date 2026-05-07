@@ -7,6 +7,7 @@
  *   - ISellerStockSyncAdapter    (status toggle based on remote stock count)
  *   - ISellerDeclaredStockAdapter(Form delivery — declared stock via sales_limit)
  *   - ISellerPricingAdapter      (net payout from commission %)
+ *   - IProductSearchAdapter      (POST seller-goods — name filter client-side)
  *
  * Two delivery models:
  *   key_upload:      Keys uploaded via /api/product/content/add/text
@@ -23,6 +24,8 @@ import type {
   ISellerStockSyncAdapter,
   ISellerDeclaredStockAdapter,
   ISellerPricingAdapter,
+  IProductSearchAdapter,
+  ProductSearchResult,
   CreateListingParams,
   CreateListingResult,
   UpdateListingParams,
@@ -47,6 +50,8 @@ import type {
   DigisellerApiResponse,
   DigisellerProductType,
   DigisellerListingOpts,
+  DigisellerSellerGoodsResponse,
+  DigisellerSellerGoodsRow,
 } from './types.js';
 import { DIGISELLER_CREATE_PATHS, DIGISELLER_LOCALES, DEFAULT_LISTING_OPTS } from './types.js';
 import { createLogger } from '../../../shared/logger.js';
@@ -66,10 +71,12 @@ export class DigisellerMarketplaceAdapter
     ISellerKeyUploadAdapter,
     ISellerStockSyncAdapter,
     ISellerDeclaredStockAdapter,
-    ISellerPricingAdapter
+    ISellerPricingAdapter,
+    IProductSearchAdapter
 {
   private readonly listingOpts: DigisellerListingOpts;
   private readonly commissionRatePercent: number;
+  private readonly sellerNumericId?: number;
 
   constructor(
     private readonly httpClient: MarketplaceHttpClient,
@@ -77,6 +84,7 @@ export class DigisellerMarketplaceAdapter
       defaultCurrency?: string;
       listingOpts?: Partial<DigisellerListingOpts>;
       commissionRatePercent?: number;
+      sellerNumericId?: number;
     },
   ) {
     this.listingOpts = {
@@ -86,6 +94,7 @@ export class DigisellerMarketplaceAdapter
     };
     this.commissionRatePercent = Math.max(0, Math.min(100,
       options?.commissionRatePercent ?? DEFAULT_COMMISSION_RATE_PERCENT));
+    this.sellerNumericId = options?.sellerNumericId;
   }
 
   // ─── ISellerListingAdapter ───────────────────────────────────────────
@@ -261,6 +270,80 @@ export class DigisellerMarketplaceAdapter
     const feeCents = Math.round(grossCents * this.commissionRatePercent / 100);
     const netPayoutCents = grossCents - feeCents;
     return { grossPriceCents: grossCents, feeCents, netPayoutCents };
+  }
+
+  // ─── IProductSearchAdapter (seller-goods; name filter client-side) ─
+
+  async searchProducts(query: string, limit = 10): Promise<ProductSearchResult[]> {
+    const term = query.trim();
+    if (this.sellerNumericId === undefined || term.length < 2) return [];
+
+    const qLower = term.toLowerCase();
+    const collected: ProductSearchResult[] = [];
+    const rowsPerPage = Math.min(500, Math.max(50, limit * 40));
+    const maxPages = Math.min(10, Math.ceil(2000 / rowsPerPage));
+
+    try {
+      let totalPages = maxPages;
+      for (let page = 1; page <= totalPages && collected.length < limit; page++) {
+        const resp = await this.httpClient.post<DigisellerSellerGoodsResponse>('seller-goods', {
+          id_seller: this.sellerNumericId,
+          page,
+          rows: rowsPerPage,
+          currency: this.listingOpts.defaultCurrency,
+          lang: 'en-US',
+          order_col: 'name',
+          order_dir: 'asc',
+          show_hidden: 0,
+        });
+
+        if (resp.retval !== 0) {
+          logger.warn('Digiseller seller-goods returned non-zero retval', {
+            retval: resp.retval,
+            retdesc: resp.retdesc,
+            page,
+          });
+          break;
+        }
+
+        if (typeof resp.pages === 'number' && resp.pages >= 1) {
+          totalPages = Math.min(totalPages, resp.pages);
+        }
+
+        const rows = DigisellerMarketplaceAdapter.extractSellerGoodsRows(resp);
+        if (rows.length === 0 && page === 1) break;
+
+        for (const row of rows) {
+          const id = row.id_goods;
+          if (typeof id !== 'number') continue;
+
+          const name = DigisellerMarketplaceAdapter.normalizeSellerGoodsName(row.name_goods);
+          if (!name.toLowerCase().includes(qLower)) continue;
+
+          const { cents, currency } = DigisellerMarketplaceAdapter.rowPriceForSearch(
+            row,
+            this.listingOpts.defaultCurrency,
+          );
+
+          collected.push({
+            externalProductId: String(id),
+            productName: name,
+            platform: null,
+            region: null,
+            priceCents: cents,
+            currency,
+            available: DigisellerMarketplaceAdapter.rowLooksAvailable(row),
+          });
+
+          if (collected.length >= limit) break;
+        }
+      }
+
+      return collected.slice(0, limit);
+    } catch (err) {
+      logger.warn('Digiseller product search failed', err as Error);
+      return [];
+    }
   }
 
   // ─── Form delivery setup ───────────────────────────────────────────
@@ -459,6 +542,49 @@ export class DigisellerMarketplaceAdapter
         productId, categoryId, error: err instanceof Error ? err.message : String(err),
       });
     }
+  }
+
+  private static extractSellerGoodsRows(resp: DigisellerSellerGoodsResponse): DigisellerSellerGoodsRow[] {
+    const rows = resp.rows;
+    if (Array.isArray(rows)) return rows;
+    if (rows && typeof rows === 'object' && 'row' in rows) {
+      const nested = rows.row;
+      if (Array.isArray(nested)) return nested;
+      if (nested && typeof nested === 'object') return [nested];
+    }
+    return [];
+  }
+
+  private static normalizeSellerGoodsName(raw: string | undefined): string {
+    if (!raw) return '';
+    return raw.replace(/<!\[CDATA\[|\]\]>/g, '').trim();
+  }
+
+  private static rowLooksAvailable(row: DigisellerSellerGoodsRow): boolean {
+    if (row.in_stock === 0) return false;
+    const n = row.num_in_stock;
+    if (typeof n === 'number') return n > 0;
+    return true;
+  }
+
+  private static rowPriceForSearch(
+    row: DigisellerSellerGoodsRow,
+    defaultCurrency: string,
+  ): { cents: number; currency: string } {
+    const currency = (row.currency ?? defaultCurrency ?? 'USD').toUpperCase();
+    if (typeof row.price === 'number') {
+      return { cents: floatToCents(row.price), currency };
+    }
+    const alt =
+      currency === 'USD'
+        ? row.price_usd
+        : currency === 'EUR'
+          ? row.price_eur
+          : currency === 'RUR' || currency === 'RUB'
+            ? row.price_rur
+            : row.price_uah;
+    if (typeof alt === 'number') return { cents: floatToCents(alt), currency };
+    return { cents: 0, currency };
   }
 
   private assertRetval(resp: DigisellerApiResponse, operation: string): void {

@@ -1,16 +1,11 @@
 /**
  * Marketplace adapter registry — resolves capability adapters by provider code.
  *
- * Adapters are registered at startup via DI container and lazily initialized
- * when their provider_accounts row is loaded from the DB.
- *
  * Each adapter implements a subset of the capability interfaces from
  * `marketplace-adapter.port.ts`. The registry uses runtime type checking
- * to verify capabilities.
+ * to verify capabilities. Populated by `bootstrapMarketplaceAdapters` on app startup.
  */
-import { injectable, inject } from 'tsyringe';
-import { TOKENS } from '../../di/tokens.js';
-import type { IDatabase } from '../../core/ports/database.port.js';
+import { injectable } from 'tsyringe';
 import type {
   IMarketplaceAdapterRegistry,
   ISellerListingAdapter,
@@ -63,10 +58,6 @@ const CAPABILITY_CHECKS: Record<MarketplaceCapability, CapabilityCheckFn> = {
 @injectable()
 export class MarketplaceAdapterRegistry implements IMarketplaceAdapterRegistry {
   private readonly adapters = new Map<string, AnyMarketplaceAdapter>();
-
-  constructor(
-    @inject(TOKENS.Database) private readonly db: IDatabase,
-  ) {}
 
   registerAdapter(providerCode: string, adapter: AnyMarketplaceAdapter): void {
     this.adapters.set(providerCode, adapter);

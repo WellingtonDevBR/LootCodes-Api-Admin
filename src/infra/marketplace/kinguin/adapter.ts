@@ -71,6 +71,11 @@ export class KinguinMarketplaceAdapter
     private readonly buyerHttpClient?: MarketplaceHttpClient,
   ) {}
 
+  /** Live marketplace search calls the buyer HTTP API; seller OAuth alone is not enough. */
+  isBuyerProductSearchConfigured(): boolean {
+    return this.buyerHttpClient !== undefined;
+  }
+
   // ─── ISellerListingAdapter ───────────────────────────────────────────
 
   async createListing(params: CreateListingParams): Promise<CreateListingResult> {

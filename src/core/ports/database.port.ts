@@ -34,6 +34,8 @@ export interface IDatabase {
   insertMany(table: string, rows: Record<string, unknown>[]): Promise<number>;
   update<T = unknown>(table: string, filter: Record<string, unknown>, data: Record<string, unknown>): Promise<T[]>;
   upsert<T = unknown>(table: string, data: Record<string, unknown>, onConflict?: string): Promise<T>;
+  /** Batch upsert (PostgREST). `onConflict` is comma-separated columns, e.g. `provider_account_id,external_product_id`. */
+  upsertMany(table: string, rows: Record<string, unknown>[], onConflict: string): Promise<void>;
   delete(table: string, filter: Record<string, unknown>): Promise<number>;
   rpc<T = unknown>(functionName: string, params?: Record<string, unknown>): Promise<T>;
   invokeFunction<T = unknown>(functionName: string, body: Record<string, unknown>): Promise<T>;

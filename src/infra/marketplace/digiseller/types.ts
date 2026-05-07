@@ -145,6 +145,28 @@ export interface DigisellerProductListItem {
 
 export type DigisellerProductListResponse = DigisellerProductListItem[];
 
+// ─── Seller goods listing (POST seller-goods) ──────────────────────────
+
+export interface DigisellerSellerGoodsRow {
+  id_goods?: number;
+  name_goods?: string;
+  price?: number;
+  currency?: string;
+  price_usd?: number;
+  price_eur?: number;
+  price_rur?: number;
+  price_uah?: number;
+  in_stock?: number;
+  num_in_stock?: number;
+}
+
+export interface DigisellerSellerGoodsResponse extends DigisellerApiResponse {
+  cnt_goods?: number;
+  pages?: number;
+  page?: number;
+  rows?: DigisellerSellerGoodsRow[] | { row?: DigisellerSellerGoodsRow | DigisellerSellerGoodsRow[] };
+}
+
 // ─── Listing Options ──────────────────────────────────────────────────
 
 export interface DigisellerListingOpts {

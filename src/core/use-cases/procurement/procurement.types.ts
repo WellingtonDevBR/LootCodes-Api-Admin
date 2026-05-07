@@ -105,6 +105,14 @@ export interface LiveSearchProvidersDto {
   exclude_provider_codes?: string[];
 }
 
+/** Returned with every live-search response for CRM visibility / ops audit (bootstrap vs runtime). */
+export interface LiveSearchDiagnostics {
+  readonly registered_provider_codes: string[];
+  readonly live_http_provider_codes: string[];
+  readonly catalog_fallback_provider_codes: string[];
+  readonly hints: string[];
+}
+
 export interface LiveSearchOffer {
   provider_code: string;
   external_product_id: string;
@@ -124,6 +132,7 @@ export interface LiveSearchProviderGroup {
 
 export interface LiveSearchProvidersResult {
   providers: LiveSearchProviderGroup[];
+  diagnostics: LiveSearchDiagnostics;
 }
 
 // --- Procurement Config ---

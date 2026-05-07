@@ -19,6 +19,7 @@ import { KinguinMarketplaceAdapter } from './kinguin/adapter.js';
 import { DigisellerMarketplaceAdapter } from './digiseller/adapter.js';
 import { BambooMarketplaceAdapter } from './bamboo/adapter.js';
 import { resolveProviderSecrets } from './resolve-provider-secrets.js';
+import { kinguinBuyerApiKeyFromSecrets } from './kinguin-buyer-api-key.js';
 import { createLogger } from '../../shared/logger.js';
 
 const logger = createLogger('marketplace-bootstrap');
@@ -65,6 +66,11 @@ export async function bootstrapMarketplaceAdapters(
       return;
     }
 
+    logger.info('Marketplace bootstrap: enabled provider_accounts loaded', {
+      count: accounts.length,
+      providerCodes: [...new Set(accounts.map((a) => a.provider_code))].sort(),
+    });
+
     for (const account of accounts) {
       try {
         const secrets = await resolveProviderSecrets(db, account.id);
@@ -80,8 +86,11 @@ export async function bootstrapMarketplaceAdapters(
       }
     }
 
+    const registered = registry.getSupportedProviders();
     logger.info('Marketplace adapters bootstrapped', {
-      registered: registry.getSupportedProviders(),
+      registered,
+      registeredCount: registered.length,
+      attemptedAccounts: accounts.length,
     });
   } catch (err) {
     logger.error('Failed to bootstrap marketplace adapters', err as Error);
@@ -266,7 +275,7 @@ function buildKinguinAdapter(
   }
 
   let buyerClient: MarketplaceHttpClient | undefined;
-  const buyerApiKey = secrets['KINGUIN_BUYER_API_KEY'];
+  const buyerApiKey = kinguinBuyerApiKeyFromSecrets(secrets);
   const buyerBaseUrl = profileStr(profile, 'buyer_base_url');
   if (buyerApiKey && buyerBaseUrl) {
     buyerClient = new MarketplaceHttpClient({
@@ -306,8 +315,11 @@ function buildDigisellerAdapter(
     ? sellerConfig
     : {};
 
+  const sellerNumericId = Number.parseInt(String(sellerId).trim(), 10);
+
   return new DigisellerMarketplaceAdapter(httpClient, {
     defaultCurrency: (cfg['default_currency'] as string) ?? 'USD',
+    sellerNumericId: Number.isFinite(sellerNumericId) ? sellerNumericId : undefined,
   });
 }
 
@@ -341,5 +353,12 @@ function buildBambooAdapter(
     headers: async () => ({ Authorization: basicAuth }),
   });
 
-  return new BambooMarketplaceAdapter(catalogClient, ordersClient);
+  return new BambooMarketplaceAdapter(catalogClient, ordersClient, catalogTargetCurrency(profile));
+}
+
+function catalogTargetCurrency(profile: Record<string, unknown>): string {
+  const fromProfile =
+    profileStr(profile, 'catalog_target_currency')?.trim().toUpperCase() ??
+    profileStr(profile, 'checkout_wallet_currency')?.trim().toUpperCase();
+  return /^[A-Za-z]{3}$/.test(fromProfile ?? '') ? fromProfile! : 'USD';
 }
