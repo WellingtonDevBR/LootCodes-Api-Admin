@@ -370,6 +370,117 @@ describe('CreditAwareDeclaredStockSelectorUseCase', () => {
     }
   });
 
+  // ─── 12a. Fixed per-sale fee enters profitability ceiling ────────
+
+  // Concrete scenario: Eneba Minecraft EUX (the bug that triggered this fix).
+  // Sale €15.18 ≈ $1786 USD (at 0.85 EUR/USD); 6% commission; €0.25 ≈ $30 USD fee;
+  // 1% min margin. Without the fee subtraction the ceiling is ~$1662 and Bamboo
+  // at $1642 is accepted; with the €0.25 fee subtracted it becomes ~$1633 and
+  // Bamboo ($1642) is correctly rejected as uneconomic.
+  it("returns disable: 'uneconomic' when only credited buyer breaches the ceiling once the fixed per-sale fee is applied", async () => {
+    const offers: DeclaredStockOfferRow[] = [
+      offerRow({
+        provider_code: 'bamboo',
+        provider_account_id: 'acct-bamboo',
+        last_price_cents: 1_642,
+        currency: 'USD',
+        available_quantity: 100,
+      }),
+    ];
+    const snapshot = snapshotOf([['acct-bamboo', [['USD', 1_000_000]]]]);
+
+    const out = await uc.execute({
+      offers,
+      snapshot,
+      config: {
+        ...baseConfig,
+        sellerSalePriceUsdCents: 1_786,
+        commissionRatePercent: 6,
+        minProfitMarginPct: 1,
+        fixedFeeUsdCents: 30, // €0.25 ≈ $30
+      },
+    });
+
+    expect(out.kind).toBe('disable');
+    if (out.kind === 'disable') {
+      expect(out.reason).toBe('uneconomic');
+    }
+  });
+
+  it('still picks the cheaper credited buyer when the fixed-fee-adjusted ceiling clears it', async () => {
+    const offers: DeclaredStockOfferRow[] = [
+      offerRow({
+        provider_code: 'bamboo',
+        provider_account_id: 'acct-bamboo',
+        last_price_cents: 1_642,
+        currency: 'USD',
+        available_quantity: 100,
+      }),
+      offerRow({
+        provider_code: 'approute',
+        provider_account_id: 'acct-approute',
+        last_price_cents: 1_614,
+        currency: 'USD',
+        available_quantity: 50,
+      }),
+    ];
+    const snapshot = snapshotOf([
+      ['acct-bamboo', [['USD', 1_000_000]]],
+      ['acct-approute', [['USD', 1_000_000]]],
+    ]);
+
+    const out = await uc.execute({
+      offers,
+      snapshot,
+      config: {
+        ...baseConfig,
+        sellerSalePriceUsdCents: 1_786,
+        commissionRatePercent: 6,
+        minProfitMarginPct: 1,
+        fixedFeeUsdCents: 30,
+      },
+    });
+
+    expect(out.kind).toBe('declare');
+    if (out.kind === 'declare') {
+      // AppRoute clears the ceiling, Bamboo does not — selector must skip
+      // Bamboo despite being sorted first by price-ascending.
+      expect(out.offer.provider_code).toBe('approute');
+      expect(out.costBasisUsdCents).toBe(1_614);
+    }
+  });
+
+  it('treats missing fixedFeeUsdCents as zero (backward-compatible config)', async () => {
+    const offers: DeclaredStockOfferRow[] = [
+      offerRow({
+        provider_code: 'bamboo',
+        provider_account_id: 'acct-bamboo',
+        last_price_cents: 1_642,
+        currency: 'USD',
+        available_quantity: 10,
+      }),
+    ];
+    const snapshot = snapshotOf([['acct-bamboo', [['USD', 1_000_000]]]]);
+
+    // Same numbers as the uneconomic test above MINUS the fixedFeeUsdCents
+    // field — the omitted field must default to 0 and let Bamboo through.
+    const out = await uc.execute({
+      offers,
+      snapshot,
+      config: {
+        ...baseConfig,
+        sellerSalePriceUsdCents: 1_786,
+        commissionRatePercent: 6,
+        minProfitMarginPct: 1,
+      },
+    });
+
+    expect(out.kind).toBe('declare');
+    if (out.kind === 'declare') {
+      expect(out.offer.provider_code).toBe('bamboo');
+    }
+  });
+
   // ─── 12. prioritize_quote_sync tie-breaker ──────────────────────
 
   it('uses prioritize_quote_sync as tie-breaker when USD prices match', async () => {

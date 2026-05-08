@@ -72,6 +72,16 @@ export interface DeclaredStockPricingConfig {
    */
   readonly listingMinUsdCents: number;
   /**
+   * Per-sale flat fee charged by the marketplace, normalized to USD cents.
+   * Subtracted BEFORE the margin gate, mirroring `seller-pricing-math.ts`'s
+   * floor formula `(cost × (1 + margin) + fee) / (1 − commission)`.
+   *
+   * Sourced from `seller_config.fixed_fee_cents` after merging any per-listing
+   * `pricing_overrides.fixed_fee_override_cents`. Optional for backward
+   * compatibility; `undefined` is treated as zero.
+   */
+  readonly fixedFeeUsdCents?: number;
+  /**
    * How many units the listing wants to declare/cover this cycle.
    * Wallet headroom must cover `unitCost * requestedQty`.
    */
@@ -210,16 +220,34 @@ function computeProfitabilityCeilingUsdCents(
   }
   const commission = clampPercent(config.commissionRatePercent);
   const margin = clampPercent(config.minProfitMarginPct);
+  const fixedFee = clampNonNegative(config.fixedFeeUsdCents);
 
+  // Mirror of `seller-pricing-math.priceFloorFromCost`:
+  //   gross = (cost * (1 + margin) + fee) / (1 - commission)
+  //   ⇔   max_cost = (gross * (1 - commission) - fee) / (1 + margin)
+  // We collapse `1 + margin` to `1 − margin/(1 + margin)` only when comparing
+  // ratios, but for an upper-bound buyer cost it's equivalent (and clearer)
+  // to subtract the fee from the post-commission take and apply the margin
+  // multiplicatively against the resulting net.
   const afterCommission = sale * (1 - commission / 100);
-  const ceiling = afterCommission * (1 - margin / 100);
-  return Number.isFinite(ceiling) && ceiling > 0 ? Math.floor(ceiling) : null;
+  const afterFee = afterCommission - fixedFee;
+  if (!Number.isFinite(afterFee) || afterFee <= 0) {
+    return 0;
+  }
+  const ceiling = afterFee * (1 - margin / 100);
+  return Number.isFinite(ceiling) && ceiling > 0 ? Math.floor(ceiling) : 0;
 }
 
 function clampPercent(input: number | undefined): number {
   if (typeof input !== 'number' || !Number.isFinite(input)) return 0;
   if (input < 0) return 0;
   if (input > 100) return 100;
+  return input;
+}
+
+function clampNonNegative(input: number | undefined): number {
+  if (typeof input !== 'number' || !Number.isFinite(input)) return 0;
+  if (input < 0) return 0;
   return input;
 }
 

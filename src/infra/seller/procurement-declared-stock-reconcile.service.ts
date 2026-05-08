@@ -173,6 +173,14 @@ export class ProcurementDeclaredStockReconcileService implements IProcurementDec
     const minFloorUsd =
       (await this.fx.toUsdCents(mergedConfig.min_price_floor_cents, account.seller_config.default_currency))
       ?? mergedConfig.min_price_floor_cents;
+    // Per-sale fee follows the same currency convention as min_price_floor_cents:
+    // stored in `seller_config.default_currency` (and merged from
+    // `pricing_overrides.fixed_fee_override_cents` per listing). FX-convert to
+    // USD so the selector can apply it to the USD-normalized profitability
+    // ceiling without caring about per-listing currency drift.
+    const fixedFeeUsd =
+      (await this.fx.toUsdCents(mergedConfig.fixed_fee_cents, account.seller_config.default_currency))
+      ?? mergedConfig.fixed_fee_cents;
 
     const cfg: DeclaredStockPricingConfig = {
       sellerSalePriceUsdCents: salePriceUsd,
@@ -180,6 +188,7 @@ export class ProcurementDeclaredStockReconcileService implements IProcurementDec
       commissionRatePercent: mergedConfig.commission_rate_percent,
       minPriceFloorUsdCents: minFloorUsd,
       listingMinUsdCents: listingMinUsd,
+      fixedFeeUsdCents: fixedFeeUsd,
       requestedQty: 1,
     };
 

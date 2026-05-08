@@ -5,8 +5,14 @@ import type { SellerPriceStrategy, SellerProviderConfig } from './seller.types.j
  * the resolved provider {@link SellerProviderConfig} used by auto-pricing cron.
  *
  * Canonical keys: `commission_override_percent`, `min_profit_percent`,
- * `price_strategy`, `price_strategy_value`.
+ * `fixed_fee_override_cents`, `price_strategy`, `price_strategy_value`.
  * Legacy keys `commission_rate_percent`, `min_profit_margin_pct` are honored too.
+ *
+ * `fixed_fee_override_cents` is the per-sale flat fee charged by the marketplace
+ * for THIS specific product, expressed in the listing's currency (e.g. €0.25 →
+ * `25` for an EUR listing). Per-product because marketplaces like Eneba and
+ * Kinguin charge category-specific or game-specific flat fees that the global
+ * `seller_config.fixed_fee_cents` cannot capture.
  *
  * `bypass_profitability_guard` is stored on the listing JSON but is **not** folded into
  * {@link SellerProviderConfig}; auto-pricing reads it from raw `pricing_overrides`.
@@ -34,6 +40,14 @@ export function mergeSellerListingPricingOverrides(
         ? ov.min_profit_margin_pct
         : undefined;
   if (minProfit !== undefined) merged.min_profit_margin_pct = minProfit;
+
+  if (
+    typeof ov.fixed_fee_override_cents === 'number'
+    && Number.isFinite(ov.fixed_fee_override_cents)
+    && ov.fixed_fee_override_cents >= 0
+  ) {
+    merged.fixed_fee_cents = ov.fixed_fee_override_cents;
+  }
 
   if (typeof ov.price_strategy === 'string') {
     merged.price_strategy = ov.price_strategy as SellerPriceStrategy;

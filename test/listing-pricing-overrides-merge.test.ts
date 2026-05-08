@@ -55,4 +55,42 @@ describe('mergeSellerListingPricingOverrides', () => {
     expect(merged.price_strategy).toBe('undercut_percent');
     expect(merged.price_strategy_value).toBe(3);
   });
+
+  // Fixed-fee override tests — see docs/05-coding-standards.md §11 (Primitive Obsession):
+  // value is cents in the LISTING currency, same unit as `seller_config.fixed_fee_cents`.
+  it('maps fixed_fee_override_cents into fixed_fee_cents', () => {
+    const base = { ...SELLER_CONFIG_DEFAULTS, fixed_fee_cents: 0 };
+    const merged = mergeSellerListingPricingOverrides(base, { fixed_fee_override_cents: 25 });
+    expect(merged.fixed_fee_cents).toBe(25);
+  });
+
+  it('overrides a non-zero provider fixed fee per listing', () => {
+    const base = { ...SELLER_CONFIG_DEFAULTS, fixed_fee_cents: 25 };
+    const merged = mergeSellerListingPricingOverrides(base, { fixed_fee_override_cents: 50 });
+    expect(merged.fixed_fee_cents).toBe(50);
+  });
+
+  it('preserves provider fixed fee when override is absent', () => {
+    const base = { ...SELLER_CONFIG_DEFAULTS, fixed_fee_cents: 25 };
+    const merged = mergeSellerListingPricingOverrides(base, { commission_override_percent: 6 });
+    expect(merged.fixed_fee_cents).toBe(25);
+  });
+
+  it('rejects non-numeric fixed_fee_override_cents', () => {
+    const base = { ...SELLER_CONFIG_DEFAULTS, fixed_fee_cents: 25 };
+    const merged = mergeSellerListingPricingOverrides(base, { fixed_fee_override_cents: 'oops' });
+    expect(merged.fixed_fee_cents).toBe(25);
+  });
+
+  it('rejects negative fixed_fee_override_cents', () => {
+    const base = { ...SELLER_CONFIG_DEFAULTS, fixed_fee_cents: 25 };
+    const merged = mergeSellerListingPricingOverrides(base, { fixed_fee_override_cents: -10 });
+    expect(merged.fixed_fee_cents).toBe(25);
+  });
+
+  it('accepts an explicit zero override (admin choosing to wipe the provider fee)', () => {
+    const base = { ...SELLER_CONFIG_DEFAULTS, fixed_fee_cents: 25 };
+    const merged = mergeSellerListingPricingOverrides(base, { fixed_fee_override_cents: 0 });
+    expect(merged.fixed_fee_cents).toBe(0);
+  });
 });
