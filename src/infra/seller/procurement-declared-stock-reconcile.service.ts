@@ -45,6 +45,7 @@ interface ListingRow {
   readonly variant_id: string;
   readonly provider_account_id: string;
   readonly external_listing_id: string | null;
+  readonly external_product_id: string | null;
   readonly listing_type: string;
   readonly status: string;
   readonly declared_stock: number;
@@ -177,10 +178,18 @@ export class ProcurementDeclaredStockReconcileService implements IProcurementDec
     // stored in `seller_config.default_currency` (and merged from
     // `pricing_overrides.fixed_fee_override_cents` per listing). FX-convert to
     // USD so the selector can apply it to the USD-normalized profitability
-    // ceiling without caring about per-listing currency drift.
+    // ceiling without caring about per-listing currency drift. Used only
+    // when the live marketplace calculator is unavailable (e.g. Digiseller).
     const fixedFeeUsd =
       (await this.fx.toUsdCents(mergedConfig.fixed_fee_cents, account.seller_config.default_currency))
       ?? mergedConfig.fixed_fee_cents;
+
+    // Marketplace-authoritative path: ask the marketplace's own fee calculator
+    // (Eneba `S_calculatePrice`, G2A `/v3/pricing/simulations`, Kinguin
+    // commission API, Gamivo `calculate-customer-price`) what the seller
+    // actually receives after fees. This eliminates manual-config drift for
+    // tiered or per-product commissions (e.g. Eneba's 6% + €0.25 above €5).
+    const netPayoutUsdCents = await this.fetchLiveNetPayoutUsdCents(account, listing);
 
     const cfg: DeclaredStockPricingConfig = {
       sellerSalePriceUsdCents: salePriceUsd,
@@ -189,10 +198,67 @@ export class ProcurementDeclaredStockReconcileService implements IProcurementDec
       minPriceFloorUsdCents: minFloorUsd,
       listingMinUsdCents: listingMinUsd,
       fixedFeeUsdCents: fixedFeeUsd,
+      ...(netPayoutUsdCents != null ? { netPayoutUsdCents } : {}),
       requestedQty: 1,
     };
 
     return this.selector.execute({ offers, snapshot, config: cfg });
+  }
+
+  /**
+   * Calls the marketplace's own fee calculator and FX-normalizes the result
+   * to USD cents. Returns `null` when no adapter is registered (Digiseller),
+   * when the listing lacks identifiers the adapter requires, or when the
+   * call throws — in those cases the caller falls back to manual config math.
+   *
+   * Failures are logged but never rethrown. Transient errors (rate limits,
+   * circuit breakers) get an `info` log; unexpected errors get a `warn` so
+   * Sentry surfaces them without blocking the rest of the cron run.
+   */
+  private async fetchLiveNetPayoutUsdCents(
+    account: ProviderAccountRow,
+    listing: ListingRow,
+  ): Promise<number | null> {
+    if (listing.price_cents <= 0) return null;
+
+    const adapter = this.registry.getPricingAdapter(account.provider_code);
+    if (!adapter) return null;
+
+    try {
+      const payout = await adapter.calculateNetPayout({
+        priceCents: listing.price_cents,
+        currency: listing.currency,
+        listingType: listing.listing_type,
+        ...(listing.external_listing_id ? { externalListingId: listing.external_listing_id } : {}),
+        ...(listing.external_product_id ? { externalProductId: listing.external_product_id } : {}),
+      });
+      if (
+        typeof payout.netPayoutCents !== 'number'
+        || !Number.isFinite(payout.netPayoutCents)
+        || payout.netPayoutCents <= 0
+      ) {
+        return null;
+      }
+      const usd = await this.fx.toUsdCents(payout.netPayoutCents, listing.currency);
+      return typeof usd === 'number' && Number.isFinite(usd) && usd > 0 ? usd : payout.netPayoutCents;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const errName = err instanceof Error ? err.name : '';
+      const isTransient =
+        errName === 'CircuitOpenError'
+        || errName === 'RateLimitExceededError'
+        || /^Circuit breaker open for /.test(msg)
+        || /^Rate limit exceeded for /.test(msg)
+        || /Too Many Requests/i.test(msg);
+      const logFn = isTransient ? logger.info.bind(logger) : logger.warn.bind(logger);
+      logFn('Live marketplace pricing call failed; selector falling back to manual config', {
+        listingId: listing.id,
+        providerCode: account.provider_code,
+        error: msg,
+        transient: isTransient,
+      });
+      return null;
+    }
   }
 
   private async applyDeclareInternal(
@@ -361,6 +427,7 @@ export class ProcurementDeclaredStockReconcileService implements IProcurementDec
       variant_id: r.variant_id as string,
       provider_account_id: r.provider_account_id as string,
       external_listing_id: (r.external_listing_id as string | null) ?? null,
+      external_product_id: (r.external_product_id as string | null) ?? null,
       listing_type: r.listing_type as string,
       status: r.status as string,
       declared_stock: typeof r.declared_stock === 'number' ? r.declared_stock : 0,

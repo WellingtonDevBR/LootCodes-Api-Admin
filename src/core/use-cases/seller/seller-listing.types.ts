@@ -71,6 +71,12 @@ export interface SellerListingPricingOverrides {
   min_profit_percent?: number | null;
   cost_basis_override_cents?: number | null;
   cost_basis_override_currency?: string | null;
+  /**
+   * Per-listing fixed marketplace fee override in minor units (cents) of the listing currency.
+   * When set, this replaces `seller_config.fixed_fee_cents` for this listing in pricing and
+   * declared-stock profitability calculations. See `mergeSellerListingPricingOverrides`.
+   */
+  fixed_fee_override_cents?: number | null;
   price_strategy?: SellerPriceStrategy | null;
   price_strategy_value?: number | null;
   /** When true, auto-pricer ignores profitability/cost-breakeven floors except provider min floor + manual listing min. */

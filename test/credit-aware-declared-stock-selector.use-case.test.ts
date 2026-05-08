@@ -450,6 +450,89 @@ describe('CreditAwareDeclaredStockSelectorUseCase', () => {
     }
   });
 
+  // ─── 12b. Marketplace-authoritative netPayoutUsdCents wins over manual config ─
+
+  /**
+   * When the reconcile service has fetched the marketplace's own answer
+   * (`netPayoutUsdCents` from `S_calculatePrice` / `/v3/pricing/simulations`
+   * / Kinguin commission API / Gamivo `calculate-customer-price`), the
+   * selector MUST use it directly and ignore the manual `commissionRatePercent`
+   * and `fixedFeeUsdCents` config — those are stale estimates by definition.
+   *
+   * This test pins the precedence: a misconfigured zero-commission/zero-fee
+   * row paired with an authoritative `netPayoutUsdCents=1649` (≈€1402 from
+   * Eneba's own response for the Minecraft EUX listing) must reject a buyer
+   * at $1700, even though the manual ceiling would let it pass.
+   */
+  it('uses marketplace-authoritative netPayoutUsdCents and ignores stale commission/fee config', async () => {
+    const offers: DeclaredStockOfferRow[] = [
+      offerRow({
+        provider_code: 'bamboo',
+        provider_account_id: 'acct-bamboo',
+        last_price_cents: 1_700,
+        currency: 'USD',
+        available_quantity: 100,
+      }),
+    ];
+    const snapshot = snapshotOf([['acct-bamboo', [['USD', 1_000_000]]]]);
+
+    const out = await uc.execute({
+      offers,
+      snapshot,
+      config: {
+        ...baseConfig,
+        sellerSalePriceUsdCents: 1_786,
+        // Intentionally wrong — would let buyer pass if used
+        commissionRatePercent: 0,
+        fixedFeeUsdCents: 0,
+        // Authoritative answer from the marketplace's own calculator
+        netPayoutUsdCents: 1_649,
+        minProfitMarginPct: 1,
+      },
+    });
+
+    expect(out.kind).toBe('disable');
+    if (out.kind === 'disable') {
+      expect(out.reason).toBe('uneconomic');
+    }
+  });
+
+  it('accepts a buyer below the netPayoutUsdCents ceiling even when stale manual config would reject', async () => {
+    const offers: DeclaredStockOfferRow[] = [
+      offerRow({
+        provider_code: 'bamboo',
+        provider_account_id: 'acct-bamboo',
+        last_price_cents: 1_600,
+        currency: 'USD',
+        available_quantity: 100,
+      }),
+    ];
+    const snapshot = snapshotOf([['acct-bamboo', [['USD', 1_000_000]]]]);
+
+    // Manual config (stale): 20% commission → ceiling ≈ 1786*0.8*0.99 = 1414
+    //   → would reject buyer at 1600 as 'uneconomic'.
+    // Authoritative `netPayoutUsdCents` (fresh): 1700 → ceiling ≈ 1700*0.99 = 1683
+    //   → accepts buyer at 1600.
+    // The selector MUST trust the marketplace's own answer.
+    const out = await uc.execute({
+      offers,
+      snapshot,
+      config: {
+        ...baseConfig,
+        sellerSalePriceUsdCents: 1_786,
+        commissionRatePercent: 20,
+        fixedFeeUsdCents: 0,
+        netPayoutUsdCents: 1_700,
+        minProfitMarginPct: 1,
+      },
+    });
+
+    expect(out.kind).toBe('declare');
+    if (out.kind === 'declare') {
+      expect(out.costBasisUsdCents).toBe(1_600);
+    }
+  });
+
   it('treats missing fixedFeeUsdCents as zero (backward-compatible config)', async () => {
     const offers: DeclaredStockOfferRow[] = [
       offerRow({

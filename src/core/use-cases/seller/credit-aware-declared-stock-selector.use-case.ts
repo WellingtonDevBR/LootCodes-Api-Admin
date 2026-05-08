@@ -79,8 +79,25 @@ export interface DeclaredStockPricingConfig {
    * Sourced from `seller_config.fixed_fee_cents` after merging any per-listing
    * `pricing_overrides.fixed_fee_override_cents`. Optional for backward
    * compatibility; `undefined` is treated as zero.
+   *
+   * Ignored when `netPayoutUsdCents` is provided — the marketplace's own
+   * calculator already accounts for both percentage commission and per-sale
+   * fees in its post-fee figure.
    */
   readonly fixedFeeUsdCents?: number;
+  /**
+   * Authoritative post-fee seller take-home in USD cents, sourced from the
+   * marketplace's own fee calculator (Eneba `S_calculatePrice`, G2A
+   * `/v3/pricing/simulations`, Kinguin commission API, Gamivo
+   * `calculate-customer-price`). When set, this value REPLACES the manual
+   * `commissionRatePercent + fixedFeeUsdCents` math — the selector applies
+   * only `minProfitMarginPct` on top of it.
+   *
+   * Provide this whenever the caller can reach the live calculator; fall
+   * back to manual config only when no live API exists (e.g. Digiseller)
+   * or the call genuinely failed. Optional for backward compatibility.
+   */
+  readonly netPayoutUsdCents?: number;
   /**
    * How many units the listing wants to declare/cover this cycle.
    * Wallet headroom must cover `unitCost * requestedQty`.
@@ -218,17 +235,27 @@ function computeProfitabilityCeilingUsdCents(
   if (typeof sale !== 'number' || !Number.isFinite(sale) || sale <= 0) {
     return null;
   }
-  const commission = clampPercent(config.commissionRatePercent);
   const margin = clampPercent(config.minProfitMarginPct);
-  const fixedFee = clampNonNegative(config.fixedFeeUsdCents);
 
+  // Marketplace-authoritative path: when the caller has fetched the live
+  // post-fee figure (Eneba `S_calculatePrice`, G2A pricing simulation, etc.),
+  // skip the stale manual commission/fixed-fee math entirely.
+  if (
+    typeof config.netPayoutUsdCents === 'number'
+    && Number.isFinite(config.netPayoutUsdCents)
+    && config.netPayoutUsdCents > 0
+  ) {
+    const ceiling = config.netPayoutUsdCents * (1 - margin / 100);
+    return Number.isFinite(ceiling) && ceiling > 0 ? Math.floor(ceiling) : 0;
+  }
+
+  // Fallback path (no live calculator available, e.g. Digiseller).
   // Mirror of `seller-pricing-math.priceFloorFromCost`:
   //   gross = (cost * (1 + margin) + fee) / (1 - commission)
   //   ⇔   max_cost = (gross * (1 - commission) - fee) / (1 + margin)
-  // We collapse `1 + margin` to `1 − margin/(1 + margin)` only when comparing
-  // ratios, but for an upper-bound buyer cost it's equivalent (and clearer)
-  // to subtract the fee from the post-commission take and apply the margin
-  // multiplicatively against the resulting net.
+  const commission = clampPercent(config.commissionRatePercent);
+  const fixedFee = clampNonNegative(config.fixedFeeUsdCents);
+
   const afterCommission = sale * (1 - commission / 100);
   const afterFee = afterCommission - fixedFee;
   if (!Number.isFinite(afterFee) || afterFee <= 0) {

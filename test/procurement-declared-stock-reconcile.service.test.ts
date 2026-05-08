@@ -22,6 +22,7 @@ import type {
   IMarketplaceAdapterRegistry,
   ISellerListingAdapter,
   ISellerDeclaredStockAdapter,
+  ISellerPricingAdapter,
   CreateListingResult,
   CreateListingParams,
   UpdateListingParams,
@@ -30,6 +31,8 @@ import type {
   DeclareStockResult,
   KeyProvisionParams,
   KeyProvisionResult,
+  PricingContext,
+  SellerPayoutResult,
 } from '../src/core/ports/marketplace-adapter.port.js';
 import type { IBuyerWalletSnapshotter, WalletSnapshot } from '../src/core/ports/buyer-wallet-snapshot.port.js';
 import type { IProcurementFxConverter } from '../src/core/ports/procurement-fx-converter.port.js';
@@ -70,17 +73,29 @@ class StubDeclaredStockAdapter implements ISellerDeclaredStockAdapter {
   }
 }
 
+class StubPricingAdapter implements ISellerPricingAdapter {
+  readonly calls: PricingContext[] = [];
+  constructor(
+    private readonly handler: (ctx: PricingContext) => SellerPayoutResult | Promise<SellerPayoutResult>,
+  ) {}
+  async calculateNetPayout(ctx: PricingContext): Promise<SellerPayoutResult> {
+    this.calls.push(ctx);
+    return this.handler(ctx);
+  }
+}
+
 class StubRegistry implements IMarketplaceAdapterRegistry {
   constructor(
     readonly listingByCode: Map<string, ISellerListingAdapter> = new Map(),
     readonly declaredByCode: Map<string, ISellerDeclaredStockAdapter> = new Map(),
+    readonly pricingByCode: Map<string, ISellerPricingAdapter> = new Map(),
   ) {}
   registerAdapter(): void { /* unused */ }
   getListingAdapter(c: string) { return this.listingByCode.get(c) ?? null; }
   getKeyUploadAdapter() { return null; }
   getDeclaredStockAdapter(c: string) { return this.declaredByCode.get(c) ?? null; }
   getStockSyncAdapter() { return null; }
-  getPricingAdapter() { return null; }
+  getPricingAdapter(c: string) { return this.pricingByCode.get(c) ?? null; }
   getCompetitionAdapter() { return null; }
   getCallbackSetupAdapter() { return null; }
   getBatchPriceAdapter() { return null; }
@@ -113,6 +128,7 @@ interface SellerListingFixture {
   variant_id: string;
   provider_account_id: string;
   external_listing_id: string;
+  external_product_id: string | null;
   listing_type: string;
   status: string;
   declared_stock: number;
@@ -252,6 +268,7 @@ function makeListing(over: Partial<SellerListingFixture>): SellerListingFixture 
     variant_id: 'variant-1',
     provider_account_id: 'acct-eneba',
     external_listing_id: 'ext-1',
+    external_product_id: null,
     listing_type: 'declared_stock',
     status: 'active',
     declared_stock: 5,
@@ -427,5 +444,203 @@ describe('ProcurementDeclaredStockReconcileService — credit-gated flow', () =>
     );
     expect(errorUpdates).toHaveLength(1);
     expect(errorUpdates[0].data.declared_stock).toBe(0);
+  });
+
+  /**
+   * The marketplace's own fee calculator (Eneba `S_calculatePrice`, G2A
+   * `/v3/pricing/simulations`, etc.) is the authoritative answer for what
+   * the seller actually receives after fees. The reconcile service MUST
+   * consult the live calculator when an `ISellerPricingAdapter` is registered
+   * for the provider, and feed the result into the selector via
+   * `netPayoutUsdCents` — bypassing the manual `commission_rate_percent +
+   * fixed_fee_cents` config.
+   */
+  it('calls the live marketplace pricing adapter and uses its netPayout to gate the selector', async () => {
+    db.providerAccounts.push(
+      makeAccount({
+        id: 'acct-eneba',
+        provider_code: 'eneba',
+        // Stale config — selector would let buyer through if this were used
+        seller_config: {
+          commission_rate_percent: 0,
+          fixed_fee_cents: 0,
+          min_profit_margin_pct: 1,
+        },
+      }),
+    );
+    db.buyerAccounts.push({
+      id: 'acct-bamboo', provider_code: 'bamboo', is_enabled: true, supports_seller: false,
+    });
+
+    db.listings.push(
+      makeListing({
+        id: 'l-mc',
+        variant_id: 'v-mc',
+        provider_account_id: 'acct-eneba',
+        external_listing_id: 'eneba-mc',
+        external_product_id: '78086f2a-d485-11ee-aead-b2de3de418b4', // Eneba product UUID
+        currency: 'USD',
+        price_cents: 1_786, // $17.86 ≈ €15.18
+      }),
+    );
+
+    db.offers.push({
+      id: 'offer-bamboo',
+      variant_id: 'v-mc',
+      provider_account_id: 'acct-bamboo',
+      currency: 'USD',
+      last_price_cents: 1_700, // would pass stale ceiling, fails authoritative
+      available_quantity: 10,
+      prioritize_quote_sync: false,
+      is_active: true,
+    });
+
+    snapshotter = new CountingWalletSnapshotter(
+      new Map([['acct-bamboo', new Map([['USD', 1_000_000]])]]),
+    );
+
+    // Eneba's S_calculatePrice for €15.18 returns priceWithoutCommission=€14.02.
+    // In USD-cents (identity FX): netPayoutCents=1_649.
+    const enebaPricing = new StubPricingAdapter(() => ({
+      grossPriceCents: 1_786,
+      feeCents: 137,
+      netPayoutCents: 1_649,
+    }));
+    registry = new StubRegistry(
+      new Map(),
+      new Map<string, ISellerDeclaredStockAdapter>([['eneba', enebaDeclared]]),
+      new Map<string, ISellerPricingAdapter>([['eneba', enebaPricing]]),
+    );
+
+    const fx = new IdentityFxConverter();
+    const selector = new CreditAwareDeclaredStockSelectorUseCase(fx);
+    service = new ProcurementDeclaredStockReconcileService(db, registry, snapshotter, fx, selector);
+
+    await service.execute('req-pricing-eneba', {});
+
+    expect(enebaPricing.calls).toHaveLength(1);
+    expect(enebaPricing.calls[0]).toMatchObject({
+      priceCents: 1_786,
+      currency: 'USD',
+      externalListingId: 'eneba-mc',
+      externalProductId: '78086f2a-d485-11ee-aead-b2de3de418b4',
+    });
+
+    // Buyer at $17 breaks the authoritative ceiling 1_649*0.99=1_632 →
+    // selector returns 'uneconomic' → reconcile dispatches declareStock(id, 0).
+    expect(enebaDeclared.calls).toEqual([{ externalListingId: 'eneba-mc', quantity: 0 }]);
+  });
+
+  it('falls back to manual config math when no pricing adapter is registered (e.g. Digiseller)', async () => {
+    db.providerAccounts.push(
+      makeAccount({
+        id: 'acct-digiseller',
+        provider_code: 'digiseller',
+        seller_config: {
+          commission_rate_percent: 6,
+          fixed_fee_cents: 0,
+          min_profit_margin_pct: 1,
+        },
+      }),
+    );
+    db.buyerAccounts.push({
+      id: 'acct-bamboo', provider_code: 'bamboo', is_enabled: true, supports_seller: false,
+    });
+
+    db.listings.push(
+      makeListing({
+        id: 'l-ds',
+        variant_id: 'v-ds',
+        provider_account_id: 'acct-digiseller',
+        external_listing_id: 'ds-1',
+        currency: 'USD',
+        price_cents: 1_786,
+      }),
+    );
+    db.offers.push({
+      id: 'offer-ds-bamboo',
+      variant_id: 'v-ds',
+      provider_account_id: 'acct-bamboo',
+      currency: 'USD',
+      last_price_cents: 1_500, // economic under 6%/1% ceiling
+      available_quantity: 5,
+      prioritize_quote_sync: false,
+      is_active: true,
+    });
+
+    snapshotter = new CountingWalletSnapshotter(
+      new Map([['acct-bamboo', new Map([['USD', 1_000_000]])]]),
+    );
+    // No pricing adapter registered for digiseller — registry default returns null.
+    const fx = new IdentityFxConverter();
+    const selector = new CreditAwareDeclaredStockSelectorUseCase(fx);
+    service = new ProcurementDeclaredStockReconcileService(db, registry, snapshotter, fx, selector);
+
+    await service.execute('req-ds', {});
+
+    // Selector ran on manual config; buyer at $15 cleared the ceiling.
+    expect(digisellerDeclared.calls).toHaveLength(1);
+    expect(digisellerDeclared.calls[0].quantity).toBeGreaterThan(0);
+  });
+
+  it('falls back to manual config math when the live pricing call throws', async () => {
+    db.providerAccounts.push(
+      makeAccount({
+        id: 'acct-eneba',
+        provider_code: 'eneba',
+        seller_config: {
+          commission_rate_percent: 6,
+          fixed_fee_cents: 0,
+          min_profit_margin_pct: 1,
+        },
+      }),
+    );
+    db.buyerAccounts.push({
+      id: 'acct-bamboo', provider_code: 'bamboo', is_enabled: true, supports_seller: false,
+    });
+
+    db.listings.push(
+      makeListing({
+        id: 'l-fail',
+        variant_id: 'v-fail',
+        provider_account_id: 'acct-eneba',
+        external_listing_id: 'eneba-fail',
+        external_product_id: 'product-uuid',
+        currency: 'USD',
+        price_cents: 1_786,
+      }),
+    );
+    db.offers.push({
+      id: 'offer-fail-bamboo',
+      variant_id: 'v-fail',
+      provider_account_id: 'acct-bamboo',
+      currency: 'USD',
+      last_price_cents: 1_500,
+      available_quantity: 5,
+      prioritize_quote_sync: false,
+      is_active: true,
+    });
+
+    snapshotter = new CountingWalletSnapshotter(
+      new Map([['acct-bamboo', new Map([['USD', 1_000_000]])]]),
+    );
+    const enebaPricing = new StubPricingAdapter(() => {
+      throw new Error('Eneba GraphQL error: Too Many Requests');
+    });
+    registry = new StubRegistry(
+      new Map(),
+      new Map<string, ISellerDeclaredStockAdapter>([['eneba', enebaDeclared]]),
+      new Map<string, ISellerPricingAdapter>([['eneba', enebaPricing]]),
+    );
+    const fx = new IdentityFxConverter();
+    const selector = new CreditAwareDeclaredStockSelectorUseCase(fx);
+    service = new ProcurementDeclaredStockReconcileService(db, registry, snapshotter, fx, selector);
+
+    await service.execute('req-fail', {});
+
+    expect(enebaPricing.calls).toHaveLength(1);
+    // Manual config kicked in: 1786*0.94*0.99 = 1662 → buyer at 1500 cleared.
+    expect(enebaDeclared.calls).toHaveLength(1);
+    expect(enebaDeclared.calls[0].quantity).toBeGreaterThan(0);
   });
 });
