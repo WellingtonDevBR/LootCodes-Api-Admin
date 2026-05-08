@@ -47,20 +47,20 @@ export class SupabaseAdminInventorySourceRepository implements IAdminInventorySo
   }
 
   async listVariantInventorySources(dto: ListVariantInventorySourcesDto): Promise<ListVariantInventorySourcesResult> {
-    const result = await this.db.rpc<{ sources: unknown[] }>(
+    const rows = await this.db.rpc<unknown[]>(
       'admin_list_variant_inventory_sources',
-      { p_variant_id: dto.variant_id },
+      { p_consumer_variant_id: dto.variant_id },
     );
 
-    return { sources: result.sources ?? [] };
+    return { sources: Array.isArray(rows) ? rows : [] };
   }
 
   async listLinkableInventorySources(dto: ListLinkableInventorySourcesDto): Promise<ListLinkableInventorySourcesResult> {
-    const result = await this.db.rpc<{ sources: unknown[] }>(
+    const rows = await this.db.rpc<unknown[]>(
       'admin_list_linkable_inventory_sources',
-      { p_variant_id: dto.variant_id },
+      { p_consumer_variant_id: dto.variant_id },
     );
 
-    return { sources: result.sources ?? [] };
+    return { sources: Array.isArray(rows) ? rows : [] };
   }
 }

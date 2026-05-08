@@ -215,7 +215,7 @@ export class DigisellerMarketplaceAdapter
   async syncStockLevel(externalListingId: string, _availableQuantity: number): Promise<SyncStockLevelResult> {
     const productId = Number(externalListingId);
     const remoteStock = await this.getStockCount(productId);
-    const desiredStatus = remoteStock === 0 ? 'disabled' : 'active';
+    const desiredStatus = remoteStock === 0 ? 'disabled' : 'enabled';
 
     try {
       await this.setProductStatus(productId, desiredStatus);
@@ -241,7 +241,7 @@ export class DigisellerMarketplaceAdapter
 
     await this.updateSalesLimit(productId, quantity);
 
-    const desiredStatus = quantity === 0 ? 'disabled' : 'active';
+    const desiredStatus = quantity === 0 ? 'disabled' : 'enabled';
     try {
       await this.setProductStatus(productId, desiredStatus);
     } catch (err) {
@@ -349,10 +349,19 @@ export class DigisellerMarketplaceAdapter
   // ─── Form delivery setup ───────────────────────────────────────────
 
   private async setupFormDelivery(productId: number): Promise<void> {
+    const callbackUrl = this.listingOpts.callbackUrl ?? '';
+
+    if (callbackUrl.length < 8) {
+      logger.error('Digiseller setupFormDelivery skipped — callbackUrl is too short or missing', {
+        productId, callbackUrl,
+      });
+      return;
+    }
+
     const body: Record<string, unknown> = {
       product_id: productId,
       content_type: 'Form',
-      url_for_notify: this.listingOpts.callbackUrl,
+      url_for_notify: callbackUrl,
       allow_purchase_multiple_items: false,
     };
 
@@ -502,7 +511,7 @@ export class DigisellerMarketplaceAdapter
     }
   }
 
-  private async setProductStatus(productId: number, status: 'active' | 'disabled'): Promise<void> {
+  private async setProductStatus(productId: number, status: 'enabled' | 'disabled'): Promise<void> {
     const resp = await this.httpClient.post<DigisellerProductStatusResponse>(
       '/api/product/edit/V2/status',
       { new_status: status, products: [productId] },

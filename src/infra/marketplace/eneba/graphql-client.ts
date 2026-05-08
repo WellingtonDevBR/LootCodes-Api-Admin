@@ -113,10 +113,10 @@ export class EnebaGraphQLClient {
     }
 
     if (raw.errors?.length) {
-      logger.warn('GraphQL response has errors', {
-        operation: opName,
-        errors: raw.errors.map((e) => e.message).join('; '),
-      });
+      const errText = raw.errors.map((e) => e.message).join('; ');
+      const isRateLimit = /too many requests|rate.?limit|retry after/i.test(errText);
+      const logFn = isRateLimit ? logger.info.bind(logger) : logger.warn.bind(logger);
+      logFn('GraphQL response has errors', { operation: opName, errors: errText });
     }
 
     this.throwOnGraphQLErrors(raw.errors);
@@ -153,10 +153,10 @@ export class EnebaGraphQLClient {
       if (!entry) continue;
 
       if (entry.errors?.length) {
-        logger.warn('Batch operation had errors', {
-          operationName: operations[i].name,
-          errors: entry.errors.map((e) => e.message).join('; '),
-        });
+        const errText = entry.errors.map((e) => e.message).join('; ');
+        const isRateLimit = /too many requests|rate.?limit|retry after/i.test(errText);
+        const logFn = isRateLimit ? logger.info.bind(logger) : logger.warn.bind(logger);
+        logFn('Batch operation had errors', { operationName: operations[i].name, errors: errText });
         continue;
       }
       if (entry.data != null) {
