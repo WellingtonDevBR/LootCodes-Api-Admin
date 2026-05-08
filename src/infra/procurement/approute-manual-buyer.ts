@@ -235,6 +235,24 @@ export class AppRouteManualBuyer {
   ) {}
 
   /**
+   * Active wallets for UI / dashboard balance display (AppRoute GET /accounts).
+   * Returns one entry per funded currency, sorted alphabetically.
+   */
+  async fetchLiveWalletSummaries(): Promise<
+    ReadonlyArray<{ readonly currency: string; readonly balance: number; readonly available: number }>
+  > {
+    const data = await this.api.getAccounts();
+    return (data.items ?? [])
+      .filter((w) => typeof w.currency === 'string' && w.currency.trim().length > 0)
+      .map((w) => ({
+        currency: w.currency.trim().toUpperCase(),
+        balance: Number.isFinite(Number(w.balance)) ? Number(w.balance) : 0,
+        available: Number.isFinite(Number(w.available)) ? Number(w.available) : 0,
+      }))
+      .sort((a, b) => a.currency.localeCompare(b.currency));
+  }
+
+  /**
    * Preflight against `GET /accounts` so we fail fast when the wallet cannot cover the estimated shop cost.
    */
   async preflightSufficientBalance(

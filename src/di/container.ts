@@ -45,6 +45,12 @@ import { BuyerProviderRegistry } from '../infra/procurement/buyer/buyer-provider
 import { SupabaseProcurementFxConverter } from '../infra/currency/supabase-procurement-fx-converter.js';
 import { SupabaseJitOfferRepository } from '../infra/procurement/supabase-jit-offer.repository.js';
 import { RouteAndPurchaseJitOffersUseCase } from '../core/use-cases/procurement/route-and-purchase-jit-offers.use-case.js';
+import {
+  BuyerWalletSnapshotter,
+  BambooWalletProbe,
+  AppRouteWalletProbe,
+} from '../infra/procurement/buyer/buyer-wallet-snapshotter.js';
+import { CreditAwareDeclaredStockSelectorUseCase } from '../core/use-cases/seller/credit-aware-declared-stock-selector.use-case.js';
 import { DtuClientFactory } from '../infra/procurement/dtu/dtu-client-factory.js';
 import { DtuRechargeUseCase } from '../core/use-cases/procurement/dtu-recharge.use-case.js';
 import { ListingHealthService } from '../infra/seller/listing-health.service.js';
@@ -687,6 +693,17 @@ container.register(TOKENS.JitOfferRepository, { useClass: SupabaseJitOfferReposi
 container.register(TOKENS.ProcurementFxConverter, { useClass: SupabaseProcurementFxConverter });
 container.register(TOKENS.BuyerProviderRegistry, { useClass: BuyerProviderRegistry });
 container.register(UC_TOKENS.RouteAndPurchaseJitOffers, { useClass: RouteAndPurchaseJitOffersUseCase });
+
+// Wallet snapshot + credit-aware declared-stock selector
+container.register(TOKENS.BuyerWalletSnapshotter, {
+  useFactory: (c) => {
+    const db = c.resolve<IDatabase>(TOKENS.Database);
+    return new BuyerWalletSnapshotter(db, [new BambooWalletProbe(db), new AppRouteWalletProbe(db)]);
+  },
+});
+container.register(TOKENS.CreditAwareDeclaredStockSelector, {
+  useClass: CreditAwareDeclaredStockSelectorUseCase,
+});
 
 // DTU (Direct Top-Up)
 container.register(TOKENS.DtuClientFactory, { useClass: DtuClientFactory });

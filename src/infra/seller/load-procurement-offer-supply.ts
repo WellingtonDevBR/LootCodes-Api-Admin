@@ -3,6 +3,7 @@ import {
   compareProcurementOffersForDeclaredStockReconcile,
   type ProcurementOfferSortRow,
 } from '../../core/shared/procurement-declared-stock.js';
+import type { DeclaredStockOfferRow } from '../../core/use-cases/seller/credit-aware-declared-stock-selector.use-case.js';
 
 interface OfferRow extends ProcurementOfferSortRow {
   readonly variant_id: string;
@@ -64,4 +65,94 @@ export async function loadBestProcurementQtyByVariant(
   }
 
   return result;
+}
+
+/**
+ * Load buyer-capable `provider_variant_offers` rows for a set of variants,
+ * filtered by `provider_accounts.is_enabled = true AND supports_seller = false`.
+ *
+ * Rows are returned grouped by `variant_id` and shaped for the
+ * `CreditAwareDeclaredStockSelectorUseCase`. Sellers (Eneba, Kinguin, G2A,
+ * Gamivo, Digiseller) are excluded — we never declare stock based on a
+ * marketplace we are listing on.
+ */
+export async function loadBuyerCapableOffersByVariant(
+  db: IDatabase,
+  variantIds: readonly string[],
+): Promise<Map<string, DeclaredStockOfferRow[]>> {
+  const out = new Map<string, DeclaredStockOfferRow[]>();
+  if (variantIds.length === 0) return out;
+
+  const unique = [...new Set(variantIds)];
+
+  // Pull every account up-front so the per-batch loop only joins in-memory.
+  const accountRows = await db.query<{
+    id: string;
+    provider_code: string | null;
+    is_enabled: boolean | null;
+    supports_seller: boolean | null;
+  }>('provider_accounts', {
+    select: 'id, provider_code, is_enabled, supports_seller',
+  });
+
+  const buyerCodeByAccount = new Map<string, string>();
+  for (const a of accountRows) {
+    if (a.is_enabled !== true) continue;
+    if (a.supports_seller === true) continue;
+    const code = (a.provider_code ?? '').trim().toLowerCase();
+    if (!code) continue;
+    buyerCodeByAccount.set(a.id, code);
+  }
+
+  for (let i = 0; i < unique.length; i += BATCH) {
+    const chunk = unique.slice(i, i + BATCH);
+    const rows = await db.query<{
+      id: string | null;
+      variant_id: string | null;
+      provider_account_id: string | null;
+      currency: string | null;
+      last_price_cents: number | null;
+      available_quantity: number | string | null;
+      prioritize_quote_sync: boolean | null;
+    }>('provider_variant_offers', {
+      select:
+        'id, variant_id, provider_account_id, currency, last_price_cents, available_quantity, prioritize_quote_sync',
+      eq: [['is_active', true]],
+      in: [['variant_id', chunk]],
+    });
+
+    for (const r of rows) {
+      const vid = typeof r.variant_id === 'string' ? r.variant_id : '';
+      if (!vid) continue;
+      const offerId = typeof r.id === 'string' ? r.id : '';
+      if (!offerId) continue;
+      const accountId = typeof r.provider_account_id === 'string' ? r.provider_account_id : '';
+      if (!accountId) continue;
+      const providerCode = buyerCodeByAccount.get(accountId);
+      if (!providerCode) continue;
+
+      const currency = typeof r.currency === 'string' ? r.currency.trim().toUpperCase() : '';
+      if (!/^[A-Z]{3}$/.test(currency)) continue;
+
+      const last_price_cents =
+        typeof r.last_price_cents === 'number' && Number.isFinite(r.last_price_cents)
+          ? r.last_price_cents
+          : null;
+      const available_quantity = coerceProcurementAvailableQuantity(r.available_quantity);
+
+      const list = out.get(vid) ?? [];
+      list.push({
+        id: offerId,
+        provider_code: providerCode,
+        provider_account_id: accountId,
+        currency,
+        last_price_cents,
+        available_quantity,
+        prioritize_quote_sync: r.prioritize_quote_sync === true,
+      });
+      out.set(vid, list);
+    }
+  }
+
+  return out;
 }

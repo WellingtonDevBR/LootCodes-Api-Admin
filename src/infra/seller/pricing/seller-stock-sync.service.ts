@@ -6,16 +6,28 @@
  * declareStock() or syncStockLevel().
  *
  * Listings with listing_type=declared_stock and auto_sync_stock_follows_provider=true
- * use procurement `provider_variant_offers` supply when internal inventory is zero
- * (capped at MAX_PROCUREMENT_DECLARED_STOCK).
+ * use the same credit-aware selector + per-marketplace disable dispatcher
+ * as `ProcurementDeclaredStockReconcileService`. This keeps the two crons
+ * in lock-step: stock-sync (every 5 min on minute 2) and
+ * declared-stock-reconcile (procurement-driven) cannot disagree on which
+ * buyer to lean on.
  */
 import { injectable, inject } from 'tsyringe';
 import { TOKENS } from '../../../di/tokens.js';
 import type { IDatabase } from '../../../core/ports/database.port.js';
 import type { IMarketplaceAdapterRegistry } from '../../../core/ports/marketplace-adapter.port.js';
 import type { ISellerStockSyncService, RefreshStockResult } from '../../../core/ports/seller-pricing.port.js';
-import { computeDeclaredStockTarget } from '../../../core/shared/procurement-declared-stock.js';
-import { loadBestProcurementQtyByVariant } from '../load-procurement-offer-supply.js';
+import type { IBuyerWalletSnapshotter } from '../../../core/ports/buyer-wallet-snapshot.port.js';
+import type { IProcurementFxConverter } from '../../../core/ports/procurement-fx-converter.port.js';
+import {
+  CreditAwareDeclaredStockSelectorUseCase,
+  type DeclaredStockOfferRow,
+  type DeclaredStockPricingConfig,
+} from '../../../core/use-cases/seller/credit-aware-declared-stock-selector.use-case.js';
+import { parseSellerConfig, type SellerProviderConfig } from '../../../core/use-cases/seller/seller.types.js';
+import { mergeSellerListingPricingOverrides } from '../../../core/use-cases/seller/listing-pricing-overrides-merge.js';
+import { loadBuyerCapableOffersByVariant } from '../load-procurement-offer-supply.js';
+import { dispatchListingDisable } from '../dispatch-listing-disable.js';
 import { createLogger } from '../../../shared/logger.js';
 
 const logger = createLogger('seller-stock-sync');
@@ -30,6 +42,10 @@ interface StockListingRow {
   declared_stock: number;
   provider_code: string;
   follows_provider: boolean;
+  currency: string;
+  price_cents: number;
+  min_price_cents: number;
+  pricing_overrides: Record<string, unknown> | null;
 }
 
 @injectable()
@@ -37,6 +53,10 @@ export class SellerStockSyncService implements ISellerStockSyncService {
   constructor(
     @inject(TOKENS.Database) private db: IDatabase,
     @inject(TOKENS.MarketplaceAdapterRegistry) private registry: IMarketplaceAdapterRegistry,
+    @inject(TOKENS.BuyerWalletSnapshotter) private walletSnapshotter: IBuyerWalletSnapshotter,
+    @inject(TOKENS.ProcurementFxConverter) private fx: IProcurementFxConverter,
+    @inject(TOKENS.CreditAwareDeclaredStockSelector)
+    private selector: CreditAwareDeclaredStockSelectorUseCase,
   ) {}
 
   async refreshAllStock(requestId: string): Promise<RefreshStockResult> {
@@ -49,14 +69,32 @@ export class SellerStockSyncService implements ISellerStockSyncService {
     const variantIds = [...new Set(listings.map((l) => l.variant_id))];
     const stockMap = await this.computeAvailableStock(variantIds);
 
-    const variantIdsProcurement = [
+    // Cache provider seller_config so we don't refetch per listing.
+    const providerConfigByAccount = await this.loadProviderSellerConfigs(
+      [...new Set(listings.map((l) => l.provider_account_id))],
+    );
+
+    // ── Credit-gated declared-stock branch ───────────────────────────
+    // Build a single wallet snapshot for the whole run + load buyer-capable
+    // offers for every variant that has a declared_stock listing whose
+    // internal stock is empty.
+    const declaredStockListings = listings.filter(
+      (l) => l.listing_type === 'declared_stock' && l.follows_provider,
+    );
+    const variantsNeedingBuyer = [
       ...new Set(
-        listings
-          .filter((l) => l.listing_type === 'declared_stock' && l.follows_provider)
+        declaredStockListings
+          .filter((l) => (stockMap.get(l.variant_id) ?? 0) === 0)
           .map((l) => l.variant_id),
       ),
     ];
-    const procurementMap = await loadBestProcurementQtyByVariant(this.db, variantIdsProcurement);
+    const walletSnapshot =
+      variantsNeedingBuyer.length > 0
+        ? await this.walletSnapshotter.snapshot()
+        : new Map();
+    const offersByVariant = variantsNeedingBuyer.length > 0
+      ? await loadBuyerCapableOffersByVariant(this.db, variantsNeedingBuyer)
+      : new Map<string, DeclaredStockOfferRow[]>();
 
     const result: RefreshStockResult = { listingsProcessed: 0, stockUpdated: 0, errors: 0 };
 
@@ -66,42 +104,31 @@ export class SellerStockSyncService implements ISellerStockSyncService {
 
       try {
         const internalQty = stockMap.get(listing.variant_id) ?? 0;
-        const procurementQty = procurementMap.get(listing.variant_id);
-        const targetQty = computeDeclaredStockTarget({
-          internalQty,
-          procurementQtyRaw: procurementQty,
-          followsProvider: listing.follows_provider,
-          listingType: listing.listing_type,
-        });
 
         if (listing.listing_type === 'declared_stock') {
-          const adapter = this.registry.getDeclaredStockAdapter(listing.provider_code);
-          if (!adapter) continue;
+          await this.handleDeclaredStockBranch(
+            requestId,
+            listing,
+            internalQty,
+            offersByVariant.get(listing.variant_id) ?? [],
+            walletSnapshot,
+            providerConfigByAccount.get(listing.provider_account_id) ?? null,
+            result,
+          );
+          continue;
+        }
 
-          if (targetQty !== listing.declared_stock) {
-            const declareResult = await adapter.declareStock(listing.external_listing_id, targetQty);
-            if (declareResult.success) {
-              await this.db.update('seller_listings', { id: listing.id }, {
-                declared_stock: targetQty,
-                last_synced_at: new Date().toISOString(),
-                error_message: null,
-              });
-              result.stockUpdated++;
-            }
-          }
-        } else {
-          const adapter = this.registry.getStockSyncAdapter(listing.provider_code);
-          if (!adapter) continue;
+        const adapter = this.registry.getStockSyncAdapter(listing.provider_code);
+        if (!adapter) continue;
 
-          const syncResult = await adapter.syncStockLevel(listing.external_listing_id, internalQty);
-          if (syncResult.success) {
-            await this.db.update('seller_listings', { id: listing.id }, {
-              declared_stock: internalQty,
-              last_synced_at: new Date().toISOString(),
-              error_message: null,
-            });
-            result.stockUpdated++;
-          }
+        const syncResult = await adapter.syncStockLevel(listing.external_listing_id, internalQty);
+        if (syncResult.success) {
+          await this.db.update('seller_listings', { id: listing.id }, {
+            declared_stock: internalQty,
+            last_synced_at: new Date().toISOString(),
+            error_message: null,
+          });
+          result.stockUpdated++;
         }
       } catch (err) {
         result.errors++;
@@ -136,6 +163,94 @@ export class SellerStockSyncService implements ISellerStockSyncService {
     return result;
   }
 
+  // ─── Declared-stock branch (credit-aware) ───────────────────────────
+
+  private async handleDeclaredStockBranch(
+    requestId: string,
+    listing: StockListingRow,
+    internalQty: number,
+    offers: DeclaredStockOfferRow[],
+    walletSnapshot: Awaited<ReturnType<IBuyerWalletSnapshotter['snapshot']>>,
+    providerSellerConfig: SellerProviderConfig | null,
+    result: RefreshStockResult,
+  ): Promise<void> {
+    const adapter = this.registry.getDeclaredStockAdapter(listing.provider_code);
+    if (!adapter) return;
+    const externalId = listing.external_listing_id;
+    if (!externalId) return;
+
+    // Internal keys cover the listing — declare directly.
+    if (internalQty > 0 || !listing.follows_provider) {
+      const targetQty = listing.follows_provider ? internalQty : internalQty;
+      if (targetQty === listing.declared_stock) return;
+      const r = await adapter.declareStock(externalId, targetQty);
+      if (r.success) {
+        await this.db.update('seller_listings', { id: listing.id }, {
+          declared_stock: targetQty,
+          last_synced_at: new Date().toISOString(),
+          error_message: null,
+        });
+        result.stockUpdated++;
+      }
+      return;
+    }
+
+    // No internal keys + follows_provider — consult buyer credit.
+    const baseConfig = providerSellerConfig ?? parseSellerConfig({});
+    const merged = mergeSellerListingPricingOverrides(baseConfig, listing.pricing_overrides);
+
+    const salePriceUsd =
+      (await this.fx.toUsdCents(listing.price_cents, listing.currency)) ?? 0;
+    const listingMinUsd =
+      (await this.fx.toUsdCents(listing.min_price_cents, listing.currency)) ?? 0;
+    const minFloorUsd =
+      (await this.fx.toUsdCents(merged.min_price_floor_cents, baseConfig.default_currency))
+      ?? merged.min_price_floor_cents;
+
+    const cfg: DeclaredStockPricingConfig = {
+      sellerSalePriceUsdCents: salePriceUsd,
+      minProfitMarginPct: merged.min_profit_margin_pct,
+      commissionRatePercent: merged.commission_rate_percent,
+      minPriceFloorUsdCents: minFloorUsd,
+      listingMinUsdCents: listingMinUsd,
+      requestedQty: 1,
+    };
+
+    const decision = await this.selector.execute({ offers, snapshot: walletSnapshot, config: cfg });
+
+    if (decision.kind === 'declare') {
+      logger.info('Stock-sync: declaring stock from credited buyer', {
+        requestId, listingId: listing.id,
+        buyerProviderCode: decision.offer.provider_code,
+        buyerProviderAccountId: decision.offer.provider_account_id,
+        declaredQty: decision.declaredQty,
+      });
+      const r = await adapter.declareStock(externalId, decision.declaredQty);
+      if (r.success) {
+        await this.db.update('seller_listings', { id: listing.id }, {
+          declared_stock: decision.declaredQty,
+          last_synced_at: new Date().toISOString(),
+          error_message: null,
+        });
+        result.stockUpdated++;
+      }
+      return;
+    }
+
+    // disable
+    logger.info('Stock-sync: dispatching marketplace disable', {
+      requestId, listingId: listing.id, providerCode: listing.provider_code,
+      reason: decision.reason,
+    });
+    await dispatchListingDisable(this.registry, listing.provider_code, externalId);
+    await this.db.update('seller_listings', { id: listing.id }, {
+      declared_stock: 0,
+      last_synced_at: new Date().toISOString(),
+      error_message: decision.reason,
+    });
+    result.stockUpdated++;
+  }
+
   private async computeAvailableStock(variantIds: string[]): Promise<Map<string, number>> {
     const stockMap = new Map<string, number>();
     if (variantIds.length === 0) return stockMap;
@@ -157,6 +272,25 @@ export class SellerStockSyncService implements ISellerStockSyncService {
     }
 
     return stockMap;
+  }
+
+  private async loadProviderSellerConfigs(
+    accountIds: string[],
+  ): Promise<Map<string, SellerProviderConfig>> {
+    const out = new Map<string, SellerProviderConfig>();
+    if (accountIds.length === 0) return out;
+
+    const rows = await this.db.query<{
+      id: string;
+      seller_config: Record<string, unknown> | null;
+    }>('provider_accounts', {
+      select: 'id, seller_config',
+      in: [['id', accountIds]],
+    });
+    for (const r of rows) {
+      out.set(r.id, parseSellerConfig(r.seller_config ?? {}));
+    }
+    return out;
   }
 
   private async getAutoSyncStockListings(): Promise<StockListingRow[]> {
@@ -194,6 +328,14 @@ export class SellerStockSyncService implements ISellerStockSyncService {
         declared_stock: (row.declared_stock as number) ?? 0,
         provider_code: providerCode,
         follows_provider: row.auto_sync_stock_follows_provider === true,
+        currency: typeof row.currency === 'string' ? (row.currency as string) : 'USD',
+        price_cents: typeof row.price_cents === 'number' ? (row.price_cents as number) : 0,
+        min_price_cents:
+          typeof row.min_price_cents === 'number' ? (row.min_price_cents as number) : 0,
+        pricing_overrides:
+          row.pricing_overrides && typeof row.pricing_overrides === 'object' && !Array.isArray(row.pricing_overrides)
+            ? (row.pricing_overrides as Record<string, unknown>)
+            : null,
       });
     }
 

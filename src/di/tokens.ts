@@ -49,6 +49,8 @@ export const TOKENS = {
   ProcurementFxConverter: Symbol.for('IProcurementFxConverter'),
   JitOfferRepository: Symbol.for('IJitOfferRepository'),
   DtuClientFactory: Symbol.for('IDtuClientFactory'),
+  BuyerWalletSnapshotter: Symbol.for('IBuyerWalletSnapshotter'),
+  CreditAwareDeclaredStockSelector: Symbol.for('CreditAwareDeclaredStockSelectorUseCase'),
 
   // Marketplace adapters & seller services
   MarketplaceAdapterRegistry: Symbol.for('IMarketplaceAdapterRegistry'),

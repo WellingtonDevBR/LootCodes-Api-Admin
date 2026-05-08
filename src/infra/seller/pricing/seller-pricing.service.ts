@@ -22,6 +22,7 @@ import type { ISellerPricingService, PriceSuggestionResult, SuggestPriceRequest 
 import type { SellerListingType, SellerPriceStrategy, SellerProviderConfig } from '../../../core/use-cases/seller/seller.types.js';
 import { parseSellerConfig } from '../../../core/use-cases/seller/seller.types.js';
 import { applySellerPriceStrategy } from '../../../core/use-cases/seller/apply-seller-price-strategy.js';
+import { resolveEffectiveCostBasisCents } from '../../../core/use-cases/seller/resolve-effective-cost-basis.js';
 import { stampCompetitorOwnership } from './seller-price-intelligence.service.js';
 import { createLogger } from '../../../shared/logger.js';
 
@@ -186,10 +187,20 @@ export class SellerPricingService implements ISellerPricingService {
 
     const lowestCompetitorCents = lowestInStock?.priceCents ?? null;
 
+    // For `declared_stock` listings, the cost basis used by the strategy
+    // should reflect the buyer we ACTUALLY have credit with, not the
+    // cheapest cached offer. The credit-aware reconcile passes that
+    // through `procurementCostBasisCents` (normalized to listing currency).
+    const effectiveCostCents = resolveEffectiveCostBasisCents({
+      listingType: req.listingType,
+      costCents: req.costCents,
+      procurementCostBasisCents: req.procurementCostBasisCents,
+    });
+
     let rawPrice = this.applyStrategy(
       config.price_strategy,
       config.price_strategy_value,
-      req.costCents,
+      effectiveCostCents,
       lowestCompetitorCents,
     );
 

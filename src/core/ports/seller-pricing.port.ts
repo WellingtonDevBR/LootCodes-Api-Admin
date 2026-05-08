@@ -26,6 +26,16 @@ export interface SuggestPriceRequest {
   listingCurrency?: string;
   externalListingId?: string;
   providerAccountId: string;
+  /**
+   * Optional override for the cost basis when the listing is `declared_stock`
+   * and the credit-aware selector chose a different (more expensive) buyer
+   * than the cheapest cached offer. The pricing strategy then prices off
+   * what we will ACTUALLY pay, not the theoretical cheapest.
+   *
+   * Caller normalizes to the listing's native currency cents BEFORE
+   * passing this in. Ignored when not a positive finite number.
+   */
+  procurementCostBasisCents?: number;
 }
 
 export interface PriceSuggestionResult {

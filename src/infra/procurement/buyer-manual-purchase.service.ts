@@ -913,6 +913,40 @@ export class BuyerManualPurchaseService {
     }
   }
 
+  async listAppRouteLiveWallets(): Promise<{
+    success: boolean;
+    wallets?: ReadonlyArray<{ currency: string; balance: number; available: number }>;
+    error?: string;
+  }> {
+    const providerAccountId = await this.getEnabledProviderAccountId('approute');
+    if (!providerAccountId) {
+      return { success: false, error: 'AppRoute provider is not enabled or not found' };
+    }
+
+    const accountRow = await this.db.queryOne<{ api_profile: unknown }>('provider_accounts', {
+      select: 'api_profile',
+      filter: { id: providerAccountId },
+    });
+    const apiProfile = asApiProfile(accountRow?.api_profile);
+
+    const secrets = await resolveProviderSecrets(this.db, providerAccountId);
+    const approuteBuyer = createAppRouteManualBuyer({ secrets, profile: apiProfile });
+    if (!approuteBuyer) {
+      return {
+        success: false,
+        error: 'AppRoute credentials or api_profile.base_url are not configured for this provider account',
+      };
+    }
+
+    try {
+      const wallets = await approuteBuyer.fetchLiveWalletSummaries();
+      return { success: true, wallets };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { success: false, error: msg };
+    }
+  }
+
   private async preflightQuote(
     buyer: BambooManualBuyer,
     offerId: string,

@@ -147,6 +147,12 @@ export async function adminProcurementRoutes(app: FastifyInstance) {
     return reply.send(result);
   });
 
+  app.get('/approute/live-wallets', { preHandler: [employeeGuard] }, async (_request, reply) => {
+    const svc = container.resolve<BuyerManualPurchaseService>(TOKENS.BuyerManualPurchaseService);
+    const result = await svc.listAppRouteLiveWallets();
+    return reply.send(result);
+  });
+
   app.post('/recover', { preHandler: [adminGuard] }, async (request, reply) => {
     const uc = container.resolve<RecoverProviderOrderUseCase>(UC_TOKENS.RecoverProviderOrder);
     const body = request.body as Record<string, unknown>;
