@@ -37,6 +37,8 @@ export interface MarketplaceFinancialsSnapshot {
   substitute_auction_fee_cents_per_unit: number | null;
   seller_profit_cents_per_unit: number;
   extra_info: string | null;
+  /** Buyer's IP address extracted from Eneba extraInfo array, if present. */
+  buyer_ip: string | null;
   total_gross_cents: number;
   total_seller_profit_cents: number;
   total_provider_fee_aggregate_cents: number;

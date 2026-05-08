@@ -12,6 +12,37 @@ import type {
   MarketplaceFinancialsRawWire,
 } from '../seller-webhook.types.js';
 
+// ─── extraInfo helpers ───────────────────────────────────────────────
+
+/**
+ * Extract a named value from Eneba's `extraInfo` field.
+ *
+ * Eneba sends extraInfo as a JSON-serialized array of `{name, value}` objects,
+ * e.g. `[{"name":"buyerIp","value":"93.159.58.113"}]`.
+ * Returns `null` when the key is absent or the string is not parseable.
+ */
+export function extractEnebaExtraInfoValue(
+  extraInfo: string | null | undefined,
+  name: string,
+): string | null {
+  if (extraInfo == null || extraInfo.trim() === '') return null;
+  try {
+    const parsed: unknown = JSON.parse(extraInfo);
+    if (!Array.isArray(parsed)) return null;
+    for (const item of parsed) {
+      if (item && typeof item === 'object') {
+        const entry = item as Record<string, unknown>;
+        if (entry.name === name && entry.value != null) {
+          return String(entry.value);
+        }
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 // ─── ISO 4217 minor-unit exponent ────────────────────────────────────
 
 function minorUnitExponent(currencyCode: string): number {
@@ -132,6 +163,9 @@ export function buildMarketplaceFinancialsFromEnebaAuction(
     raw.substitute_auction_fee_currency = subFeeParsed.currency;
   }
 
+  const extraInfoStr = auction.extraInfo != null && auction.extraInfo !== '' ? String(auction.extraInfo) : null;
+  const buyerIp = extractEnebaExtraInfoValue(extraInfoStr, 'buyerIp');
+
   return {
     provider: 'eneba',
     wholesale,
@@ -143,7 +177,8 @@ export function buildMarketplaceFinancialsFromEnebaAuction(
     campaign_fee_cents_per_unit: campaignCentsPerUnit,
     substitute_auction_fee_cents_per_unit: subFeeParsed?.cents ?? null,
     seller_profit_cents_per_unit: sellerProfitCentsPerUnit,
-    extra_info: auction.extraInfo != null && auction.extraInfo !== '' ? String(auction.extraInfo) : null,
+    extra_info: extraInfoStr,
+    buyer_ip: buyerIp,
     total_gross_cents: totalGrossCents,
     total_seller_profit_cents: totalSellerProfitCents,
     total_provider_fee_aggregate_cents: totalProviderFeeAggregateCents,

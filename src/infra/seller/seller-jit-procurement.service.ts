@@ -77,6 +77,21 @@ export class SellerJitProcurementService {
       }
     }
 
+    // FX-convert fees using the same currency as the sale price.
+    let feesUsdCents: number | undefined;
+    if (typeof params.feesCents === 'number' && params.feesCents > 0) {
+      const currency = params.salePriceCurrency ?? 'USD';
+      if (currency === 'USD') {
+        feesUsdCents = params.feesCents;
+      } else {
+        const converted = await this.fx.toUsdCents(params.feesCents, currency);
+        if (converted != null && Number.isFinite(converted) && converted > 0) {
+          feesUsdCents = converted;
+        }
+        // If FX unavailable, omit fees (conservative: keeps ceiling higher).
+      }
+    }
+
     const result = await this.route.execute({
       variantId: params.variantId,
       quantity: params.quantity,
@@ -86,7 +101,7 @@ export class SellerJitProcurementService {
       ...(typeof params.minMarginCents === 'number'
         ? { minMarginUsdCents: params.minMarginCents }
         : {}),
-      ...(typeof params.feesCents === 'number' ? { feesUsdCents: params.feesCents } : {}),
+      ...(feesUsdCents != null ? { feesUsdCents } : {}),
     });
 
     if (result.purchased) {

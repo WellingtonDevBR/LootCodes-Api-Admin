@@ -40,7 +40,7 @@ export class HandleDeclaredStockReserveUseCase {
   ) {}
 
   async execute(dto: DeclaredStockReserveDto): Promise<DeclaredStockReserveResult> {
-    const { orderId, originalOrderId, auctions, wholesale, providerCode, feesCents } = dto;
+    const { orderId, originalOrderId, auctions, wholesale, providerCode } = dto;
 
     if (!auctions || auctions.length === 0) {
       logger.error('RESERVE with no auctions', { orderId });
@@ -99,20 +99,34 @@ export class HandleDeclaredStockReserveUseCase {
 
         const expiresAt = new Date(Date.now() + THREE_CALENDAR_DAYS_MS).toISOString();
 
-        const priceMoney = auction.price;
-        const salePriceCents = typeof priceMoney.amount === 'number'
-          ? priceMoney.amount
-          : parseInt(String(priceMoney.amount), 10);
-        const salePriceCurrency = typeof priceMoney.currency === 'string' && priceMoney.currency.trim().length > 0
-          ? priceMoney.currency.trim().toUpperCase()
-          : undefined;
+        // Use priceWithoutCommission (what Eneba actually pays us, net of their
+        // commission) as the effective sale price for the JIT margin gate.
+        // Fall back to auction.price if not provided (older Eneba API versions).
+        const financials = auction.marketplaceFinancials;
+        const listingCurrency = (financials?.currency ?? auction.price.currency).trim().toUpperCase();
+
+        const salePriceCents = financials?.price_without_commission_cents_per_unit
+          ?? (typeof auction.price.amount === 'number'
+            ? auction.price.amount
+            : parseInt(String(auction.price.amount), 10));
+        const salePriceCurrency = listingCurrency.length > 0 ? listingCurrency : undefined;
+
+        // Per-auction campaign fee (if Eneba charged us for a promotional campaign).
+        // priceWithoutCommission already excludes Eneba's base commission, so
+        // campaignFee is the only remaining deductible cost for the margin gate.
+        const perAuctionFeesCents = financials?.campaign_fee_cents_per_unit ?? 0;
+
+        const buyerIp = financials?.buyer_ip ?? null;
 
         const providerMetadata: Record<string, unknown> = {
           originalOrderId,
           auctionId,
-          price: { amount: salePriceCents, currency: priceMoney.currency },
+          price: { amount: salePriceCents, currency: listingCurrency },
           wholesale: wholesale ?? false,
         };
+        if (buyerIp) {
+          providerMetadata.buyerIp = buyerIp;
+        }
 
         if (auction.marketplaceFinancials) {
           providerMetadata.marketplaceFinancials = auction.marketplaceFinancials;
@@ -132,7 +146,7 @@ export class HandleDeclaredStockReserveUseCase {
             salePriceCents,
             salePriceCurrency,
             minMarginCents: listing.min_jit_margin_cents ?? undefined,
-            feesCents,
+            feesCents: perAuctionFeesCents > 0 ? perAuctionFeesCents : undefined,
           });
         } catch (claimErr) {
           logger.error('Key claim failed — propagating variant unavailability', claimErr as Error, {

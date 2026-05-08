@@ -143,6 +143,90 @@ describe('SellerJitProcurementService', () => {
     });
   });
 
+  describe('fees FX conversion', () => {
+    it('FX-converts EUR feesCents to USD using salePriceCurrency', async () => {
+      // campaignFee of 114 EUR × 1.08 = ~123 USD cents
+      const route = new FakeRouteUseCase();
+      const fx = new FixedFxConverter(new Map([['EUR', 1.08]]));
+      const svc = new SellerJitProcurementService(route as never, fx);
+
+      await svc.tryJitPurchaseForReservation(
+        makeParams({
+          salePriceCents: 1509,
+          salePriceCurrency: 'EUR',
+          feesCents: 114,
+        }),
+      );
+
+      // 114 * 1.08 = 123.12 → rounds to 123
+      expect(route.lastInput?.feesUsdCents).toBe(123);
+    });
+
+    it('passes USD feesCents through without conversion', async () => {
+      const route = new FakeRouteUseCase();
+      const fx = new FixedFxConverter(new Map([['EUR', 1.08]]));
+      const svc = new SellerJitProcurementService(route as never, fx);
+
+      await svc.tryJitPurchaseForReservation(
+        makeParams({ salePriceCents: 1509, salePriceCurrency: 'USD', feesCents: 200 }),
+      );
+
+      expect(route.lastInput?.feesUsdCents).toBe(200);
+    });
+
+    it('omits feesUsdCents when feesCents is zero', async () => {
+      const route = new FakeRouteUseCase();
+      const fx = new FixedFxConverter(new Map([['EUR', 1.08]]));
+      const svc = new SellerJitProcurementService(route as never, fx);
+
+      await svc.tryJitPurchaseForReservation(
+        makeParams({ salePriceCents: 1509, salePriceCurrency: 'EUR', feesCents: 0 }),
+      );
+
+      expect(route.lastInput?.feesUsdCents).toBeUndefined();
+    });
+
+    it('omits feesUsdCents when feesCents is absent', async () => {
+      const route = new FakeRouteUseCase();
+      const fx = new FixedFxConverter(new Map([['EUR', 1.08]]));
+      const svc = new SellerJitProcurementService(route as never, fx);
+
+      await svc.tryJitPurchaseForReservation(
+        makeParams({ salePriceCents: 1509, salePriceCurrency: 'EUR' }),
+      );
+
+      expect(route.lastInput?.feesUsdCents).toBeUndefined();
+    });
+
+    it('simulates the actual incident payload: EUR priceWithoutCommission + campaignFee', async () => {
+      // priceWithoutCommission = 1509 EUR, campaignFee = 114 EUR, EUR/USD = 1.08
+      // salePriceUsdCents = 1509 * 1.08 = ~1630
+      // feesUsdCents      = 114  * 1.08 = ~123
+      // max_cost ceiling  = 1630 - 123  = 1507 USD
+      // AppRoute at 1614 USD > 1507 → correctly rejected (order unprofitable after campaign)
+      const route = new FakeRouteUseCase();
+      route.result = {
+        purchased: false,
+        ingestedKeyCount: 0,
+        winningProviderCode: null,
+        winningProviderAccountId: null,
+        attemptedProviders: [
+          { providerCode: 'bamboo', providerAccountId: 'acct-bamboo', reason: 'above_margin_gate' },
+          { providerCode: 'approute', providerAccountId: 'acct-approute', reason: 'above_margin_gate' },
+        ],
+      };
+      const fx = new FixedFxConverter(new Map([['EUR', 1.08]]));
+      const svc = new SellerJitProcurementService(route as never, fx);
+
+      await svc.tryJitPurchaseForReservation(
+        makeParams({ salePriceCents: 1509, salePriceCurrency: 'EUR', feesCents: 114 }),
+      );
+
+      expect(route.lastInput?.salePriceUsdCents).toBe(1630); // 1509 * 1.08 = 1629.72 → 1630
+      expect(route.lastInput?.feesUsdCents).toBe(123);       // 114  * 1.08 = 123.12  → 123
+    });
+  });
+
   describe('result reporting', () => {
     it('returns true and logs ingested keys on successful purchase', async () => {
       const route = new FakeRouteUseCase();
