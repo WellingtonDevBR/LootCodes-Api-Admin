@@ -7,6 +7,9 @@ import { SecureKeyManager } from '../../infra/crypto/secure-key-manager.js';
 import type { GetInventoryCatalogUseCase } from '../../core/use-cases/inventory/get-inventory-catalog.use-case.js';
 import type { INotificationDispatcher } from '../../core/ports/notification-channel.port.js';
 import { loadCurrencyRates, convertCentsToUsd } from './_currency-helpers.js';
+import { createLogger } from '../../shared/logger.js';
+
+const logger = createLogger('admin-inventory-routes');
 
 function mapKeyState(keyState: string | null, isUsed: boolean): 'available' | 'reserved' | 'sold' {
   if (isUsed || keyState === 'used' || keyState === 'seller_provisioned') return 'sold';
@@ -402,7 +405,10 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
         });
         uploaded++;
       } catch (err) {
-        request.log.error({ keyIndex: i, error: err }, 'Failed to encrypt/insert key');
+        logger.error('Failed to encrypt/insert key', err as Error, {
+          keyIndex: i,
+          variant_id: body.variant_id,
+        });
       }
     }
 
@@ -426,8 +432,12 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
         user_agent: request.headers['user-agent'] ?? null,
         client_channel: 'crm',
       });
-    } catch {
-      request.log.error('Failed to write upload audit log');
+    } catch (auditErr) {
+      logger.error('Failed to write upload audit log', auditErr as Error, {
+        variant_id: body.variant_id,
+        uploaded,
+        duplicates,
+      });
     }
 
     return reply.send({ uploaded, duplicates });
@@ -510,7 +520,7 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
         );
         decrypted.push({ id: row.id, decrypted_value: value });
       } catch (err) {
-        request.log.error({ keyId: row.id, err }, 'Key decryption failed');
+        logger.error('Key decryption failed', err as Error, { keyId: row.id });
         failures.push({ id: row.id, error: 'Decryption failed' });
       }
     }

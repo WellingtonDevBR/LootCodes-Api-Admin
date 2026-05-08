@@ -111,7 +111,11 @@ export class HandleDigisellerDeliveryUseCase {
 
       if (!listing) {
         logger.error('Digiseller form delivery — listing not found', { externalListingId, providerAccountId });
-        this.health.updateHealthCounters(externalListingId, 'reservation', false).catch(() => {});
+        this.health.updateHealthCounters(externalListingId, 'reservation', false).catch((err: unknown) => {
+          logger.warn('Digiseller updateHealthCounters failed (listing-not-found path)', err as Error, {
+            externalListingId,
+          });
+        });
         return { success: false, productId, invoiceId, errorMessage: 'Product not found' };
       }
 
@@ -137,7 +141,12 @@ export class HandleDigisellerDeliveryUseCase {
             eq: [['external_reservation_id', externalOrderId]],
             single: true,
           },
-        ).catch(() => null);
+        ).catch((err: unknown) => {
+          logger.warn('Digiseller idempotency lookup failed — treating as no existing reservation', err as Error, {
+            externalOrderId, externalListingId,
+          });
+          return null;
+        });
 
         if (existingReservation) {
           try {
@@ -201,8 +210,16 @@ export class HandleDigisellerDeliveryUseCase {
           externalListingId, invoiceId, variantId: listing.variant_id,
           error: claimErr instanceof Error ? claimErr.message : String(claimErr),
         });
-        this.health.updateHealthCounters(externalListingId, 'reservation', false).catch(() => {});
-        this.unavailability.propagateVariantUnavailable(listing.variant_id, 'jit_failed').catch(() => {});
+        this.health.updateHealthCounters(externalListingId, 'reservation', false).catch((err: unknown) => {
+          logger.warn('Digiseller updateHealthCounters failed (out-of-stock path)', err as Error, {
+            externalListingId,
+          });
+        });
+        this.unavailability.propagateVariantUnavailable(listing.variant_id, 'jit_failed').catch((err: unknown) => {
+          logger.warn('Digiseller propagateVariantUnavailable failed', err as Error, {
+            variantId: listing.variant_id,
+          });
+        });
         return { success: false, productId, invoiceId, errorMessage: 'Out of stock' };
       }
 
@@ -214,7 +231,11 @@ export class HandleDigisellerDeliveryUseCase {
         logger.error('Digiseller form delivery — decrypt failed', err instanceof Error ? err : new Error(String(err)), {
           reservationId: outcome.reservationId,
         });
-        this.health.updateHealthCounters(externalListingId, 'provision', false).catch(() => {});
+        this.health.updateHealthCounters(externalListingId, 'provision', false).catch((healthErr: unknown) => {
+          logger.warn('Digiseller updateHealthCounters failed (decrypt-failed path)', healthErr as Error, {
+            externalListingId,
+          });
+        });
         return { success: false, productId, invoiceId, errorMessage: 'Delivery failed' };
       }
 
@@ -335,8 +356,16 @@ export class HandleDigisellerDeliveryUseCase {
       });
     }
 
-    await this.health.updateHealthCounters(params.externalListingId, 'reservation', true).catch(() => {});
-    await this.health.updateHealthCounters(params.externalListingId, 'provision', true).catch(() => {});
+    await this.health.updateHealthCounters(params.externalListingId, 'reservation', true).catch((err: unknown) => {
+      logger.warn('Digiseller updateHealthCounters failed (success: reservation)', err as Error, {
+        externalListingId: params.externalListingId,
+      });
+    });
+    await this.health.updateHealthCounters(params.externalListingId, 'provision', true).catch((err: unknown) => {
+      logger.warn('Digiseller updateHealthCounters failed (success: provision)', err as Error, {
+        externalListingId: params.externalListingId,
+      });
+    });
   }
 
   // ─── Config resolution ──────────────────────────────────────────────

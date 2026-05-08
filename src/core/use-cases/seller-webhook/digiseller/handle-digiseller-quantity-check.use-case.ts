@@ -70,7 +70,12 @@ export class HandleDigisellerQuantityCheckUseCase {
       select: 'variant_id, provider_account_id, price_cents, min_jit_margin_cents, status',
       eq: [['external_listing_id', productId], ['provider_account_id', providerAccountId]],
       single: true,
-    }).catch(() => null);
+    }).catch((err: unknown) => {
+      logger.warn('Digiseller quantity-check listing lookup failed', err as Error, {
+        productId, providerAccountId,
+      });
+      return null;
+    });
 
     if (!listing) {
       return { productId, count: 0, error: 'Product not found' };

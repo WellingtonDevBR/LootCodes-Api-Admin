@@ -10,6 +10,7 @@
  *   6. Return decrypted keys for marketplace delivery
  */
 import { injectable, inject } from 'tsyringe';
+import * as Sentry from '@sentry/node';
 import { TOKENS } from '../../../../di/tokens.js';
 import type { IDatabase } from '../../../ports/database.port.js';
 import type { ISellerKeyOperationsPort } from '../../../ports/seller-key-operations.port.js';
@@ -130,11 +131,23 @@ export class HandleDeclaredStockProvideUseCase {
           marketplaceFinancialsSnapshot: meta.marketplaceFinancials,
         });
       } catch (orchestrationErr) {
+        // Keys were already decrypted and returned to Eneba — success:true will still be sent.
+        // This is a critical data integrity issue: Eneba has the keys but our DB has not recorded
+        // the sale, emitted stock_provisioned, or updated inventory. Needs immediate manual review.
         logger.error(
-          'completeProvisionOrchestration failed AFTER successful provision',
+          'completeProvisionOrchestration failed AFTER successful provision — DB out of sync with Eneba',
           orchestrationErr as Error,
           { orderId, reservationId: reservation.id, keysProvisioned: result.decryptedKeys.length },
         );
+        Sentry.captureException(orchestrationErr instanceof Error ? orchestrationErr : new Error(String(orchestrationErr)), {
+          level: 'fatal',
+          extra: {
+            orderId,
+            reservationId: reservation.id,
+            keysProvisioned: result.decryptedKeys.length,
+            note: 'Keys were delivered to Eneba but DB sale/event recording failed. Manual reconciliation required.',
+          },
+        });
       }
 
       logger.info('Provision completed', {

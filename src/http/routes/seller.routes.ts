@@ -38,6 +38,9 @@ import type { RemoveCallbackUseCase } from '../../core/use-cases/seller/remove-c
 import type { ExpireReservationsUseCase } from '../../core/use-cases/seller/expire-reservations.use-case.js';
 import type { IDatabase } from '../../core/ports/database.port.js';
 import { TOKENS } from '../../di/tokens.js';
+import { createLogger } from '../../shared/logger.js';
+
+const logger = createLogger('admin-seller-routes');
 
 export async function adminSellerRoutes(app: FastifyInstance) {
   // --- Provider Accounts ---
@@ -137,6 +140,7 @@ export async function adminSellerRoutes(app: FastifyInstance) {
       if (message.includes('not found')) {
         return reply.status(404).send({ error: message });
       }
+      logger.error('GetProviderAccountDetail failed', err as Error, { provider_account_id: id });
       throw err;
     }
   });
@@ -149,6 +153,7 @@ export async function adminSellerRoutes(app: FastifyInstance) {
       return reply.send(result);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to register webhooks';
+      logger.error('RegisterWebhooks failed', err as Error, { provider_account_id: id });
       return reply.status(500).send({ error: message });
     }
   });
@@ -238,6 +243,10 @@ export async function adminSellerRoutes(app: FastifyInstance) {
         });
       } catch (err) {
         marketplace_publish_error = err instanceof Error ? err.message : 'Marketplace publish failed';
+        logger.error('Marketplace publish during listing creation failed', err as Error, {
+          listing_id: result.listing_id,
+          admin_id,
+        });
       }
     }
 
@@ -259,6 +268,7 @@ export async function adminSellerRoutes(app: FastifyInstance) {
       return reply.send(result);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Marketplace publish failed';
+      logger.error('PublishSellerListingToMarketplace failed', err as Error, { listing_id: id, admin_id });
       return reply.status(400).send({ error: message });
     }
   });
@@ -279,6 +289,10 @@ export async function adminSellerRoutes(app: FastifyInstance) {
       return reply.send(result);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Bind auction failed';
+      logger.error('BindSellerListingExternalAuction failed', err as Error, {
+        listing_id: id,
+        admin_id,
+      });
       return reply.status(400).send({ error: message });
     }
   });
@@ -559,6 +573,7 @@ export async function adminSellerRoutes(app: FastifyInstance) {
       return reply.send(result);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to enable declared stock';
+      logger.error('EnableDeclaredStock failed', err as Error, { provider_account_id: id, admin_id });
       return reply.status(400).send({ error: message });
     }
   });
@@ -572,6 +587,7 @@ export async function adminSellerRoutes(app: FastifyInstance) {
       return reply.send(result);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to enable key replacements';
+      logger.error('EnableKeyReplacements failed', err as Error, { provider_account_id: id, admin_id });
       return reply.status(400).send({ error: message });
     }
   });
@@ -587,6 +603,11 @@ export async function adminSellerRoutes(app: FastifyInstance) {
       return reply.send(result);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to remove callback';
+      logger.error('RemoveCallback failed', err as Error, {
+        provider_account_id: id,
+        callback_id: callbackId,
+        admin_id,
+      });
       return reply.status(400).send({ error: message });
     }
   });

@@ -93,6 +93,7 @@ import {
   computeAggregateFeesCents,
 } from '../../core/use-cases/seller-webhook/eneba/eneba-marketplace-financials.js';
 import { createLogger } from '../../shared/logger.js';
+import * as Sentry from '@sentry/node';
 
 const logger = createLogger('webhook-routes');
 
@@ -127,7 +128,12 @@ export async function sellerWebhookRoutes(app: FastifyInstance) {
           try {
             const financials = buildMarketplaceFinancialsFromEnebaAuction(auction, wholesale ?? false);
             return { ...auction, marketplaceFinancials: financials };
-          } catch {
+          } catch (err) {
+            logger.warn('Eneba financial enrichment failed — proceeding without financials', err as Error, {
+              orderId,
+              auctionId: auction.auctionId,
+              wholesale: wholesale ?? false,
+            });
             return auction;
           }
         });
@@ -143,6 +149,17 @@ export async function sellerWebhookRoutes(app: FastifyInstance) {
           providerCode: 'eneba',
           feesCents,
         });
+
+        if (!result.success) {
+          logger.warn('Eneba RESERVE returned failure — responding success:false', {
+            orderId, originalOrderId,
+          });
+          Sentry.captureMessage('Eneba RESERVE failed', {
+            level: 'warning',
+            extra: { orderId, originalOrderId, auctionIds: auctions?.map((a) => a.auctionId) },
+          });
+        }
+
         return reply.send(buildReservationResponse(result.orderId, result.success));
       }
 
@@ -155,6 +172,13 @@ export async function sellerWebhookRoutes(app: FastifyInstance) {
         });
 
         if (!result.success || !result.auctions) {
+          logger.warn('Eneba PROVIDE returned failure — responding success:false', {
+            orderId, originalOrderId,
+          });
+          Sentry.captureMessage('Eneba PROVIDE failed', {
+            level: 'error',
+            extra: { orderId, originalOrderId },
+          });
           return reply.send(buildProvisionResponse(result.orderId, result.success));
         }
 
@@ -574,8 +598,8 @@ export async function sellerWebhookRoutes(app: FastifyInstance) {
           requestedCount = body.forward.count;
         }
       }
-    } catch {
-      // fall through
+    } catch (err) {
+      logger.warn('Digiseller quantity-check JSON parse failed — falling back to query params', err as Error);
     }
 
     if (!productId) {

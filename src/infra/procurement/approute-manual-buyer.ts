@@ -5,6 +5,11 @@ import { AppRoutePublicApi } from '../marketplace/approute/app-route-public-api.
 import { createAppRouteMarketplaceHttpClient } from '../marketplace/approute/create-app-route-http-client.js';
 import { resolveAppRouteBaseUrlFromApiProfile } from '../marketplace/approute/resolve-app-route-base-url.js';
 import {
+  findAppRouteAccountForCurrency,
+  appRouteSpendableCents,
+  normalizeCurrencyIso4217,
+} from '../marketplace/approute/approute-wallet-preflight.js';
+import {
   formatAppRouteErrors,
   isIdempotencyReplayError,
   parseAppRouteEnvelope,
@@ -228,6 +233,65 @@ export class AppRouteManualBuyer {
     private readonly api: AppRoutePublicApi,
     private readonly http: MarketplaceHttpClient,
   ) {}
+
+  /**
+   * Preflight against `GET /accounts` so we fail fast when the wallet cannot cover the estimated shop cost.
+   */
+  async preflightSufficientBalance(
+    requiredTotalCents: number,
+    currency: string,
+  ): Promise<{ readonly ok: true } | { readonly ok: false; readonly error: string }> {
+    if (!Number.isFinite(requiredTotalCents) || requiredTotalCents <= 0) {
+      return {
+        ok: false,
+        error:
+          'Cannot validate AppRoute funds — estimated order amount is missing or invalid. Refresh procurement quotes.',
+      };
+    }
+
+    const cc = normalizeCurrencyIso4217(currency);
+    if (!cc) {
+      return {
+        ok: false,
+        error: `Invalid settlement currency for AppRoute wallet check: ${currency}`,
+      };
+    }
+
+    let accountsData;
+    try {
+      accountsData = await this.api.getAccounts();
+    } catch (e) {
+      const m = e instanceof Error ? e.message : String(e);
+      return { ok: false, error: `AppRoute wallet lookup failed: ${m}` };
+    }
+
+    const row = findAppRouteAccountForCurrency(accountsData.items, cc);
+    if (!row) {
+      return {
+        ok: false,
+        error: `AppRoute has no balance row for ${cc}. Fund that wallet currency before purchasing.`,
+      };
+    }
+
+    const spendable = appRouteSpendableCents(row);
+    if (spendable == null) {
+      return {
+        ok: false,
+        error: `AppRoute returned an unusable available balance for ${cc}`,
+      };
+    }
+
+    if (spendable < requiredTotalCents) {
+      const needMajor = (requiredTotalCents / 100).toFixed(2);
+      const haveMajor = (spendable / 100).toFixed(2);
+      return {
+        ok: false,
+        error: `Insufficient AppRoute funds: need ~${needMajor} ${cc} for this order; spendable ~${haveMajor} ${cc} (available plus overdraft when configured).`,
+      };
+    }
+
+    return { ok: true };
+  }
 
   /**
    * Shop voucher flow: POST /orders → poll GET /orders → optional `unhide=true` for plaintext voucher codes.

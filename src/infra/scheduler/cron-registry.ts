@@ -41,10 +41,7 @@ export async function registerCronJobs(app: FastifyInstance): Promise<void> {
       const result = await service.refreshAllPrices(requestId);
       logger.info('Auto-pricing refresh complete', { requestId, ...result });
     } catch (err) {
-      logger.error('Auto-pricing refresh failed', {
-        requestId,
-        error: err instanceof Error ? err.message : String(err),
-      });
+      logger.error('Auto-pricing refresh failed', err as Error, { requestId });
     }
   });
 
@@ -56,10 +53,7 @@ export async function registerCronJobs(app: FastifyInstance): Promise<void> {
       const result = await service.refreshAllCostBases(requestId);
       logger.info('Cost basis refresh complete', { requestId, ...result });
     } catch (err) {
-      logger.error('Cost basis refresh failed', {
-        requestId,
-        error: err instanceof Error ? err.message : String(err),
-      });
+      logger.error('Cost basis refresh failed', err as Error, { requestId });
     }
   });
 
@@ -71,10 +65,7 @@ export async function registerCronJobs(app: FastifyInstance): Promise<void> {
       const result = await service.refreshAllStock(requestId);
       logger.info('Stock sync refresh complete', { requestId, ...result });
     } catch (err) {
-      logger.error('Stock sync refresh failed', {
-        requestId,
-        error: err instanceof Error ? err.message : String(err),
-      });
+      logger.error('Stock sync refresh failed', err as Error, { requestId });
     }
   });
 
@@ -99,9 +90,7 @@ function registerJob(name: string, schedule: string, handler: () => Promise<void
 
   const task = cron.schedule(schedule, () => {
     handler().catch((err) => {
-      logger.error(`Unhandled error in cron job ${name}`, {
-        error: err instanceof Error ? err.message : String(err),
-      });
+      logger.error(`Unhandled error in cron job ${name}`, err as Error, { job: name });
     });
   });
 

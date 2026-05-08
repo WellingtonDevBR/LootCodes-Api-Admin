@@ -31,6 +31,19 @@ export interface AppRouteServicesData {
   readonly items?: readonly AppRouteServiceNode[];
 }
 
+/** One wallet row from `GET /accounts` — amounts are major units (e.g. USD dollars). */
+export interface AppRouteAccountItem {
+  readonly currency: string;
+  readonly balance?: number;
+  readonly available?: number;
+  readonly reserved?: number;
+  readonly overdraftLimit?: number;
+}
+
+export interface AppRouteAccountsData {
+  readonly items?: readonly AppRouteAccountItem[];
+}
+
 export interface AppRouteEnvelopeShape<T = unknown> {
   readonly status?: string;
   readonly statusCode?: number;

@@ -1,6 +1,6 @@
 import type { MarketplaceHttpClient } from '../_shared/marketplace-http.js';
 import { assertAppRouteSuccess, parseAppRouteEnvelope } from './envelope.js';
-import type { AppRouteServiceNode, AppRouteServicesData } from './types.js';
+import type { AppRouteAccountsData, AppRouteServiceNode, AppRouteServicesData } from './types.js';
 
 /**
  * Thin AppRoute HTTP façade — paths relative to `api_profile.base_url` (e.g. …/api/v1).
@@ -20,6 +20,13 @@ export class AppRoutePublicApi {
     const raw = await this.http.get<unknown>(path);
     const env = parseAppRouteEnvelope(raw);
     return assertAppRouteSuccess(env) as AppRouteServiceNode;
+  }
+
+  /** Wallet balances per currency (`GET accounts`). */
+  async getAccounts(): Promise<AppRouteAccountsData> {
+    const raw = await this.http.get<unknown>('accounts');
+    const env = parseAppRouteEnvelope(raw);
+    return assertAppRouteSuccess(env) as AppRouteAccountsData;
   }
 
   async postOrders(body: Record<string, unknown>): Promise<unknown> {

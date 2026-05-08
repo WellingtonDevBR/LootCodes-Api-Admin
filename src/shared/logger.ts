@@ -1,3 +1,5 @@
+import * as Sentry from '@sentry/node';
+
 type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 export interface LogContext {
@@ -33,6 +35,7 @@ class Logger {
   warn(message: string, second?: Error | unknown | LogContext, third?: LogContext) {
     const details = this.mergeErrorContext(second, third);
     console.warn(this.format('warn', message, details));
+    this.forwardToSentry('warning', message, second, third, details);
   }
 
   error(message: string, context?: LogContext): void;
@@ -40,6 +43,28 @@ class Logger {
   error(message: string, second?: Error | unknown | LogContext, third?: LogContext) {
     const details = this.mergeErrorContext(second, third);
     console.error(this.format('error', message, details));
+    this.forwardToSentry('error', message, second, third, details);
+  }
+
+  private forwardToSentry(
+    level: 'warning' | 'error',
+    message: string,
+    second: Error | unknown | LogContext | undefined,
+    third: LogContext | undefined,
+    details: LogContext | undefined,
+  ): void {
+    const err = third !== undefined ? second : second instanceof Error ? second : null;
+    if (err instanceof Error) {
+      Sentry.captureException(err, {
+        level,
+        extra: { logger: this.name, message, ...details },
+      });
+    } else {
+      Sentry.captureMessage(`[${this.name}] ${message}`, {
+        level,
+        extra: { logger: this.name, ...details },
+      });
+    }
   }
 
   startOperation(operationName: string, context?: LogContext): () => void {

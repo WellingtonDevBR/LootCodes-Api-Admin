@@ -56,7 +56,7 @@ export async function internalCronRoutes(app: FastifyInstance): Promise<void> {
         return reply.send(result);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        logger.error('Procurement declared stock cron failed', { requestId, error: msg });
+        logger.error('Procurement declared stock cron failed', err as Error, { requestId });
         return reply.code(500).send({ error: 'reconcile_failed', message: msg });
       }
     },

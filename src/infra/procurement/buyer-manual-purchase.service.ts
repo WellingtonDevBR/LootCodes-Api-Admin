@@ -37,6 +37,14 @@ const RECOVERABLE_ERROR_CODES = new Set([
   'RECOVERY_TIMEOUT',
 ]);
 
+function multiplyUnitCentsByQuantity(unitCents: number, quantity: number): number | null {
+  if (!Number.isFinite(unitCents) || unitCents <= 0) return null;
+  if (!Number.isFinite(quantity) || quantity < 1) return null;
+  const total = unitCents * quantity;
+  if (!Number.isFinite(total) || total <= 0 || total > Number.MAX_SAFE_INTEGER) return null;
+  return Math.round(total);
+}
+
 function isUuid(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.trim());
 }
@@ -494,6 +502,61 @@ export class BuyerManualPurchaseService {
     }
   }
 
+  private async resolveAppRoutePurchaseEstimate(params: {
+    readonly providerAccountId: string;
+    readonly variantId: string;
+    readonly offerId: string;
+    readonly quantity: number;
+  }): Promise<{ readonly totalCents: number; readonly currency: string } | null> {
+    const offerRow = await this.db.queryOne<{
+      last_price_cents: number | null;
+      currency: string | null;
+    }>('provider_variant_offers', {
+      filter: {
+        provider_account_id: params.providerAccountId,
+        variant_id: params.variantId,
+        external_offer_id: params.offerId,
+      },
+    });
+
+    let unitCents: number | null = null;
+    let currency: string | null = null;
+
+    if (offerRow?.last_price_cents != null && offerRow.last_price_cents > 0) {
+      unitCents = offerRow.last_price_cents;
+      currency = offerRow.currency;
+    }
+
+    if (unitCents == null) {
+      const catalogRow = await this.db.queryOne<{
+        min_price_cents: number | null;
+        currency: string | null;
+      }>('provider_product_catalog', {
+        filter: {
+          provider_account_id: params.providerAccountId,
+          external_product_id: params.offerId,
+        },
+      });
+
+      if (catalogRow?.min_price_cents != null && catalogRow.min_price_cents > 0) {
+        unitCents = catalogRow.min_price_cents;
+        currency = catalogRow.currency ?? currency;
+      }
+    }
+
+    if (unitCents == null) return null;
+
+    const totalCents = multiplyUnitCentsByQuantity(unitCents, params.quantity);
+    if (totalCents == null) return null;
+
+    const cc =
+      typeof currency === 'string' && /^[A-Za-z]{3}$/.test(currency.trim())
+        ? currency.trim().toUpperCase()
+        : 'USD';
+
+    return { totalCents, currency: cc };
+  }
+
   private async runAppRoutePurchaseAfterSetup(params: {
     readonly requestId: string;
     readonly variantId: string;
@@ -516,6 +579,25 @@ export class BuyerManualPurchaseService {
       providerAccountId,
       approuteBuyer,
     } = params;
+
+    const estimate = await this.resolveAppRoutePurchaseEstimate({
+      providerAccountId,
+      variantId,
+      offerId,
+      quantity,
+    });
+    if (!estimate) {
+      return {
+        success: false,
+        error:
+          'Cannot estimate AppRoute purchase cost — link or refresh procurement offers / catalog so price is known for this denomination.',
+      };
+    }
+
+    const walletOk = await approuteBuyer.preflightSufficientBalance(estimate.totalCents, estimate.currency);
+    if (!walletOk.ok) {
+      return { success: false, error: walletOk.error };
+    }
 
     let attemptId: string | null = null;
     try {

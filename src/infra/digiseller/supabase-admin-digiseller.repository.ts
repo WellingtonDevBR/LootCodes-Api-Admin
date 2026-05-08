@@ -434,7 +434,9 @@ export class SupabaseAdminDigisellerRepository implements IAdminDigisellerReposi
 
     await this.db.update('provider_accounts', { id: providerAccountId }, {
       cached_token: { accessToken: json.token, expiresAt },
-    }).catch(() => {});
+    }).catch((err: unknown) => {
+      logger.warn('Digiseller cached_token persistence failed', err as Error, { providerAccountId });
+    });
 
     return { token: json.token, baseUrl };
   }

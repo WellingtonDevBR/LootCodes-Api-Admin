@@ -64,6 +64,9 @@ describe('BuyerManualPurchaseService', () => {
           },
         };
       }
+      if (table === 'provider_variant_offers') {
+        return { last_price_cents: 250, currency: 'EUR' };
+      }
       return null;
     });
 
@@ -175,6 +178,7 @@ describe('BuyerManualPurchaseService', () => {
   it('completes AppRoute manual purchase, ingests keys, and records supplier_reference approute:*', async () => {
     const db = baseMocks();
     const approute = {
+      preflightSufficientBalance: vi.fn().mockResolvedValue({ ok: true }),
       purchase: vi.fn().mockResolvedValue({
         success: true,
         keys: ['VOUCH-A'],
@@ -195,6 +199,7 @@ describe('BuyerManualPurchaseService', () => {
     });
 
     expect(mockedCreateBuyer).not.toHaveBeenCalled();
+    expect(approute.preflightSufficientBalance).toHaveBeenCalledWith(250, 'EUR');
     expect(approute.purchase).toHaveBeenCalledWith('denom-ext', 1, expect.any(String));
     expect(result.success).toBe(true);
     expect(mockedIngest).toHaveBeenCalledWith(
@@ -206,6 +211,75 @@ describe('BuyerManualPurchaseService', () => {
       }),
       expect.any(String),
     );
+  });
+
+  it('blocks AppRoute manual purchase when wallet preflight reports insufficient funds', async () => {
+    const db = baseMocks();
+    const approute = {
+      preflightSufficientBalance: vi.fn().mockResolvedValue({
+        ok: false,
+        error: 'Insufficient AppRoute funds: need ~2.50 EUR for this order',
+      }),
+      purchase: vi.fn(),
+    };
+    mockedCreateAppRouteBuyer.mockReturnValue(approute as never);
+
+    const svc = new BuyerManualPurchaseService(db);
+    const result = await svc.execute({
+      variant_id: VARIANT_ID,
+      provider_code: 'approute',
+      offer_id: 'denom-ext',
+      quantity: 1,
+      admin_id: ADMIN_ID,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/Insufficient AppRoute funds/);
+    expect(approute.preflightSufficientBalance).toHaveBeenCalledWith(250, 'EUR');
+    expect(approute.purchase).not.toHaveBeenCalled();
+    expect(db.insert).not.toHaveBeenCalled();
+  });
+
+  it('blocks AppRoute manual purchase when offer/catalog price is unknown', async () => {
+    const db = baseMocks();
+    vi.mocked(db.queryOne).mockImplementation(async (table: string) => {
+      if (table === 'product_variants') {
+        return { sales_blocked_at: null, sales_blocked_reason: null };
+      }
+      if (table === 'provider_accounts') {
+        return {
+          api_profile: {
+            base_url: 'https://api.bamboocardportal.com/api/integration/v1.0',
+            base_url_v2: 'https://api.bamboocardportal.com/api/integration/v2.0',
+            account_id: 1,
+          },
+        };
+      }
+      if (table === 'provider_variant_offers') return null;
+      if (table === 'provider_product_catalog') return null;
+      return null;
+    });
+
+    const approute = {
+      preflightSufficientBalance: vi.fn(),
+      purchase: vi.fn(),
+    };
+    mockedCreateAppRouteBuyer.mockReturnValue(approute as never);
+
+    const svc = new BuyerManualPurchaseService(db);
+    const result = await svc.execute({
+      variant_id: VARIANT_ID,
+      provider_code: 'approute',
+      offer_id: 'unknown-denom',
+      quantity: 1,
+      admin_id: ADMIN_ID,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/Cannot estimate AppRoute purchase cost/i);
+    expect(approute.preflightSufficientBalance).not.toHaveBeenCalled();
+    expect(approute.purchase).not.toHaveBeenCalled();
+    expect(db.insert).not.toHaveBeenCalled();
   });
 
   it('returns recoverable true when Bamboo times out with an order ref', async () => {

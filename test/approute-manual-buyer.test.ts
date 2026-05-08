@@ -13,6 +13,45 @@ describe('approuteReferenceUuidFromKey', () => {
   });
 });
 
+describe('AppRouteManualBuyer.preflightSufficientBalance', () => {
+  it('passes when spendable major units cover required cents', async () => {
+    const http = { get: vi.fn(), post: vi.fn() } as unknown as MarketplaceHttpClient;
+    const api = {
+      getAccounts: vi.fn().mockResolvedValue({
+        items: [{ currency: 'USD', available: 50, overdraftLimit: 0 }],
+      }),
+    };
+    const buyer = new AppRouteManualBuyer(api as never, http);
+    const out = await buyer.preflightSufficientBalance(4999, 'usd');
+    expect(out.ok).toBe(true);
+    expect(api.getAccounts).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails when available balance is below required cents', async () => {
+    const http = { get: vi.fn(), post: vi.fn() } as unknown as MarketplaceHttpClient;
+    const api = {
+      getAccounts: vi.fn().mockResolvedValue({
+        items: [{ currency: 'USD', available: 49.98, overdraftLimit: 0 }],
+      }),
+    };
+    const buyer = new AppRouteManualBuyer(api as never, http);
+    const out = await buyer.preflightSufficientBalance(5000, 'USD');
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.error).toMatch(/Insufficient AppRoute funds/);
+  });
+
+  it('fails when GET accounts throws', async () => {
+    const http = { get: vi.fn(), post: vi.fn() } as unknown as MarketplaceHttpClient;
+    const api = {
+      getAccounts: vi.fn().mockRejectedValue(new Error('network down')),
+    };
+    const buyer = new AppRouteManualBuyer(api as never, http);
+    const out = await buyer.preflightSufficientBalance(100, 'USD');
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.error).toMatch(/wallet lookup failed/);
+  });
+});
+
 describe('AppRouteManualBuyer', () => {
   it('creates an order, polls until terminal, calls unhide when codes are masked, then returns plaintext keys', async () => {
     const get = vi.fn();

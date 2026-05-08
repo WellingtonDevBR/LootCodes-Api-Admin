@@ -134,6 +134,10 @@ export class HandleKinguinWebhookUseCase {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (msg.includes('INSUFFICIENT_STOCK') || msg.includes('Key claim failed')) {
+        logger.warn('Kinguin BUYING reservation: insufficient_stock', err as Error, {
+          reservationId, offerId, listingId: listing.id, variantId: listing.variant_id,
+          requestedQuantity: orderQty,
+        });
         this.propagateUnavailable(listing.variant_id, 'jit_failed');
         return jsonResult({ status: 'ok', warning: 'insufficient_stock' });
       }
@@ -294,7 +298,11 @@ export class HandleKinguinWebhookUseCase {
     // Best-effort post-sale restock
     this.keyUpload.reassertDeclaredStock(
       listing.id, offerId, listing.provider_account_id, reservationId,
-    ).catch(() => {});
+    ).catch((err: unknown) => {
+      logger.warn('Kinguin reassertDeclaredStock failed (post-sale restock)', err as Error, {
+        listingId: listing.id, offerId, reservationId,
+      });
+    });
 
     return jsonResult({ status: 'ok', provisioned: decryptedKeys.length });
   }
@@ -350,7 +358,11 @@ export class HandleKinguinWebhookUseCase {
 
     await this.db.update(
       'seller_stock_reservations', { id: reservation.id }, { status: 'cancelled' },
-    ).catch(() => {});
+    ).catch((err: unknown) => {
+      logger.warn('Kinguin cancellation: failed to mark reservation cancelled', err as Error, {
+        reservationId: reservation.id,
+      });
+    });
 
     return jsonResult({ status: 'ok' });
   }
@@ -443,7 +455,11 @@ export class HandleKinguinWebhookUseCase {
         'seller_stock_reservations',
         { id: reservation.id },
         { status: 'cancelled' },
-      ).catch(() => {});
+      ).catch((err: unknown) => {
+        logger.warn('Kinguin refund: failed to mark provisioned reservation cancelled', err as Error, {
+          reservationId: reservation.id,
+        });
+      });
 
       await this.db.insert('admin_alerts', {
         alert_type: 'marketplace_complaint_refund',
@@ -456,7 +472,11 @@ export class HandleKinguinWebhookUseCase {
           external_reservation_id: reservationId,
           listing_id: reservation.seller_listing_id,
         },
-      }).catch(() => {});
+      }).catch((err: unknown) => {
+        logger.warn('Kinguin refund: failed to insert admin_alerts row', err as Error, {
+          reservationId: reservation.id,
+        });
+      });
     } else if (reservation.status === 'pending') {
       await this.keyOps.releaseReservationKeys(reservation.id, 'cancelled');
     } else {
@@ -464,7 +484,12 @@ export class HandleKinguinWebhookUseCase {
         'seller_stock_reservations',
         { id: reservation.id },
         { status: 'cancelled' },
-      ).catch(() => {});
+      ).catch((err: unknown) => {
+        logger.warn('Kinguin refund: failed to mark non-pending reservation cancelled', err as Error, {
+          reservationId: reservation.id,
+          status: reservation.status,
+        });
+      });
     }
 
     return jsonResult({ status: 'ok' });
@@ -535,7 +560,12 @@ export class HandleKinguinWebhookUseCase {
         block,
         blockedAt,
       },
-    }).catch(() => {});
+    }).catch((err: unknown) => {
+      logger.warn('Kinguin OFFER_BLOCKED: failed to insert admin_alerts row', err as Error, {
+        listingId: listing.id,
+        offerId,
+      });
+    });
 
     return jsonResult({ status: 'ok', offer_blocked: true });
   }
@@ -616,10 +646,16 @@ export class HandleKinguinWebhookUseCase {
       payload: {
         reservationId, listingId, variantId, quantity, providerCode: 'kinguin',
       },
-    }).catch(() => {});
+    }).catch((err: unknown) => {
+      logger.warn('Kinguin emitReservationEvent failed', err as Error, {
+        listingId, variantId, reservationId,
+      });
+    });
   }
 
   private propagateUnavailable(variantId: string, reason: 'jit_failed' | 'all_unprofitable' | 'manual'): void {
-    this.unavailPort.propagateVariantUnavailable(variantId, reason).catch(() => {});
+    this.unavailPort.propagateVariantUnavailable(variantId, reason).catch((err: unknown) => {
+      logger.warn('Kinguin propagateVariantUnavailable failed', err as Error, { variantId, reason });
+    });
   }
 }
