@@ -237,7 +237,15 @@ export class SellerStockSyncService implements ISellerStockSyncService {
       return;
     }
 
-    // disable
+    // disable — skip if already at 0 to avoid burning marketplace rate limits
+    if (listing.declared_stock === 0) {
+      await this.db.update('seller_listings', { id: listing.id }, {
+        last_synced_at: new Date().toISOString(),
+        error_message: null,
+      });
+      return;
+    }
+
     logger.info('Stock-sync: dispatching marketplace disable', {
       requestId, listingId: listing.id, providerCode: listing.provider_code,
       reason: decision.reason,

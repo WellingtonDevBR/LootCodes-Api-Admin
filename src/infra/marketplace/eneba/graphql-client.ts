@@ -7,8 +7,8 @@
  * Does NOT know about domain concepts — purely a GraphQL transport.
  */
 import { createLogger } from '../../../shared/logger.js';
-import type { MarketplaceHttpClient } from '../_shared/marketplace-http.js';
-import type { OAuth2TokenManager } from '../_shared/marketplace-http.js';
+import type { MarketplaceHttpClient, OAuth2TokenManager } from '../_shared/marketplace-http.js';
+import { RateLimitExceededError } from '../_shared/marketplace-http.js';
 import type {
   EnebaGraphQLResponse,
   EnebaGraphQLError,
@@ -182,14 +182,18 @@ export class EnebaGraphQLClient {
 
     const messages = errors.map((e) => e.message);
     const firstCode = errors[0]?.extensions?.code ?? 'UNKNOWN';
+    const joined = messages.join('; ');
 
-    if (
-      firstCode === 'USER_ERROR' &&
-      messages.some((m) => /too many results/i.test(m))
-    ) {
-      throw new EnebaTooManyResultsError(messages.join('; '));
+    if (firstCode === 'USER_ERROR' && messages.some((m) => /too many results/i.test(m))) {
+      throw new EnebaTooManyResultsError(joined);
     }
 
-    throw new Error(`Eneba GraphQL error [${firstCode}]: ${messages.join('; ')}`);
+    // Eneba returns 429 rate-limit feedback via GraphQL errors (HTTP 200 + errors array).
+    // Throw as RateLimitExceededError so callers' transient-detection patterns recognise it.
+    if (/too many requests|retry after/i.test(joined)) {
+      throw new RateLimitExceededError('eneba');
+    }
+
+    throw new Error(`Eneba GraphQL error [${firstCode}]: ${joined}`);
   }
 }
