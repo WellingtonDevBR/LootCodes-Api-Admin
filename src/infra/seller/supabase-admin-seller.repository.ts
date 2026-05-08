@@ -837,6 +837,38 @@ export class SupabaseAdminSellerRepository implements IAdminSellerRepository {
     });
   }
 
+  /**
+   * Persist a JIT-publish-derived price on a listing and emit a domain
+   * event tagging the source buyer for audit. Called only when the
+   * publish use case fell back to a buyer-funded plan because there
+   * were no on-hand keys.
+   */
+  async updateSellerListingJitPublishPrice(params: {
+    listing_id: string;
+    price_cents: number;
+    source_provider_code: string;
+    source_provider_account_id: string;
+  }): Promise<void> {
+    const now = new Date().toISOString();
+    await this.db.update('seller_listings', { id: params.listing_id }, {
+      price_cents: params.price_cents,
+      updated_at: now,
+    });
+
+    await this.recordSellerListingDomainEvent({
+      listing_id: params.listing_id,
+      event_type: 'seller.listing_updated',
+      payload: {
+        listing_id: params.listing_id,
+        field: 'jit_publish_price',
+        price_cents: params.price_cents,
+        source_provider_code: params.source_provider_code,
+        source_provider_account_id: params.source_provider_account_id,
+      },
+      created_at: now,
+    });
+  }
+
   async finalizeSellerListingBindExistingAuction(
     dto: BindSellerListingExternalAuctionDto & { verified_remote_status: string },
   ): Promise<BindSellerListingExternalAuctionResult> {

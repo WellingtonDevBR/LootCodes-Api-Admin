@@ -92,6 +92,17 @@ export interface IAdminSellerRepository {
     listing_type?: 'declared_stock';
   }): Promise<PublishSellerListingToMarketplaceResult>;
   markSellerListingPublishFailure(listing_id: string, error_message: string): Promise<void>;
+  /**
+   * Persist the marketplace price on a listing when a JIT-publish fallback
+   * derived the price from a buyer offer. Records the source buyer for
+   * audit so the CRM can show "Auto-priced from <buyer> at <price>".
+   */
+  updateSellerListingJitPublishPrice(params: {
+    listing_id: string;
+    price_cents: number;
+    source_provider_code: string;
+    source_provider_account_id: string;
+  }): Promise<void>;
   finalizeSellerListingBindExistingAuction(
     dto: BindSellerListingExternalAuctionDto & { verified_remote_status: string },
   ): Promise<BindSellerListingExternalAuctionResult>;

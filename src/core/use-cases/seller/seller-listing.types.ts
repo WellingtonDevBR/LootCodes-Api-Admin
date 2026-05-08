@@ -196,11 +196,38 @@ export interface PublishSellerListingToMarketplaceDto {
   admin_id: string;
 }
 
+/**
+ * Audit fields surfaced when a publish that would have failed for "no
+ * inventory keys" was rescued by JIT-publishing from a buyer offer.
+ *
+ * The CRM toast renders these to explain the auto-priced auction; the
+ * downstream stock sync reconciles `declared_stock` to the real
+ * available count once keys are bought.
+ */
+export interface JitPublishAudit {
+  used: true;
+  source_buyer: {
+    provider_code: string;
+    provider_account_id: string;
+  };
+  declared_stock: number;
+  cost_basis_cents: number;
+  cost_basis_currency: string;
+  priced_at_cents: number;
+  priced_at_currency: string;
+}
+
 export interface PublishSellerListingToMarketplaceResult {
   listing_id: string;
   external_listing_id: string;
   status: string;
   skipped_already_published: boolean;
+  /**
+   * Present when the publish fell back to a buyer-funded plan (auction
+   * declared stock + price derived from buyer cost) instead of using
+   * on-hand keys. Absent on classic publishes.
+   */
+  jit_publish?: JitPublishAudit;
 }
 
 export interface SellerListingPublishContext {

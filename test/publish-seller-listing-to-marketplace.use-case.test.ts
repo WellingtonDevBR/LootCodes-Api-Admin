@@ -4,6 +4,34 @@ import type { ISellerListingAdapter } from '../src/core/ports/marketplace-adapte
 import type { IAdminSellerRepository } from '../src/core/ports/admin-seller-repository.port.js';
 import type { SellerListingPublishContext } from '../src/core/use-cases/seller/seller-listing.types.js';
 import { PublishSellerListingToMarketplaceUseCase } from '../src/core/use-cases/seller/publish-seller-listing-to-marketplace.use-case.js';
+import type {
+  ComputeJitPublishPlanInput,
+  JitPublishPlan,
+} from '../src/core/use-cases/seller/compute-jit-publish-plan.use-case.js';
+
+/**
+ * Default JIT planner returns no-buyers, preserving the legacy "throw on
+ * empty stock" behavior for tests that don't exercise JIT explicitly.
+ */
+function jitPlannerStub(plan: JitPublishPlan = { kind: 'no-buyers' }) {
+  return {
+    execute: vi.fn(async (_input: ComputeJitPublishPlanInput) => plan),
+  };
+}
+
+/**
+ * Repo factory that fills every method required by the use case so each
+ * test can pass a `Pick<…>` and stay focused on what it asserts.
+ */
+type SellerRepoMethods = Pick<
+  IAdminSellerRepository,
+  | 'getSellerListingPublishContext'
+  | 'repairSellerListingRowIfStaleFailure'
+  | 'countAvailableProductKeysForVariant'
+  | 'finalizeSellerListingMarketplacePublishSuccess'
+  | 'markSellerListingPublishFailure'
+  | 'updateSellerListingJitPublishPrice'
+>;
 
 describe('PublishSellerListingToMarketplaceUseCase', () => {
   it('returns skipped_already_published when external_listing_id already set', async () => {
@@ -11,10 +39,8 @@ describe('PublishSellerListingToMarketplaceUseCase', () => {
       getListingAdapter: vi.fn(),
     } as unknown as IMarketplaceAdapterRegistry;
 
-    const sellerRepo: Pick<
-      IAdminSellerRepository,
-      'getSellerListingPublishContext' | 'repairSellerListingRowIfStaleFailure' | 'countAvailableProductKeysForVariant' | 'finalizeSellerListingMarketplacePublishSuccess' | 'markSellerListingPublishFailure'
-    > = {
+    const sellerRepo: SellerRepoMethods = {
+      updateSellerListingJitPublishPrice: vi.fn(),
       repairSellerListingRowIfStaleFailure: vi.fn(),
       getSellerListingPublishContext: vi.fn().mockResolvedValue({
         listing_id: 'lst-1',
@@ -33,7 +59,11 @@ describe('PublishSellerListingToMarketplaceUseCase', () => {
       markSellerListingPublishFailure: vi.fn(),
     };
 
-    const uc = new PublishSellerListingToMarketplaceUseCase(registry, sellerRepo as IAdminSellerRepository);
+    const uc = new PublishSellerListingToMarketplaceUseCase(
+      registry,
+      sellerRepo as IAdminSellerRepository,
+      jitPlannerStub() as never,
+    );
     const result = await uc.execute({ listing_id: 'lst-1', admin_id: 'adm-1' });
 
     expect(result).toEqual({
@@ -64,10 +94,8 @@ describe('PublishSellerListingToMarketplaceUseCase', () => {
       skipped_already_published: false,
     });
 
-    const sellerRepo: Pick<
-      IAdminSellerRepository,
-      'getSellerListingPublishContext' | 'repairSellerListingRowIfStaleFailure' | 'countAvailableProductKeysForVariant' | 'finalizeSellerListingMarketplacePublishSuccess' | 'markSellerListingPublishFailure'
-    > = {
+    const sellerRepo: SellerRepoMethods = {
+      updateSellerListingJitPublishPrice: vi.fn(),
       repairSellerListingRowIfStaleFailure: vi.fn(),
       getSellerListingPublishContext: vi.fn().mockResolvedValue({
         listing_id: 'lst-2',
@@ -86,7 +114,11 @@ describe('PublishSellerListingToMarketplaceUseCase', () => {
       markSellerListingPublishFailure: vi.fn(),
     };
 
-    const uc = new PublishSellerListingToMarketplaceUseCase(registry, sellerRepo as IAdminSellerRepository);
+    const uc = new PublishSellerListingToMarketplaceUseCase(
+      registry,
+      sellerRepo as IAdminSellerRepository,
+      jitPlannerStub() as never,
+    );
     const result = await uc.execute({ listing_id: 'lst-2', admin_id: 'adm-1' });
 
     expect(listingAdapter.createListing).toHaveBeenCalledWith(
@@ -127,10 +159,8 @@ describe('PublishSellerListingToMarketplaceUseCase', () => {
       skipped_already_published: false,
     });
 
-    const sellerRepo: Pick<
-      IAdminSellerRepository,
-      'getSellerListingPublishContext' | 'repairSellerListingRowIfStaleFailure' | 'countAvailableProductKeysForVariant' | 'finalizeSellerListingMarketplacePublishSuccess' | 'markSellerListingPublishFailure'
-    > = {
+    const sellerRepo: SellerRepoMethods = {
+      updateSellerListingJitPublishPrice: vi.fn(),
       repairSellerListingRowIfStaleFailure: vi.fn(),
       getSellerListingPublishContext: vi.fn().mockResolvedValue({
         listing_id: 'lst-ku',
@@ -149,7 +179,11 @@ describe('PublishSellerListingToMarketplaceUseCase', () => {
       markSellerListingPublishFailure: vi.fn(),
     };
 
-    const uc = new PublishSellerListingToMarketplaceUseCase(registry, sellerRepo as IAdminSellerRepository);
+    const uc = new PublishSellerListingToMarketplaceUseCase(
+      registry,
+      sellerRepo as IAdminSellerRepository,
+      jitPlannerStub() as never,
+    );
     await uc.execute({ listing_id: 'lst-ku', admin_id: 'adm-1' });
 
     expect(listingAdapter.createListing).toHaveBeenCalledWith(
@@ -186,10 +220,8 @@ describe('PublishSellerListingToMarketplaceUseCase', () => {
       skipped_already_published: false,
     });
 
-    const sellerRepo: Pick<
-      IAdminSellerRepository,
-      'getSellerListingPublishContext' | 'repairSellerListingRowIfStaleFailure' | 'countAvailableProductKeysForVariant' | 'finalizeSellerListingMarketplacePublishSuccess' | 'markSellerListingPublishFailure'
-    > = {
+    const sellerRepo: SellerRepoMethods = {
+      updateSellerListingJitPublishPrice: vi.fn(),
       repairSellerListingRowIfStaleFailure: vi.fn(),
       getSellerListingPublishContext: vi.fn().mockResolvedValue({
         listing_id: 'lst-disc',
@@ -208,7 +240,11 @@ describe('PublishSellerListingToMarketplaceUseCase', () => {
       markSellerListingPublishFailure: vi.fn(),
     };
 
-    const uc = new PublishSellerListingToMarketplaceUseCase(registry, sellerRepo as IAdminSellerRepository);
+    const uc = new PublishSellerListingToMarketplaceUseCase(
+      registry,
+      sellerRepo as IAdminSellerRepository,
+      jitPlannerStub() as never,
+    );
     const result = await uc.execute({ listing_id: 'lst-disc', admin_id: 'adm-1' });
 
     expect(listingAdapter.discoverExistingAuctionId).toHaveBeenCalledWith('prod-linked');
@@ -246,10 +282,8 @@ describe('PublishSellerListingToMarketplaceUseCase', () => {
       skipped_already_published: false,
     });
 
-    const sellerRepo: Pick<
-      IAdminSellerRepository,
-      'getSellerListingPublishContext' | 'repairSellerListingRowIfStaleFailure' | 'countAvailableProductKeysForVariant' | 'finalizeSellerListingMarketplacePublishSuccess' | 'markSellerListingPublishFailure'
-    > = {
+    const sellerRepo: SellerRepoMethods = {
+      updateSellerListingJitPublishPrice: vi.fn(),
       repairSellerListingRowIfStaleFailure: vi.fn(),
       getSellerListingPublishContext: vi.fn().mockResolvedValue({
         listing_id: 'lst-disc-ku',
@@ -268,7 +302,11 @@ describe('PublishSellerListingToMarketplaceUseCase', () => {
       markSellerListingPublishFailure: vi.fn(),
     };
 
-    const uc = new PublishSellerListingToMarketplaceUseCase(registry, sellerRepo as IAdminSellerRepository);
+    const uc = new PublishSellerListingToMarketplaceUseCase(
+      registry,
+      sellerRepo as IAdminSellerRepository,
+      jitPlannerStub() as never,
+    );
     await uc.execute({ listing_id: 'lst-disc-ku', admin_id: 'adm-1' });
 
     expect(listingAdapter.updateListing).toHaveBeenCalledWith({
@@ -293,10 +331,8 @@ describe('PublishSellerListingToMarketplaceUseCase', () => {
 
     const markFail = vi.fn().mockResolvedValue(undefined);
 
-    const sellerRepo: Pick<
-      IAdminSellerRepository,
-      'getSellerListingPublishContext' | 'repairSellerListingRowIfStaleFailure' | 'countAvailableProductKeysForVariant' | 'finalizeSellerListingMarketplacePublishSuccess' | 'markSellerListingPublishFailure'
-    > = {
+    const sellerRepo: SellerRepoMethods = {
+      updateSellerListingJitPublishPrice: vi.fn(),
       repairSellerListingRowIfStaleFailure: vi.fn(),
       getSellerListingPublishContext: vi.fn().mockResolvedValue({
         listing_id: 'lst-3',
@@ -315,7 +351,11 @@ describe('PublishSellerListingToMarketplaceUseCase', () => {
       markSellerListingPublishFailure: markFail,
     };
 
-    const uc = new PublishSellerListingToMarketplaceUseCase(registry, sellerRepo as IAdminSellerRepository);
+    const uc = new PublishSellerListingToMarketplaceUseCase(
+      registry,
+      sellerRepo as IAdminSellerRepository,
+      jitPlannerStub() as never,
+    );
 
     await expect(uc.execute({ listing_id: 'lst-3', admin_id: 'adm-1' })).rejects.toThrow(
       /does not support automated marketplace listing publish/,
@@ -333,10 +373,8 @@ describe('PublishSellerListingToMarketplaceUseCase', () => {
 
     const markFail = vi.fn().mockResolvedValue(undefined);
 
-    const sellerRepo: Pick<
-      IAdminSellerRepository,
-      'getSellerListingPublishContext' | 'repairSellerListingRowIfStaleFailure' | 'countAvailableProductKeysForVariant' | 'finalizeSellerListingMarketplacePublishSuccess' | 'markSellerListingPublishFailure'
-    > = {
+    const sellerRepo: SellerRepoMethods = {
+      updateSellerListingJitPublishPrice: vi.fn(),
       repairSellerListingRowIfStaleFailure: vi.fn(),
       getSellerListingPublishContext: vi.fn().mockResolvedValue({
         listing_id: 'lst-4',
@@ -355,7 +393,11 @@ describe('PublishSellerListingToMarketplaceUseCase', () => {
       markSellerListingPublishFailure: markFail,
     };
 
-    const uc = new PublishSellerListingToMarketplaceUseCase(registry, sellerRepo as IAdminSellerRepository);
+    const uc = new PublishSellerListingToMarketplaceUseCase(
+      registry,
+      sellerRepo as IAdminSellerRepository,
+      jitPlannerStub() as never,
+    );
 
     await expect(uc.execute({ listing_id: 'lst-4', admin_id: 'adm-1' })).rejects.toThrow(
       /Listing price must be greater than zero before marketplace publish/,
@@ -378,10 +420,8 @@ describe('PublishSellerListingToMarketplaceUseCase', () => {
 
     const markFail = vi.fn().mockResolvedValue(undefined);
 
-    const sellerRepo: Pick<
-      IAdminSellerRepository,
-      'getSellerListingPublishContext' | 'repairSellerListingRowIfStaleFailure' | 'countAvailableProductKeysForVariant' | 'finalizeSellerListingMarketplacePublishSuccess' | 'markSellerListingPublishFailure'
-    > = {
+    const sellerRepo: SellerRepoMethods = {
+      updateSellerListingJitPublishPrice: vi.fn(),
       repairSellerListingRowIfStaleFailure: vi.fn(),
       getSellerListingPublishContext: vi.fn().mockResolvedValue({
         listing_id: 'lst-n-keys',
@@ -400,7 +440,11 @@ describe('PublishSellerListingToMarketplaceUseCase', () => {
       markSellerListingPublishFailure: markFail,
     };
 
-    const uc = new PublishSellerListingToMarketplaceUseCase(registry, sellerRepo as IAdminSellerRepository);
+    const uc = new PublishSellerListingToMarketplaceUseCase(
+      registry,
+      sellerRepo as IAdminSellerRepository,
+      jitPlannerStub() as never,
+    );
 
     await expect(uc.execute({ listing_id: 'lst-n-keys', admin_id: 'adm-1' })).rejects.toThrow(
       /at least one available key/,
@@ -411,5 +455,202 @@ describe('PublishSellerListingToMarketplaceUseCase', () => {
     );
     expect(registry.getListingAdapter).not.toHaveBeenCalled();
     expect(listingAdapter.createListing).not.toHaveBeenCalled();
+  });
+
+  // ─── JIT publish: stock=0 falls back to a buyer-funded plan ─────────
+
+  it('JIT-publishes Eneba auction using buyer plan when no inventory keys exist', async () => {
+    const listingAdapter: Partial<ISellerListingAdapter> = {
+      createListing: vi.fn().mockResolvedValue({
+        externalListingId: 'auction-jit-1',
+        status: 'active',
+      }),
+    };
+
+    const registry: IMarketplaceAdapterRegistry = {
+      getListingAdapter: vi.fn().mockReturnValue(listingAdapter),
+    } as unknown as IMarketplaceAdapterRegistry;
+
+    const finalize = vi.fn().mockResolvedValue({
+      listing_id: 'lst-jit',
+      external_listing_id: 'auction-jit-1',
+      status: 'active',
+      skipped_already_published: false,
+    });
+    const updateJitPrice = vi.fn().mockResolvedValue(undefined);
+
+    const sellerRepo: SellerRepoMethods = {
+      updateSellerListingJitPublishPrice: updateJitPrice,
+      repairSellerListingRowIfStaleFailure: vi.fn(),
+      getSellerListingPublishContext: vi.fn().mockResolvedValue({
+        listing_id: 'lst-jit',
+        variant_id: 'var-jit',
+        provider_account_id: 'pa-jit',
+        provider_code: 'eneba',
+        external_product_id: 'prod-jit',
+        external_listing_id: null,
+        listing_type: 'declared_stock',
+        price_cents: 1000, // listed price; JIT plan should override
+        currency: 'EUR',
+        status: 'draft',
+      } satisfies SellerListingPublishContext),
+      countAvailableProductKeysForVariant: vi.fn().mockResolvedValue(0),
+      finalizeSellerListingMarketplacePublishSuccess: finalize,
+      markSellerListingPublishFailure: vi.fn(),
+    };
+
+    const planner = jitPlannerStub({
+      kind: 'plan',
+      chosenBuyer: {
+        offerId: 'offer-approute',
+        providerAccountId: 'acct-approute',
+        providerCode: 'approute',
+        offerCurrency: 'USD',
+        unitCostCents: 500,
+      },
+      declaredStock: 7,
+      costInListingCurrencyCents: 460, // 500 USD ≈ 460 EUR
+      suggestion: {
+        suggestedPriceCents: 1500,
+        currency: 'EUR',
+        strategy: 'fixed',
+        lowestCompetitorCents: null,
+        estimatedPayoutCents: 1300,
+        estimatedFeeCents: 200,
+      },
+      walletDiagnostics: [
+        {
+          providerCode: 'approute',
+          providerAccountId: 'acct-approute',
+          offerCurrency: 'USD',
+          unitCostCents: 500,
+          walletAvailableCents: 100_000,
+          hasCredits: true,
+        },
+      ],
+    });
+
+    const uc = new PublishSellerListingToMarketplaceUseCase(
+      registry,
+      sellerRepo as IAdminSellerRepository,
+      planner as never,
+    );
+
+    const result = await uc.execute({ listing_id: 'lst-jit', admin_id: 'adm-1' });
+
+    // adapter sees the plan's suggested price + plan's declared stock
+    expect(listingAdapter.createListing).toHaveBeenCalledWith(
+      expect.objectContaining({
+        externalProductId: 'prod-jit',
+        priceCents: 1500,
+        currency: 'EUR',
+        listingType: 'declared_stock',
+        quantity: 7,
+      }),
+    );
+
+    // listing's persisted price was updated to the JIT-suggested value,
+    // tagged with the source buyer for audit
+    expect(updateJitPrice).toHaveBeenCalledWith(
+      expect.objectContaining({
+        listing_id: 'lst-jit',
+        price_cents: 1500,
+        source_provider_code: 'approute',
+        source_provider_account_id: 'acct-approute',
+      }),
+    );
+
+    // success record reflects the new declared stock
+    expect(finalize).toHaveBeenCalledWith(
+      expect.objectContaining({
+        listing_id: 'lst-jit',
+        external_listing_id: 'auction-jit-1',
+        declared_stock: 7,
+        admin_id: 'adm-1',
+      }),
+    );
+
+    // result advertises that JIT was used so the CRM toast can explain it
+    expect(result).toEqual(
+      expect.objectContaining({
+        external_listing_id: 'auction-jit-1',
+        skipped_already_published: false,
+        jit_publish: expect.objectContaining({
+          used: true,
+          source_buyer: { provider_code: 'approute', provider_account_id: 'acct-approute' },
+          declared_stock: 7,
+          cost_basis_cents: 460,
+          cost_basis_currency: 'EUR',
+          priced_at_cents: 1500,
+          priced_at_currency: 'EUR',
+        }),
+      }),
+    );
+  });
+
+  it('throws diagnostic error when stock=0 and no buyer wallet has credits', async () => {
+    const registry: IMarketplaceAdapterRegistry = {
+      getListingAdapter: vi.fn(),
+    } as unknown as IMarketplaceAdapterRegistry;
+
+    const markFail = vi.fn().mockResolvedValue(undefined);
+    const sellerRepo: SellerRepoMethods = {
+      updateSellerListingJitPublishPrice: vi.fn(),
+      repairSellerListingRowIfStaleFailure: vi.fn(),
+      getSellerListingPublishContext: vi.fn().mockResolvedValue({
+        listing_id: 'lst-noexec',
+        variant_id: 'var-noexec',
+        provider_account_id: 'pa-noexec',
+        provider_code: 'eneba',
+        external_product_id: 'prod-noexec',
+        external_listing_id: null,
+        listing_type: 'declared_stock',
+        price_cents: 999,
+        currency: 'EUR',
+        status: 'draft',
+      } satisfies SellerListingPublishContext),
+      countAvailableProductKeysForVariant: vi.fn().mockResolvedValue(0),
+      finalizeSellerListingMarketplacePublishSuccess: vi.fn(),
+      markSellerListingPublishFailure: markFail,
+    };
+
+    const planner = jitPlannerStub({
+      kind: 'no-funded',
+      walletDiagnostics: [
+        {
+          providerCode: 'bamboo',
+          providerAccountId: 'acct-bamboo',
+          offerCurrency: 'USD',
+          unitCostCents: 400,
+          walletAvailableCents: 0,
+          hasCredits: false,
+          reason: 'wallet_insufficient',
+        },
+        {
+          providerCode: 'approute',
+          providerAccountId: 'acct-approute',
+          offerCurrency: 'EUR',
+          unitCostCents: 500,
+          walletAvailableCents: 50,
+          hasCredits: false,
+          reason: 'wallet_insufficient',
+        },
+      ],
+    });
+
+    const uc = new PublishSellerListingToMarketplaceUseCase(
+      registry,
+      sellerRepo as IAdminSellerRepository,
+      planner as never,
+    );
+
+    await expect(uc.execute({ listing_id: 'lst-noexec', admin_id: 'adm-1' })).rejects.toThrow(
+      /credits/i,
+    );
+    expect(markFail).toHaveBeenCalledWith(
+      'lst-noexec',
+      expect.stringMatching(/credits/i),
+    );
+    expect(registry.getListingAdapter).not.toHaveBeenCalled();
   });
 });
