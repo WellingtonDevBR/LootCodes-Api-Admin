@@ -172,7 +172,7 @@ export class EnebaGraphQLClient {
     }
     this.rl.record();
 
-    return this.httpClient.post<T>(this.baseUrl, body, {
+    return this.httpClient.post<T>('', body, {
       headers: { 'Content-Type': 'application/json' },
     });
   }
