@@ -378,9 +378,18 @@ export class SellerAutoPricingService implements ISellerAutoPricingService {
               competitors = await this.pricingService.getCompetitors(providerCode, listing.external_product_id);
               competitors = stampCompetitorOwnership(competitors, listing.external_listing_id);
             } catch (err) {
-              logger.error('Failed to fetch competitors', {
+              const errMsg = err instanceof Error ? err.message : String(err);
+              const errName = err instanceof Error ? err.name : '';
+              const isTransient =
+                errName === 'CircuitOpenError' ||
+                errName === 'RateLimitExceededError' ||
+                /^Circuit breaker open for /.test(errMsg) ||
+                /^Rate limit exceeded for /.test(errMsg);
+              const logFn = isTransient ? logger.info.bind(logger) : logger.error.bind(logger);
+              logFn('Failed to fetch competitors', {
                 requestId, listingId: listing.id,
-                error: err instanceof Error ? err.message : String(err),
+                error: errMsg,
+                transient: isTransient,
               });
             }
           }

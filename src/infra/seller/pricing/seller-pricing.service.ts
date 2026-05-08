@@ -164,9 +164,18 @@ export class SellerPricingService implements ISellerPricingService {
         competitors = stampCompetitorOwnership(competitors, req.externalListingId ?? null);
       } catch (err) {
         competitorsUnavailable = true;
-        logger.error('Failed to fetch competitor prices', {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        const errName = err instanceof Error ? err.name : '';
+        const isTransient =
+          errName === 'CircuitOpenError' ||
+          errName === 'RateLimitExceededError' ||
+          /^Circuit breaker open for /.test(errMsg) ||
+          /^Rate limit exceeded for /.test(errMsg);
+        const logFn = isTransient ? logger.info.bind(logger) : logger.error.bind(logger);
+        logFn('Failed to fetch competitor prices', {
           externalProductId: req.externalProductId,
-          error: err instanceof Error ? err.message : String(err),
+          error: errMsg,
+          transient: isTransient,
         });
       }
     }

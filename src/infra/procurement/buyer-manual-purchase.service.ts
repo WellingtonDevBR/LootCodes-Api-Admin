@@ -8,6 +8,7 @@ import { TOKENS } from '../../di/tokens.js';
 import type { IDatabase } from '../../core/ports/database.port.js';
 import type {
   JitBambooPurchaseDto,
+  JitPurchaseDto,
   ManualProviderPurchaseDto,
   ManualProviderPurchaseResult,
   ManualPurchaseFailedIngestion,
@@ -184,18 +185,29 @@ export class BuyerManualPurchaseService {
       idempotencyKey: idempotencyKeyApproute,
       providerAccountId,
       approuteBuyer,
+      attemptSource: 'manual',
     });
   }
 
   /**
-   * JIT marketplace reserve: purchase from the Bamboo account attached to the linked offer row
-   * (not necessarily the first enabled Bamboo account).
+   * Native in-process JIT purchase against a specific buyer-capable provider
+   * account (Bamboo or AppRoute). Replaces the legacy Bamboo-only path; the
+   * `RouteAndPurchaseJitOffersUseCase` call site routes this for the cheapest
+   * USD-normalized offer with wallet credit.
    */
-  async executeJitBambooPurchase(dto: JitBambooPurchaseDto): Promise<ManualProviderPurchaseResult> {
+  async executeJitPurchase(dto: JitPurchaseDto): Promise<ManualProviderPurchaseResult> {
     const requestId = randomUUID();
 
-    if (!dto.variant_id?.trim() || !dto.offer_id?.trim() || !dto.provider_account_id?.trim()) {
-      return { success: false, error: 'variant_id, offer_id, and provider_account_id are required' };
+    if (
+      !dto.variant_id?.trim()
+      || !dto.offer_id?.trim()
+      || !dto.provider_account_id?.trim()
+      || !dto.provider_code?.trim()
+    ) {
+      return {
+        success: false,
+        error: 'variant_id, provider_code, offer_id, and provider_account_id are required',
+      };
     }
 
     const quantity = Number(dto.quantity ?? 1);
@@ -221,6 +233,7 @@ export class BuyerManualPurchaseService {
     }
 
     const variantId = dto.variant_id.trim();
+    const providerCode = dto.provider_code.trim().toLowerCase();
     const providerAccountId = dto.provider_account_id.trim();
     const offerId = dto.offer_id.trim();
     const idempotencyKey = dto.idempotency_key.trim();
@@ -241,32 +254,66 @@ export class BuyerManualPurchaseService {
       return { success: false, error: 'Provider account is disabled or not found' };
     }
 
-    const providerCode = accountRow.provider_code.trim().toLowerCase();
-    if (providerCode !== 'bamboo') {
-      return { success: false, error: 'JIT native purchase only supports bamboo for this provider account' };
+    const dbProviderCode = accountRow.provider_code.trim().toLowerCase();
+    if (dbProviderCode !== providerCode) {
+      return {
+        success: false,
+        error: `provider_code mismatch: caller said '${providerCode}' but account is '${dbProviderCode}'`,
+      };
+    }
+
+    if (providerCode !== 'bamboo' && providerCode !== 'approute') {
+      return {
+        success: false,
+        error: `JIT native purchase is not supported for provider '${providerCode}' yet`,
+      };
     }
 
     const apiProfile = asApiProfile(accountRow.api_profile);
-
     const secrets = await resolveProviderSecrets(this.db, providerAccountId);
-    const bambooBuyer = createBambooManualBuyer({ secrets, profile: apiProfile });
-    if (!bambooBuyer) {
-      return {
-        success: false,
-        error: 'Bamboo credentials or api_profile (account_id, base URLs) are not configured for this provider account',
-      };
+
+    if (providerCode === 'bamboo') {
+      const bambooBuyer = createBambooManualBuyer({ secrets, profile: apiProfile });
+      if (!bambooBuyer) {
+        return {
+          success: false,
+          error:
+            'Bamboo credentials or api_profile (account_id, base URLs) are not configured for this provider account',
+        };
+      }
+      const walletCurrency = resolveCheckoutWalletCurrency(dto.wallet_currency, apiProfile);
+      if (!walletCurrency) {
+        return {
+          success: false,
+          error:
+            'wallet_currency must be a 3-letter ISO code (e.g. USD, EUR), or set api_profile.checkout_wallet_currency',
+        };
+      }
+      return this.runBambooPurchaseAfterSetup({
+        requestId,
+        variantId,
+        providerCode,
+        offerId,
+        quantity,
+        adminUserId,
+        idempotencyKey,
+        providerAccountId,
+        bambooBuyer,
+        walletCurrency,
+        attemptSource: 'seller_jit',
+      });
     }
 
-    const walletCurrency = resolveCheckoutWalletCurrency(dto.wallet_currency, apiProfile);
-    if (!walletCurrency) {
+    const approuteBuyer = createAppRouteManualBuyer({ secrets, profile: apiProfile });
+    if (!approuteBuyer) {
       return {
         success: false,
         error:
-          'wallet_currency must be a 3-letter ISO code (e.g. USD, EUR), or set api_profile.checkout_wallet_currency',
+          'AppRoute credentials or api_profile.base_url are not configured for this provider account',
       };
     }
 
-    return this.runBambooPurchaseAfterSetup({
+    return this.runAppRoutePurchaseAfterSetup({
       requestId,
       variantId,
       providerCode,
@@ -275,10 +322,13 @@ export class BuyerManualPurchaseService {
       adminUserId,
       idempotencyKey,
       providerAccountId,
-      bambooBuyer,
-      walletCurrency,
+      approuteBuyer,
       attemptSource: 'seller_jit',
     });
+  }
+
+  async executeJitBambooPurchase(dto: JitBambooPurchaseDto): Promise<ManualProviderPurchaseResult> {
+    return this.executeJitPurchase({ ...dto, provider_code: 'bamboo' });
   }
 
   private async runBambooPurchaseAfterSetup(params: {
@@ -563,10 +613,11 @@ export class BuyerManualPurchaseService {
     readonly providerCode: string;
     readonly offerId: string;
     readonly quantity: number;
-    readonly adminUserId: string;
+    readonly adminUserId: string | null;
     readonly idempotencyKey: string;
     readonly providerAccountId: string;
     readonly approuteBuyer: AppRouteManualBuyer;
+    readonly attemptSource: 'manual' | 'seller_jit';
   }): Promise<ManualProviderPurchaseResult> {
     const {
       requestId,
@@ -578,6 +629,7 @@ export class BuyerManualPurchaseService {
       idempotencyKey,
       providerAccountId,
       approuteBuyer,
+      attemptSource,
     } = params;
 
     const estimate = await this.resolveAppRoutePurchaseEstimate({
@@ -713,6 +765,9 @@ export class BuyerManualPurchaseService {
           keys_ingested: ingestedKeyIds.length,
           cost_cents: result.cost_cents,
           currency: result.currency,
+          ...(attemptSource === 'seller_jit'
+            ? { procurement_trigger: 'seller_reserve_jit' as const }
+            : {}),
         },
       });
 

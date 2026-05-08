@@ -52,3 +52,49 @@ export interface AppRouteEnvelopeShape<T = unknown> {
   readonly data?: T;
   readonly errors?: readonly unknown[];
 }
+
+// ─── DTU (Direct Top-Up) types ──────────────────────────────────────────
+//
+// DTU orders top up a target account directly (mobile balance, gaming
+// wallet, etc.) and do NOT return voucher codes.
+
+export interface AppRouteDtuOrderField {
+  readonly key: string;
+  readonly value: string;
+}
+
+export interface AppRouteDtuOrderLine {
+  readonly denominationId: string;
+  readonly quantity: number;
+  readonly amountCurrencyCode?: string;
+  readonly fields?: readonly AppRouteDtuOrderField[];
+}
+
+export interface AppRouteDtuOrderRequest {
+  readonly referenceId: string;
+  readonly orders: readonly AppRouteDtuOrderLine[];
+}
+
+export interface AppRouteDtuCheckRequest {
+  readonly orders: readonly AppRouteDtuOrderLine[];
+}
+
+export interface AppRouteDtuOrderResult {
+  readonly orderId: string;
+  readonly status: string;
+  readonly price?: number;
+  readonly currency?: string;
+  readonly result?: {
+    readonly vouchers?: unknown;
+    readonly attributes?: Record<string, unknown> | null;
+  };
+}
+
+export interface AppRouteDtuCheckResult {
+  readonly canRecharge: boolean;
+  readonly price: number;
+  readonly currency: string;
+  readonly providerStatus: string;
+  readonly providerMessage?: string;
+  readonly attributes?: Record<string, unknown>;
+}

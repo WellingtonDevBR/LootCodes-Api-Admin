@@ -41,6 +41,12 @@ import { KeyDecryptionService } from '../infra/crypto/key-decryption.service.js'
 import { SecureKeyManagerAdapter } from '../infra/crypto/secure-key-manager.adapter.js';
 import { SupabaseKeyRotationRepository } from '../infra/inventory/supabase-key-rotation.repository.js';
 import { RecryptProductKeysBatchUseCase } from '../core/use-cases/inventory/recrypt-product-keys-batch.use-case.js';
+import { BuyerProviderRegistry } from '../infra/procurement/buyer/buyer-provider-registry.js';
+import { SupabaseProcurementFxConverter } from '../infra/currency/supabase-procurement-fx-converter.js';
+import { SupabaseJitOfferRepository } from '../infra/procurement/supabase-jit-offer.repository.js';
+import { RouteAndPurchaseJitOffersUseCase } from '../core/use-cases/procurement/route-and-purchase-jit-offers.use-case.js';
+import { DtuClientFactory } from '../infra/procurement/dtu/dtu-client-factory.js';
+import { DtuRechargeUseCase } from '../core/use-cases/procurement/dtu-recharge.use-case.js';
 import { ListingHealthService } from '../infra/seller/listing-health.service.js';
 import { VariantUnavailabilityService } from '../infra/seller/variant-unavailability.service.js';
 import { MarketplaceAdapterRegistry } from '../infra/marketplace/marketplace-adapter-registry.js';
@@ -675,6 +681,16 @@ container.register(TOKENS.KeyDecryption, { useClass: KeyDecryptionService });
 container.register(TOKENS.KeyEncryptionPort, { useClass: SecureKeyManagerAdapter });
 container.register(TOKENS.KeyRotationRepository, { useClass: SupabaseKeyRotationRepository });
 container.register(UC_TOKENS.RecryptProductKeysBatch, { useClass: RecryptProductKeysBatchUseCase });
+
+// Buyer-side procurement routing (multi-provider JIT)
+container.register(TOKENS.JitOfferRepository, { useClass: SupabaseJitOfferRepository });
+container.register(TOKENS.ProcurementFxConverter, { useClass: SupabaseProcurementFxConverter });
+container.register(TOKENS.BuyerProviderRegistry, { useClass: BuyerProviderRegistry });
+container.register(UC_TOKENS.RouteAndPurchaseJitOffers, { useClass: RouteAndPurchaseJitOffersUseCase });
+
+// DTU (Direct Top-Up)
+container.register(TOKENS.DtuClientFactory, { useClass: DtuClientFactory });
+container.register(UC_TOKENS.DtuRecharge, { useClass: DtuRechargeUseCase });
 container.register(TOKENS.ListingHealth, { useClass: ListingHealthService });
 container.register(TOKENS.VariantUnavailability, { useClass: VariantUnavailabilityService });
 container.register(TOKENS.SellerKeyOperations, { useClass: SellerKeyOperationsService });

@@ -40,12 +40,21 @@ export interface ManualProviderPurchaseDto {
   wallet_currency?: string;
 }
 
-/** Native in-process JIT purchase (marketplace reserve) — Bamboo only; uses linked `provider_variant_offers` row. */
-export interface JitBambooPurchaseDto {
+/**
+ * Native in-process JIT purchase (marketplace reserve) for any buyer-capable
+ * provider — uses a linked `provider_variant_offers` row.
+ *
+ * Old name `JitBambooPurchaseDto` is preserved as a type alias for one
+ * release of internal callers; new code MUST use this type and pass
+ * `provider_code` explicitly.
+ */
+export interface JitPurchaseDto {
   variant_id: string;
+  /** Buyer-capable provider code (e.g. `'bamboo'`, `'approute'`). */
+  provider_code: string;
   /** Must match the linked offer row (`provider_variant_offers.provider_account_id`). */
   provider_account_id: string;
-  /** Bamboo catalog product id (`provider_variant_offers.external_offer_id`). */
+  /** Provider-native offer id (`provider_variant_offers.external_offer_id`). */
   offer_id: string;
   quantity: number;
   /**
@@ -55,8 +64,12 @@ export interface JitBambooPurchaseDto {
   admin_user_id?: string;
   /** Stable per-attempt idempotency key (e.g. `jit-{variant}-{reservation}-{random}`). */
   idempotency_key: string;
+  /** Bamboo: ISO 4217 wallet currency. AppRoute: optional currency hint for wallet check. */
   wallet_currency?: string;
 }
+
+/** @deprecated Use `JitPurchaseDto` and pass `provider_code: 'bamboo'`. */
+export type JitBambooPurchaseDto = Omit<JitPurchaseDto, 'provider_code'>;
 
 /** Returned when key ingestion fails after a successful provider charge (admin-only surface). */
 export interface ManualPurchaseFailedIngestion {

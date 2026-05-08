@@ -44,6 +44,12 @@ export const TOKENS = {
   KeyEncryptionPort: Symbol.for('IKeyEncryptionPort'),
   KeyRotationRepository: Symbol.for('IKeyRotationRepository'),
 
+  // Procurement / buyer routing
+  BuyerProviderRegistry: Symbol.for('IBuyerProviderRegistry'),
+  ProcurementFxConverter: Symbol.for('IProcurementFxConverter'),
+  JitOfferRepository: Symbol.for('IJitOfferRepository'),
+  DtuClientFactory: Symbol.for('IDtuClientFactory'),
+
   // Marketplace adapters & seller services
   MarketplaceAdapterRegistry: Symbol.for('IMarketplaceAdapterRegistry'),
   SellerKeyOperations: Symbol.for('ISellerKeyOperationsPort'),
@@ -186,6 +192,8 @@ export const UC_TOKENS = {
   ListPurchaseQueue: Symbol.for('ListPurchaseQueueUseCase'),
   CancelQueueItem: Symbol.for('CancelQueueItemUseCase'),
   ListPurchaseAttempts: Symbol.for('ListPurchaseAttemptsUseCase'),
+  RouteAndPurchaseJitOffers: Symbol.for('RouteAndPurchaseJitOffersUseCase'),
+  DtuRecharge: Symbol.for('DtuRechargeUseCase'),
 
   // Price Match
   ListPriceMatchClaims: Symbol.for('ListPriceMatchClaimsUseCase'),
