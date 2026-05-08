@@ -103,6 +103,9 @@ export class HandleDeclaredStockReserveUseCase {
         const salePriceCents = typeof priceMoney.amount === 'number'
           ? priceMoney.amount
           : parseInt(String(priceMoney.amount), 10);
+        const salePriceCurrency = typeof priceMoney.currency === 'string' && priceMoney.currency.trim().length > 0
+          ? priceMoney.currency.trim().toUpperCase()
+          : undefined;
 
         const providerMetadata: Record<string, unknown> = {
           originalOrderId,
@@ -127,6 +130,7 @@ export class HandleDeclaredStockReserveUseCase {
             expiresAt,
             providerMetadata,
             salePriceCents,
+            salePriceCurrency,
             minMarginCents: listing.min_jit_margin_cents ?? undefined,
             feesCents,
           });

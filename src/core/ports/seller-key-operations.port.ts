@@ -21,7 +21,10 @@ export interface ClaimKeysParams {
   externalOrderId: string;
   expiresAt: string;
   providerMetadata?: Record<string, unknown>;
+  /** Sale price in the marketplace's listing currency (e.g. EUR cents for Eneba). */
   salePriceCents?: number;
+  /** ISO-4217 currency code for salePriceCents. Must be provided alongside salePriceCents. */
+  salePriceCurrency?: string;
   feesCents?: number;
   minMarginCents?: number;
 }
