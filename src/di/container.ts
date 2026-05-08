@@ -47,6 +47,7 @@ import { SellerPriceIntelligenceService } from '../infra/seller/pricing/seller-p
 import { SellerCostBasisService } from '../infra/seller/pricing/seller-cost-basis.service.js';
 import { SellerStockSyncService } from '../infra/seller/pricing/seller-stock-sync.service.js';
 import { ProcurementDeclaredStockReconcileService } from '../infra/seller/procurement-declared-stock-reconcile.service.js';
+import { SupabasePlatformSettingsRepository } from '../infra/platform-settings/supabase-platform-settings.repository.js';
 import { SupabaseAdminOpportunitiesRepository } from '../infra/opportunities/supabase-admin-opportunities.repository.js';
 import { SupabaseAdminAlertsRepository } from '../infra/alerts/supabase-admin-alerts.repository.js';
 
@@ -289,6 +290,7 @@ import { EnableDeclaredStockUseCase } from '../core/use-cases/seller/enable-decl
 import { EnableKeyReplacementsUseCase } from '../core/use-cases/seller/enable-key-replacements.use-case.js';
 import { RemoveCallbackUseCase } from '../core/use-cases/seller/remove-callback.use-case.js';
 import { ExpireReservationsUseCase } from '../core/use-cases/seller/expire-reservations.use-case.js';
+import { ReconcileSellerListingsUseCase } from '../core/use-cases/seller/reconcile-seller-listings.use-case.js';
 
 // Use cases — Seller Webhooks
 import { HandleDeclaredStockReserveUseCase } from '../core/use-cases/seller-webhook/eneba/handle-declared-stock-reserve.use-case.js';
@@ -661,6 +663,7 @@ container.register(UC_TOKENS.EnableDeclaredStock, { useClass: EnableDeclaredStoc
 container.register(UC_TOKENS.EnableKeyReplacements, { useClass: EnableKeyReplacementsUseCase });
 container.register(UC_TOKENS.RemoveCallback, { useClass: RemoveCallbackUseCase });
 container.register(UC_TOKENS.ExpireReservations, { useClass: ExpireReservationsUseCase });
+container.register(UC_TOKENS.ReconcileSellerListings, { useClass: ReconcileSellerListingsUseCase });
 
 // Infrastructure — Marketplace & Seller Services
 // Singleton: tsyringe defaults to Transient; bootstrap and repositories must share one registry.
@@ -681,6 +684,7 @@ container.register(TOKENS.SellerStockSyncService, { useClass: SellerStockSyncSer
 container.register(TOKENS.ProcurementDeclaredStockReconcileService, {
   useClass: ProcurementDeclaredStockReconcileService,
 });
+container.register(TOKENS.PlatformSettingsRepository, { useClass: SupabasePlatformSettingsRepository });
 
 // Use cases — Seller Webhooks
 container.register(UC_TOKENS.HandleDeclaredStockReserve, { useClass: HandleDeclaredStockReserveUseCase });

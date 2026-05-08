@@ -105,13 +105,25 @@ export class SellerStockSyncService implements ISellerStockSyncService {
         }
       } catch (err) {
         result.errors++;
-        logger.error('Failed to sync stock for listing', {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        // Circuit-breaker / rate-limit failures are expected operational state when an
+        // upstream marketplace is degraded; log as warn so they don't fire Sentry alerts.
+        // Real adapter/contract errors stay at error level.
+        const errName = err instanceof Error ? err.name : '';
+        const isTransient =
+          errName === 'CircuitOpenError' ||
+          errName === 'RateLimitExceededError' ||
+          /^Circuit breaker open for /.test(errMsg) ||
+          /^Rate limit exceeded for /.test(errMsg);
+        const logFn = isTransient ? logger.warn.bind(logger) : logger.error.bind(logger);
+        logFn('Failed to sync stock for listing', {
           requestId, listingId: listing.id,
-          error: err instanceof Error ? err.message : String(err),
+          error: errMsg,
+          transient: isTransient,
         });
         try {
           await this.db.update('seller_listings', { id: listing.id }, {
-            error_message: `Stock sync failed: ${err instanceof Error ? err.message : 'unknown'}`,
+            error_message: `Stock sync failed: ${errMsg || 'unknown'}`,
             last_synced_at: new Date().toISOString(),
           });
         } catch { /* swallow update error */ }

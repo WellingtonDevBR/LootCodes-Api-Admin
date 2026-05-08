@@ -1,63 +1,74 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
+import { z } from 'zod';
 import { container } from '../../di/container.js';
-import { TOKENS } from '../../di/tokens.js';
-import type { IProcurementDeclaredStockReconcileService } from '../../core/ports/procurement-declared-stock-reconcile.port.js';
+import { UC_TOKENS } from '../../di/tokens.js';
+import type { ReconcileSellerListingsUseCase } from '../../core/use-cases/seller/reconcile-seller-listings.use-case.js';
+import {
+  RECONCILE_PHASES,
+  type ReconcileSellerListingsDto,
+} from '../../core/use-cases/seller/reconcile-seller-listings.types.js';
 import { procurementCronSecretGuard } from '../middleware/procurement-cron-secret.guard.js';
 import { createLogger } from '../../shared/logger.js';
 
 const logger = createLogger('internal-cron-routes');
 
-function parseUuidList(raw: unknown): string[] | undefined {
-  if (!Array.isArray(raw)) return undefined;
-  const out: string[] = [];
-  for (const x of raw) {
-    if (typeof x === 'string' && /^[0-9a-f-]{36}$/i.test(x.trim())) {
-      out.push(x.trim());
-    }
-  }
-  return out.length > 0 ? out : undefined;
+const reconcileBodySchema = z
+  .object({
+    variant_ids: z.array(z.string().uuid()).min(1).optional(),
+    batch_limit: z.number().int().positive().optional(),
+    dry_run: z.boolean().optional(),
+    phases: z.array(z.enum(RECONCILE_PHASES)).min(1).optional(),
+  })
+  .strict();
+
+function resolveRequestId(request: FastifyRequest, fallback: string): string {
+  const header = request.headers['x-request-id'];
+  if (typeof header === 'string' && header.trim().length > 0) return header.trim();
+  const requestId = (request as unknown as { requestId?: string }).requestId;
+  if (typeof requestId === 'string' && requestId.length > 0) return requestId;
+  return fallback;
 }
 
 export async function internalCronRoutes(app: FastifyInstance): Promise<void> {
   app.post(
-    '/reconcile-procurement-declared-stock',
+    '/reconcile-seller-listings',
     { preHandler: [procurementCronSecretGuard] },
     async (request, reply) => {
-      const requestId =
-        (typeof request.headers['x-request-id'] === 'string' && request.headers['x-request-id'].trim()) ||
-        (request as unknown as { requestId?: string }).requestId ||
-        'cron-procurement-stock';
+      const requestId = resolveRequestId(request, 'cron-reconcile-seller-listings');
 
-      const body = (request.body ?? {}) as Record<string, unknown>;
-      const variant_ids = parseUuidList(body.variant_ids);
-      /** HTTP cron always applies: pushes declared qty to marketplaces (procurement only when local stock is zero; see computeDeclaredStockTarget). */
-      const dry_run = false;
-      const batch_limit =
-        typeof body.batch_limit === 'number' && Number.isFinite(body.batch_limit)
-          ? Math.floor(body.batch_limit)
-          : undefined;
+      const parsed = reconcileBodySchema.safeParse(request.body ?? {});
+      if (!parsed.success) {
+        const issues = parsed.error.issues.map((i) => ({
+          path: i.path.join('.') || '<root>',
+          message: i.message,
+        }));
+        logger.warn('Reconcile seller-listings cron rejected — invalid body', {
+          requestId,
+          issues,
+        });
+        return reply.code(400).send({ error: 'invalid_request_body', issues });
+      }
 
-      logger.info('Procurement declared stock cron invoked', {
+      const dto: ReconcileSellerListingsDto = parsed.data;
+
+      logger.info('Reconcile seller-listings cron invoked', {
         requestId,
-        dry_run,
-        variantFilterCount: variant_ids?.length ?? 0,
-        batch_limit,
+        variantFilterCount: dto.variant_ids?.length ?? 0,
+        batch_limit: dto.batch_limit,
+        dry_run: dto.dry_run === true,
+        phases: dto.phases,
       });
 
       try {
-        const service = container.resolve<IProcurementDeclaredStockReconcileService>(
-          TOKENS.ProcurementDeclaredStockReconcileService,
+        const orchestrator = container.resolve<ReconcileSellerListingsUseCase>(
+          UC_TOKENS.ReconcileSellerListings,
         );
-        const result = await service.execute(requestId, {
-          variant_ids,
-          dry_run,
-          batch_limit,
-        });
+        const result = await orchestrator.execute(requestId, dto);
         return reply.send(result);
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        logger.error('Procurement declared stock cron failed', err as Error, { requestId });
-        return reply.code(500).send({ error: 'reconcile_failed', message: msg });
+        const message = err instanceof Error ? err.message : String(err);
+        logger.error('Reconcile seller-listings cron failed', err as Error, { requestId });
+        return reply.code(500).send({ error: 'reconcile_failed', message });
       }
     },
   );

@@ -95,6 +95,60 @@ Global `onRequest` hook checks every incoming IP against the blocklist (via `IIp
 
 For machine-to-machine calls (cron, event dispatchers). Validates `X-Internal-Secret` header against `INTERNAL_SERVICE_SECRET` (+ rotatable `INTERNAL_SERVICE_SECRET_PREVIOUS`).
 
+## Cron Surface
+
+Seller-side maintenance (cost basis, pricing + marketplace push, declared-stock reconcile, remote-stock sync, reservation expiry) runs as a **single** orchestrated HTTP endpoint. The in-process `node-cron` registry is **intentionally empty** — `infra/scheduler/cron-registry.ts` exists only as a forward-compatible shell.
+
+| Endpoint | Auth | Purpose |
+|---|---|---|
+| `POST /internal/cron/reconcile-seller-listings` | `X-Internal-Secret` | Single trigger surface for all seller maintenance phases |
+
+### Phases (executed in order)
+
+1. `expire-reservations` — release stale `seller_stock_reservations`
+2. `cost-basis` — refresh `seller_listings.cost_basis_cents` from median key cost
+3. `pricing` — recompute prices honouring manual overrides + `pricing_overrides` + per-listing strategy, then push via marketplace adapters
+4. `declared-stock` — reconcile declared-stock target via `computeDeclaredStockTarget` and push to marketplaces
+5. `remote-stock` — pull remote stock for `auto_sync_stock=true` listings
+
+### Request body (strict — validated by Zod)
+
+```json
+{
+  "variant_ids": ["uuid", "..."],
+  "batch_limit": 500,
+  "dry_run": false,
+  "phases": ["cost-basis", "pricing"]
+}
+```
+
+All fields optional. Bad input is rejected with `400 invalid_request_body` — no silent dropping:
+
+- `variant_ids` — array of UUIDs, **min 1** when present. Filters the `declared-stock` phase only.
+- `batch_limit` — positive integer. Forwarded to the `declared-stock` phase only.
+- `dry_run` — boolean. Only affects `declared-stock`.
+- `phases` — non-empty array of known phase names. Omitted ⇒ all five phases run. Explicit `[]` is a `400` (a no-op cron tick is never the intended call). Unknown names are a `400`.
+
+The phases not directly filtered by `variant_ids` (`cost-basis`, `pricing`, `remote-stock`, `expire-reservations`) sweep all `auto_sync_*=true` listings — that is the existing service semantics.
+
+### Pause control — `platform_settings.fulfillment_mode`
+
+The orchestrator reads `platform_settings.fulfillment_mode`. The row is **mandatory** with one of three values; reading the row is strict — missing row, malformed JSON, or unknown mode all throw and the cron run aborts with a 500. There is no silent fallback.
+
+- `auto` → run normally.
+- `hold_new_cards` → run normally (this flag only gates the checkout path).
+- `hold_all` → every phase short-circuits with `skipped_reason: 'global_hold'`. The cron remains reachable; toggling back to `auto` resumes work on the next tick.
+
+### Per-phase failure isolation
+
+A phase that throws is logged via `logger.error` (forwarded to Sentry) and recorded in `result.phases[phase].error`; later phases still run. This is **reporting**, not masking — every failure is surfaced both in logs and in the response body.
+
+### External scheduler
+
+Any external scheduler can drive the route — no in-process timer is required. Recommended cadence: every 5 minutes. Examples:
+- Supabase `pg_cron` + `net.http_post` with `X-Internal-Secret`.
+- GCP Cloud Scheduler / AWS EventBridge → HTTPS POST.
+
 ## Port Registry
 
 ### Infrastructure Ports (TOKENS)
@@ -132,6 +186,7 @@ For machine-to-machine calls (cron, event dispatchers). Validates `X-Internal-Se
 | `AdminAuthSmsRepository` | Admin SMS 2FA |
 | `AdminDigisellerRepository` | Digiseller reconciliation |
 | `AdminPricingRepository` | Variant price timeline |
+| `PlatformSettingsRepository` | Read-only access to `platform_settings.fulfillment_mode` (consumed by `ReconcileSellerListingsUseCase`) |
 
 ### Use Case Tokens (UC_TOKENS)
 

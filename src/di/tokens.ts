@@ -60,6 +60,9 @@ export const TOKENS = {
   SellerStockSyncService: Symbol.for('ISellerStockSyncService'),
   ProcurementDeclaredStockReconcileService: Symbol.for('IProcurementDeclaredStockReconcileService'),
 
+  // Platform-wide runtime settings (read by orchestrators / cron)
+  PlatformSettingsRepository: Symbol.for('IPlatformSettingsPort'),
+
   // Shared infra
   EventBus: Symbol.for('IEventBus'),
   EmailSender: Symbol.for('IEmailSender'),
@@ -324,6 +327,7 @@ export const UC_TOKENS = {
   EnableKeyReplacements: Symbol.for('EnableKeyReplacementsUseCase'),
   RemoveCallback: Symbol.for('RemoveCallbackUseCase'),
   ExpireReservations: Symbol.for('ExpireReservationsUseCase'),
+  ReconcileSellerListings: Symbol.for('ReconcileSellerListingsUseCase'),
 
   // Seller Webhooks
   HandleDeclaredStockReserve: Symbol.for('HandleDeclaredStockReserveUseCase'),

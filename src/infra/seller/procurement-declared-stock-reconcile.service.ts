@@ -148,11 +148,22 @@ export class ProcurementDeclaredStockReconcileService implements IProcurementDec
         updated++;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
+        const errName = err instanceof Error ? err.name : '';
+        // Transient operational failures from upstream marketplaces (circuit breaker
+        // open, rate-limit exceeded) are expected when a provider degrades. Log them
+        // as warnings so they don't fire as Sentry errors; surface real errors as is.
+        const isTransient =
+          errName === 'CircuitOpenError' ||
+          errName === 'RateLimitExceededError' ||
+          /^Circuit breaker open for /.test(msg) ||
+          /^Rate limit exceeded for /.test(msg);
         failures.push({ listing_id: listing.id, reason: msg });
-        logger.error('Procurement declared stock reconcile failed', {
+        const logFn = isTransient ? logger.warn.bind(logger) : logger.error.bind(logger);
+        logFn('Procurement declared stock reconcile failed', {
           requestId,
           listingId: listing.id,
           error: msg,
+          transient: isTransient,
         });
         try {
           await this.db.update('seller_listings', { id: listing.id }, {

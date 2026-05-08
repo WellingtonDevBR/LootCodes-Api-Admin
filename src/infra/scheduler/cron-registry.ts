@@ -1,15 +1,17 @@
 /**
- * Fastify-native cron scheduler using node-cron.
+ * Fastify-native cron scheduler shell.
  *
- * Registers named cron jobs at app startup. Each job resolves its
- * service from the DI container and executes.
+ * Intentionally empty: seller-side maintenance (cost-basis, pricing,
+ * declared-stock, remote-stock, reservation expiry) is now triggered
+ * by the unified HTTP route `POST /internal/cron/reconcile-seller-listings`.
+ * An external scheduler (Supabase pg_cron via `net.http_post`, GCP Cloud
+ * Scheduler, etc.) is the single trigger surface.
+ *
+ * The skeleton remains so future genuinely in-process work (e.g. very
+ * cheap, framework-only ticks) can be added with the same pattern.
  */
 import type { FastifyInstance } from 'fastify';
 import cron from 'node-cron';
-import crypto from 'node:crypto';
-import { container } from '../../di/container.js';
-import { TOKENS } from '../../di/tokens.js';
-import type { ISellerAutoPricingService, ISellerStockSyncService } from '../../core/ports/seller-pricing.port.js';
 import { createLogger } from '../../shared/logger.js';
 
 const logger = createLogger('cron-scheduler');
@@ -33,45 +35,11 @@ export async function registerCronJobs(app: FastifyInstance): Promise<void> {
     return;
   }
 
-  registerJob('refresh-seller-prices', '*/5 * * * *', async () => {
-    const requestId = `cron-prices-${crypto.randomUUID().slice(0, 8)}`;
-    logger.info('Starting auto-pricing refresh', { requestId });
-    try {
-      const service = container.resolve<ISellerAutoPricingService>(TOKENS.SellerAutoPricingService);
-      const result = await service.refreshAllPrices(requestId);
-      logger.info('Auto-pricing refresh complete', { requestId, ...result });
-    } catch (err) {
-      logger.error('Auto-pricing refresh failed', err as Error, { requestId });
-    }
-  });
-
-  registerJob('refresh-seller-cost-bases', '2 */5 * * * *', async () => {
-    const requestId = `cron-costs-${crypto.randomUUID().slice(0, 8)}`;
-    logger.info('Starting cost basis refresh', { requestId });
-    try {
-      const service = container.resolve<ISellerAutoPricingService>(TOKENS.SellerAutoPricingService);
-      const result = await service.refreshAllCostBases(requestId);
-      logger.info('Cost basis refresh complete', { requestId, ...result });
-    } catch (err) {
-      logger.error('Cost basis refresh failed', err as Error, { requestId });
-    }
-  });
-
-  registerJob('refresh-seller-stock', '2 */5 * * * *', async () => {
-    const requestId = `cron-stock-${crypto.randomUUID().slice(0, 8)}`;
-    logger.info('Starting stock sync refresh', { requestId });
-    try {
-      const service = container.resolve<ISellerStockSyncService>(TOKENS.SellerStockSyncService);
-      const result = await service.refreshAllStock(requestId);
-      logger.info('Stock sync refresh complete', { requestId, ...result });
-    } catch (err) {
-      logger.error('Stock sync refresh failed', err as Error, { requestId });
-    }
-  });
-
-  logger.info(`Registered ${registeredJobs.length} cron jobs`, {
-    jobs: registeredJobs.map((j) => ({ name: j.name, schedule: j.schedule })),
-  });
+  if (registeredJobs.length === 0) {
+    logger.info(
+      'In-process cron registry is intentionally empty; seller maintenance runs via POST /internal/cron/reconcile-seller-listings',
+    );
+  }
 
   app.addHook('onClose', () => {
     for (const job of registeredJobs) {
@@ -80,21 +48,6 @@ export async function registerCronJobs(app: FastifyInstance): Promise<void> {
     }
     registeredJobs.length = 0;
   });
-}
-
-function registerJob(name: string, schedule: string, handler: () => Promise<void>): void {
-  if (!cron.validate(schedule)) {
-    logger.error(`Invalid cron schedule for ${name}: ${schedule}`);
-    return;
-  }
-
-  const task = cron.schedule(schedule, () => {
-    handler().catch((err) => {
-      logger.error(`Unhandled error in cron job ${name}`, err as Error, { job: name });
-    });
-  });
-
-  registeredJobs.push({ name, schedule, task });
 }
 
 export function getRegisteredJobs(): ReadonlyArray<{ name: string; schedule: string }> {

@@ -43,6 +43,15 @@ export class SupabaseAdminProductRepository implements IAdminProductRepository {
     readonly release_date?: string | null;
     readonly nowIso: string;
   }): Promise<{ variant_id: string; sku: string }> {
+    // Defense-in-depth: callers (create-variant use-case + create-product flow)
+    // already validate region_id, but a regression slipped a null past validation
+    // once (LOOTCODES-API-C). Fail fast with a clear error before touching Postgres.
+    if (!params.region_id || typeof params.region_id !== 'string' || params.region_id.trim() === '') {
+      throw new InternalError('insertVariantWithPlatformsAndSku: region_id is required');
+    }
+    if (!params.product_id || typeof params.product_id !== 'string' || params.product_id.trim() === '') {
+      throw new InternalError('insertVariantWithPlatformsAndSku: product_id is required');
+    }
     const placeholderSku = `SKU-TEMP-${randomUUID().replace(/-/g, '')}`;
     const variant = await this.db.insert<Record<string, unknown>>('product_variants', {
       product_id: params.product_id,
