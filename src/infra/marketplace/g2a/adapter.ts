@@ -305,62 +305,32 @@ export class G2AAdapter
   // ─── ISellerCompetitionAdapter ──────────────────────────────────────
 
   async getCompetitorPrices(externalProductId: string): Promise<CompetitorPrice[]> {
-    // Try Import API (seller offers list) first
     try {
       const res = await this.httpRequest<G2AProductOffersResponse>({
         method: 'GET',
         path: `/v3/sales/products/${externalProductId}/offers`,
       });
 
-      if (res.data?.length) {
-        return res.data.map((o) => {
-          const priceStr = o.price?.retail?.base?.value;
-          return {
-            merchantName: o.seller?.name ?? 'Unknown',
-            priceCents: priceStr ? floatToCents(parseFloat(priceStr)) : 0,
-            currency: o.price?.retail?.base?.currencyCode ?? 'EUR',
-            inStock: o.inventory?.range !== '0',
-            isOwnOffer: false,
-          };
-        });
-      }
-    } catch (err) {
-      // Import API returns 404 for products not in our seller catalog; this is the
-      // expected control-flow signal to fall back to the Export API. Log at `info`
-      // (no Error object) so the failure is observable in logs without firing
-      // Sentry — the only actionable failure is when the Export API also fails,
-      // which is captured by the catch below.
-      logger.info('Import API competitor lookup failed, trying Export API', {
-        externalProductId,
-        error: err instanceof Error ? err.message : String(err),
-      } as LogContext);
-    }
+      if (!res.data?.length) return [];
 
-    // Fallback: Export API product search
-    try {
-      const res = await this.httpRequest<G2AProductListResponse>({
-        method: 'GET',
-        path: `/v1/products?id=${encodeURIComponent(externalProductId)}`,
-      });
-
-      if (res.docs?.length) {
-        return res.docs.map((p) => ({
-          merchantName: 'G2A Marketplace',
-          priceCents: floatToCents(p.minPrice),
-          currency: 'EUR',
-          inStock: p.availableToBuy && p.qty > 0,
+      return res.data.map((o) => {
+        const priceStr = o.price?.retail?.base?.value;
+        return {
+          merchantName: o.seller?.name ?? 'Unknown',
+          priceCents: priceStr ? floatToCents(parseFloat(priceStr)) : 0,
+          currency: o.price?.retail?.base?.currencyCode ?? 'EUR',
+          inStock: o.inventory?.range !== '0',
           isOwnOffer: false,
-        }));
-      }
+        };
+      });
     } catch (err) {
-      // Both APIs failed — this is the actionable case (the caller will compute
-      // pricing without competitor data). Surface as warn so it shows up in Sentry.
-      logger.warn('Export API competitor lookup also failed', err as Error, {
-        externalProductId,
-      } as LogContext);
+      // 404 means the product has no Import API offer listing — return empty so
+      // pricing continues without competitor data. Any other status (auth, 5xx,
+      // network) is a real integration failure and must propagate so the caller's
+      // error handler surfaces it to Sentry.
+      if (err instanceof MarketplaceApiError && err.statusCode === 404) return [];
+      throw err;
     }
-
-    return [];
   }
 
   // ─── ISellerPricingAdapter ──────────────────────────────────────────
