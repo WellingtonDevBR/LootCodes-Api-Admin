@@ -18,6 +18,8 @@ import { GamivoMarketplaceAdapter } from './gamivo/adapter.js';
 import { KinguinMarketplaceAdapter } from './kinguin/adapter.js';
 import { DigisellerMarketplaceAdapter } from './digiseller/adapter.js';
 import { BambooMarketplaceAdapter } from './bamboo/adapter.js';
+import { resolveAppRouteBaseUrlFromApiProfile } from './approute/resolve-app-route-base-url.js';
+import type { AnyMarketplaceAdapter } from './marketplace-adapter-registry.js';
 import { resolveProviderSecrets } from './resolve-provider-secrets.js';
 import { kinguinBuyerApiKeyFromSecrets } from './kinguin-buyer-api-key.js';
 import { createLogger } from '../../shared/logger.js';
@@ -129,6 +131,8 @@ function buildAdapter(
       return buildDigisellerAdapter(secrets, profile, account.seller_config);
     case 'bamboo':
       return buildBambooAdapter(secrets, profile);
+    case 'approute':
+      return buildApprouteCatalogOnlyMarker(secrets, profile);
     default:
       logger.warn(`Unknown provider code — no adapter factory`, { providerCode: account.provider_code });
       return null;
@@ -372,6 +376,23 @@ function buildDigisellerAdapter(
     defaultCurrency: (cfg['default_currency'] as string) ?? 'USD',
     sellerNumericId: Number.isFinite(sellerNumericId) ? sellerNumericId : undefined,
   });
+}
+
+/**
+ * Registers AppRoute in the adapter registry without marketplace HTTP capabilities — CRM live-search
+ * merges catalog hits from `provider_product_catalog` only (`product_search` stays unavailable).
+ */
+function buildApprouteCatalogOnlyMarker(
+  secrets: Record<string, string>,
+  profile: Record<string, unknown>,
+): AnyMarketplaceAdapter | null {
+  const apiKey = secrets['APPROUTE_API_KEY'];
+  const baseUrl = resolveAppRouteBaseUrlFromApiProfile(profile);
+  if (!apiKey?.trim() || !baseUrl?.trim()) {
+    logger.warn('AppRoute catalog-only registration skipped — need APPROUTE_API_KEY and api_profile.base_url');
+    return null;
+  }
+  return {};
 }
 
 function buildBambooAdapter(

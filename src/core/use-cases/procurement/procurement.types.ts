@@ -93,6 +93,8 @@ export interface CatalogProductRow {
   id: string;
   provider_code: string;
   external_product_id: string;
+  /** Parent listing / service id when provider nests SKUs (e.g. AppRoute service UUID vs denomination id). */
+  external_parent_product_id: string | null;
   product_name: string;
   platform: string | null;
   region: string | null;
@@ -115,6 +117,8 @@ export interface LinkCatalogProductDto {
   variant_id: string;
   provider_code: string;
   external_product_id: string;
+  /** AppRoute: parent service id for GET /services/{id}; optional — resolved from catalog when omitted. */
+  external_parent_product_id?: string;
   currency: string;
   price_cents: number;
   platform_code?: string;

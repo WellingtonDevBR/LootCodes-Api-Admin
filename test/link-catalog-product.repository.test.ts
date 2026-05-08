@@ -115,4 +115,66 @@ describe('SupabaseAdminProcurementRepository.linkCatalogProduct', () => {
       }),
     );
   });
+
+  it('persists external_parent_product_id when dto.external_parent_product_id is set', async () => {
+    const insert = vi.fn().mockResolvedValue({ id: 'offer-approute-1' });
+    const query = vi.fn().mockImplementation(async (table: string) => {
+      if (table === 'provider_accounts') {
+        return [{ id: 'pa-ar', supports_seller: false }];
+      }
+      return [];
+    });
+
+    const db = { insert, query } as unknown as IDatabase;
+    const repo = new SupabaseAdminProcurementRepository(db, {} as IMarketplaceAdapterRegistry);
+
+    await repo.linkCatalogProduct({
+      variant_id: 'var-ar',
+      provider_code: 'approute',
+      external_product_id: 'denom-1',
+      external_parent_product_id: 'svc-parent',
+      currency: 'USD',
+      price_cents: 100,
+      admin_id: 'admin-1',
+    });
+
+    expect(insert).toHaveBeenCalledWith(
+      'provider_variant_offers',
+      expect.objectContaining({
+        external_parent_product_id: 'svc-parent',
+      }),
+    );
+  });
+
+  it('persists external_parent_product_id from provider_product_catalog slug fallback when DTO omits parent', async () => {
+    const insert = vi.fn().mockResolvedValue({ id: 'offer-approute-2' });
+    const query = vi.fn().mockImplementation(async (table: string) => {
+      if (table === 'provider_accounts') {
+        return [{ id: 'pa-ar', supports_seller: false }];
+      }
+      if (table === 'provider_product_catalog') {
+        return [{ external_parent_product_id: null, slug: 'svc-from-slug' }];
+      }
+      return [];
+    });
+
+    const db = { insert, query } as unknown as IDatabase;
+    const repo = new SupabaseAdminProcurementRepository(db, {} as IMarketplaceAdapterRegistry);
+
+    await repo.linkCatalogProduct({
+      variant_id: 'var-ar',
+      provider_code: 'approute',
+      external_product_id: 'denom-1',
+      currency: 'USD',
+      price_cents: 100,
+      admin_id: 'admin-1',
+    });
+
+    expect(insert).toHaveBeenCalledWith(
+      'provider_variant_offers',
+      expect.objectContaining({
+        external_parent_product_id: 'svc-from-slug',
+      }),
+    );
+  });
 });

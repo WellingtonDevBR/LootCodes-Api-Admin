@@ -1,5 +1,5 @@
 /**
- * Native admin manual procurement orchestration (Bamboo first).
+ * Native admin manual procurement orchestration (Bamboo + AppRoute).
  * Mirrors Edge `provider-procurement/handlers/manual-purchase.ts` without Edge invoke.
  */
 import { randomUUID } from 'node:crypto';
@@ -21,6 +21,10 @@ import {
 } from './procurement-guardrails.js';
 import { resolveProviderSecrets } from '../marketplace/resolve-provider-secrets.js';
 import { createBambooManualBuyer, type BambooManualBuyer, type BambooOfferQuote } from './bamboo-manual-buyer.js';
+import {
+  createAppRouteManualBuyer,
+  type AppRouteManualBuyer,
+} from './approute-manual-buyer.js';
 import { ingestProviderPurchasedKey, KeyIngestionError } from './ingest-provider-key.js';
 
 const logger = createLogger('buyer-manual-purchase');
@@ -95,8 +99,11 @@ export class BuyerManualPurchaseService {
     const guardrailBlock = await this.checkSpendGuardrails(requestId, variantId);
     if (guardrailBlock) return guardrailBlock;
 
-    if (providerCode !== 'bamboo') {
-      return { success: false, error: `Provider ${dto.provider_code} does not support native manual purchasing yet` };
+    if (providerCode !== 'bamboo' && providerCode !== 'approute') {
+      return {
+        success: false,
+        error: `Provider ${dto.provider_code} does not support native manual purchasing yet`,
+      };
     }
 
     const providerAccountId = await this.getEnabledProviderAccountId(providerCode);
@@ -111,37 +118,64 @@ export class BuyerManualPurchaseService {
     const apiProfile = asApiProfile(accountRow?.api_profile);
 
     const secrets = await resolveProviderSecrets(this.db, providerAccountId);
-    const bambooBuyer = createBambooManualBuyer({ secrets, profile: apiProfile });
-    if (!bambooBuyer) {
-      return {
-        success: false,
-        error: 'Bamboo credentials or api_profile (account_id, base URLs) are not configured for this provider account',
-      };
+
+    if (providerCode === 'bamboo') {
+      const bambooBuyer = createBambooManualBuyer({ secrets, profile: apiProfile });
+      if (!bambooBuyer) {
+        return {
+          success: false,
+          error:
+            'Bamboo credentials or api_profile (account_id, base URLs) are not configured for this provider account',
+        };
+      }
+
+      const walletCurrency = resolveCheckoutWalletCurrency(dto.wallet_currency, apiProfile);
+      if (!walletCurrency) {
+        return {
+          success: false,
+          error:
+            'wallet_currency must be a 3-letter ISO code (e.g. USD, EUR), or set api_profile.checkout_wallet_currency',
+        };
+      }
+
+      const idempotencyKey = `manual-${variantId}-${requestId}`;
+
+      return this.runBambooPurchaseAfterSetup({
+        requestId,
+        variantId,
+        providerCode,
+        offerId,
+        quantity,
+        adminUserId,
+        idempotencyKey,
+        providerAccountId,
+        bambooBuyer,
+        walletCurrency,
+        attemptSource: 'manual',
+      });
     }
 
-    const walletCurrency = resolveCheckoutWalletCurrency(dto.wallet_currency, apiProfile);
-    if (!walletCurrency) {
+    const approuteBuyer = createAppRouteManualBuyer({ secrets, profile: apiProfile });
+    if (!approuteBuyer) {
       return {
         success: false,
         error:
-          'wallet_currency must be a 3-letter ISO code (e.g. USD, EUR), or set api_profile.checkout_wallet_currency',
+          'AppRoute credentials or api_profile.base_url are not configured for this provider account (APPROUTE_API_KEY)',
       };
     }
 
-    const idempotencyKey = `manual-${variantId}-${requestId}`;
+    const idempotencyKeyApproute = `manual-${variantId}-${requestId}`;
 
-    return this.runBambooPurchaseAfterSetup({
+    return this.runAppRoutePurchaseAfterSetup({
       requestId,
       variantId,
       providerCode,
       offerId,
       quantity,
       adminUserId,
-      idempotencyKey,
+      idempotencyKey: idempotencyKeyApproute,
       providerAccountId,
-      bambooBuyer,
-      walletCurrency,
-      attemptSource: 'manual',
+      approuteBuyer,
     });
   }
 
@@ -453,6 +487,198 @@ export class BuyerManualPurchaseService {
         error_message: err instanceof Error ? err.message : String(err),
       });
       logger.error('Bamboo purchase threw', err as Error, { requestId, providerCode });
+      return {
+        success: false,
+        error: err instanceof Error ? err.message : 'Purchase request failed',
+      };
+    }
+  }
+
+  private async runAppRoutePurchaseAfterSetup(params: {
+    readonly requestId: string;
+    readonly variantId: string;
+    readonly providerCode: string;
+    readonly offerId: string;
+    readonly quantity: number;
+    readonly adminUserId: string;
+    readonly idempotencyKey: string;
+    readonly providerAccountId: string;
+    readonly approuteBuyer: AppRouteManualBuyer;
+  }): Promise<ManualProviderPurchaseResult> {
+    const {
+      requestId,
+      variantId,
+      providerCode,
+      offerId,
+      quantity,
+      adminUserId,
+      idempotencyKey,
+      providerAccountId,
+      approuteBuyer,
+    } = params;
+
+    let attemptId: string | null = null;
+    try {
+      const inserted = await this.db.insert<{ id: string }>('provider_purchase_attempts', {
+        provider_account_id: providerAccountId,
+        variant_id: variantId,
+        attempt_no: 1,
+        provider_request_id: idempotencyKey,
+        status: 'pending',
+        manual_admin_user_id: adminUserId,
+      });
+      attemptId = inserted.id;
+    } catch (err) {
+      const msg = err instanceof InternalError ? err.message : err instanceof Error ? err.message : String(err);
+      if (msg.includes('23505') || msg.toLowerCase().includes('duplicate')) {
+        return {
+          success: false,
+          error:
+            'Duplicate purchase idempotency key — wait for the in-flight attempt to finish or generate a new key.',
+        };
+      }
+      logger.error('Failed to insert pending provider_purchase_attempts row', err as Error, {
+        variantId,
+        providerAccountId,
+      });
+      return {
+        success: false,
+        error:
+          'Could not record purchase attempt (database error). Check provider_purchase_attempts constraints and retry.',
+      };
+    }
+
+    try {
+      const result = await approuteBuyer.purchase(offerId, quantity, idempotencyKey);
+
+      if (
+        !result.success
+        && result.provider_order_ref
+        && result.error_code != null
+        && RECOVERABLE_ERROR_CODES.has(result.error_code)
+      ) {
+        await this.finalizeAttempt(attemptId, {
+          status: 'timeout',
+          provider_order_ref: result.provider_order_ref,
+          error_code: result.error_code,
+          error_message: result.error_message,
+        });
+        return {
+          success: false,
+          recoverable: true,
+          provider_order_ref: result.provider_order_ref,
+          purchase_id: result.provider_order_ref,
+          error:
+            `Order ${result.provider_order_ref} placed at ${providerCode} — keys not yet delivered. ` +
+            `They will be automatically recovered when ${providerCode} completes the order, ` +
+            `or you can click Recover to retry now.`,
+        };
+      }
+
+      if (!result.success || !result.keys || result.keys.length === 0) {
+        await this.finalizeAttempt(attemptId, {
+          status: 'failed',
+          provider_order_ref: result.provider_order_ref,
+          error_code: result.error_code,
+          error_message: result.error_message,
+        });
+        return {
+          success: false,
+          error: result.error_message ?? 'Purchase returned no keys',
+          provider_order_ref: result.provider_order_ref,
+          purchase_id: result.provider_order_ref,
+        };
+      }
+
+      const providerRef = result.provider_order_ref ?? idempotencyKey;
+      const ingestedKeyIds: string[] = [];
+      const failedIngestions: ManualPurchaseFailedIngestion[] = [];
+
+      for (let i = 0; i < result.keys.length; i++) {
+        const key = result.keys[i]!;
+        try {
+          const keyId = await ingestProviderPurchasedKey(
+            this.db,
+            {
+              variant_id: variantId,
+              plaintext_key: key,
+              purchase_cost_cents: result.cost_cents ?? null,
+              purchase_currency: result.currency ?? 'USD',
+              supplier_reference: `${providerCode}:${providerRef}`,
+              created_by: adminUserId ?? undefined,
+            },
+            requestId,
+          );
+          ingestedKeyIds.push(keyId);
+        } catch (ingestErr) {
+          const stage = ingestErr instanceof KeyIngestionError ? ingestErr.stage : 'unknown';
+          const message = ingestErr instanceof Error ? ingestErr.message : String(ingestErr);
+          logger.error('Manual purchase key ingestion failed', ingestErr as Error, {
+            requestId,
+            providerCode,
+            keyIndex: i,
+            stage,
+          });
+          failedIngestions.push({ index: i, stage, error: message, plaintext_key: key });
+        }
+      }
+
+      await this.finalizeAttempt(attemptId, {
+        status: 'success',
+        provider_order_ref: providerRef,
+        response_snapshot: {
+          keys_received: result.keys.length,
+          keys_ingested: ingestedKeyIds.length,
+          cost_cents: result.cost_cents,
+          currency: result.currency,
+        },
+      });
+
+      const allFailed = ingestedKeyIds.length === 0 && failedIngestions.length > 0;
+
+      logger.info('AppRoute purchase completed', {
+        requestId,
+        variantId,
+        providerCode,
+        keysReceived: result.keys.length,
+        keysIngested: ingestedKeyIds.length,
+        keysFailed: failedIngestions.length,
+        costCents: result.cost_cents,
+        currency: result.currency,
+      });
+
+      if (allFailed) {
+        return {
+          success: false,
+          error:
+            `Provider charged us but ${failedIngestions.length} key(s) could not be saved — ` +
+            `copy the plaintext from \`failed_ingestions\` immediately and add them via Add Stock. ` +
+            `Underlying: ${failedIngestions[0]!.error}`,
+          purchase_id: providerRef,
+          provider_order_ref: providerRef,
+          keys_received: result.keys.length,
+          keys_ingested: 0,
+          failed_ingestions: failedIngestions,
+        };
+      }
+
+      return {
+        success: true,
+        purchase_id: providerRef,
+        provider_order_ref: providerRef,
+        key_ids: ingestedKeyIds,
+        partial_failure: failedIngestions.length > 0,
+        keys_received: result.keys.length,
+        keys_ingested: ingestedKeyIds.length,
+        ...(failedIngestions.length > 0 ? { failed_ingestions: failedIngestions } : {}),
+      };
+    } catch (err) {
+      await this.finalizeAttempt(attemptId, {
+        status: 'failed',
+        error_code: 'EXCEPTION',
+        error_message: err instanceof Error ? err.message : String(err),
+      });
+      logger.error('AppRoute purchase threw', err as Error, { requestId, providerCode });
       return {
         success: false,
         error: err instanceof Error ? err.message : 'Purchase request failed',

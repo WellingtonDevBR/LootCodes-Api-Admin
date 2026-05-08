@@ -171,6 +171,8 @@ export interface ProviderAccountDetail {
   seller_config: SellerProviderConfig;
   procurement_config: ProcurementConfig;
   api_profile_keys: string[];
+  /** Non-secret URL-oriented fields copied from `api_profile` for CRM forms. */
+  api_profile_public: Partial<Record<string, string>>;
   created_at: string;
   updated_at: string;
 }

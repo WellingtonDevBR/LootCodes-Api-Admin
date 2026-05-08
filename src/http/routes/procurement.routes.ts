@@ -21,6 +21,8 @@ import type { ListPurchaseQueueUseCase } from '../../core/use-cases/procurement/
 import type { CancelQueueItemUseCase } from '../../core/use-cases/procurement/cancel-queue-item.use-case.js';
 import type { ListPurchaseAttemptsUseCase } from '../../core/use-cases/procurement/list-purchase-attempts.use-case.js';
 import type { LinkCatalogProductMarketplacePublishSnap } from '../../core/use-cases/procurement/procurement.types.js';
+import type { IDatabase } from '../../core/ports/database.port.js';
+import { syncAppRouteProductCatalog } from '../../infra/procurement/approute-catalog-sync.js';
 
 export async function adminProcurementRoutes(app: FastifyInstance) {
   app.post('/quote', { preHandler: [adminGuard] }, async (request, reply) => {
@@ -58,6 +60,47 @@ export async function adminProcurementRoutes(app: FastifyInstance) {
       admin_id: adminId,
     });
     return reply.send(result);
+  });
+
+  app.post('/approute/catalog/sync', { preHandler: [adminGuard] }, async (request, reply) => {
+    const db = container.resolve<IDatabase>(TOKENS.Database);
+    const body = request.body as { provider_account_id?: string };
+    let accountId = typeof body.provider_account_id === 'string' ? body.provider_account_id.trim() : '';
+
+    if (!accountId) {
+      const rows = await db.query<{ id: string }>('provider_accounts', {
+        select: 'id',
+        eq: [
+          ['provider_code', 'approute'],
+          ['is_enabled', true],
+        ],
+        limit: 1,
+      });
+      accountId = rows[0]?.id ?? '';
+    }
+
+    if (!accountId) {
+      return reply.status(400).send({
+        success: false,
+        error:
+          'No enabled approute provider account found — create one or pass provider_account_id explicitly.',
+      });
+    }
+
+    const verify = await db.queryOne<{ provider_code: string; is_enabled: boolean }>('provider_accounts', {
+      select: 'provider_code, is_enabled',
+      filter: { id: accountId },
+    });
+    if (!verify?.is_enabled || verify.provider_code.trim().toLowerCase() !== 'approute') {
+      return reply.status(400).send({
+        success: false,
+        error: 'provider_account_id must reference an enabled provider_accounts row with provider_code approute',
+      });
+    }
+
+    const result = await syncAppRouteProductCatalog(db, accountId);
+    const statusCode = result.success ? 200 : 502;
+    return reply.status(statusCode).send(result);
   });
 
   app.get('/catalog/ingest-status', { preHandler: [employeeGuard] }, async (request, reply) => {
@@ -147,6 +190,9 @@ export async function adminProcurementRoutes(app: FastifyInstance) {
       variant_id: body.variant_id as string,
       provider_code: body.provider_code as string,
       external_product_id: body.external_product_id as string,
+      ...(typeof body.external_parent_product_id === 'string' && body.external_parent_product_id.trim()
+        ? { external_parent_product_id: body.external_parent_product_id.trim() }
+        : {}),
       currency: body.currency as string,
       price_cents: body.price_cents as number,
       platform_code: body.platform_code as string | undefined,

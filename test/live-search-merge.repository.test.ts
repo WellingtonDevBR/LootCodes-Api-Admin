@@ -152,6 +152,68 @@ describe('SupabaseAdminProcurementRepository.liveSearchProviders merge + upsert'
     expect(rows[0]?.min_price_cents).toBe(555);
   });
 
+  it('queries catalog once per provider so high-volume providers cannot crowd out others in local merge', async () => {
+    const registry = {
+      getSupportedProviders: (): string[] => ['aaa', 'zzz'],
+      hasCapability: (): boolean => false,
+      getProductSearchAdapter: () => null,
+    };
+
+    const queryPaginated = vi.fn().mockImplementation((_table: string, opts: { filter?: { provider_code?: string } }) => {
+      const code = opts.filter?.provider_code;
+      if (code === 'aaa') {
+        return Promise.resolve({
+          data: Array.from({ length: 5 }, (_, i) => ({
+            provider_code: 'aaa',
+            external_product_id: `a-${i}`,
+            product_name: `Alpha steam ${i}`,
+            platform: null,
+            region: null,
+            min_price_cents: 100,
+            currency: 'USD',
+            qty: 1,
+            available_to_buy: true,
+            thumbnail: null,
+          })),
+        });
+      }
+      if (code === 'zzz') {
+        return Promise.resolve({
+          data: [
+            {
+              provider_code: 'zzz',
+              external_product_id: 'z-1',
+              product_name: 'Zulu steam card',
+              platform: null,
+              region: null,
+              min_price_cents: 200,
+              currency: 'USD',
+              qty: 1,
+              available_to_buy: true,
+              thumbnail: null,
+            },
+          ],
+        });
+      }
+      return Promise.resolve({ data: [] });
+    });
+
+    const query = vi.fn().mockResolvedValue([
+      { id: 'acct-a', provider_code: 'aaa' },
+      { id: 'acct-z', provider_code: 'zzz' },
+    ]);
+    const upsertMany = vi.fn();
+
+    const db = { queryPaginated, query, upsertMany } as unknown as IDatabase;
+
+    const repo = new SupabaseAdminProcurementRepository(db, registry as unknown as IMarketplaceAdapterRegistry);
+    const result = await repo.liveSearchProviders({ query: 'steam', max_results: 5 });
+
+    expect(queryPaginated).toHaveBeenCalledTimes(2);
+    expect(result.providers.find((p) => p.provider_code === 'zzz')?.offers).toHaveLength(1);
+    expect(result.providers.find((p) => p.provider_code === 'aaa')?.offers).toHaveLength(5);
+  });
+
   it('returns catalog-only groups when adapter has no product_search capability', async () => {
     const registry = {
       getSupportedProviders: (): string[] => ['bamboo'],

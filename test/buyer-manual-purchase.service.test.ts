@@ -2,11 +2,16 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import type { IDatabase } from '../src/core/ports/database.port.js';
 import { BuyerManualPurchaseService } from '../src/infra/procurement/buyer-manual-purchase.service.js';
 import { createBambooManualBuyer } from '../src/infra/procurement/bamboo-manual-buyer.js';
+import { createAppRouteManualBuyer } from '../src/infra/procurement/approute-manual-buyer.js';
 import { resolveProviderSecrets } from '../src/infra/marketplace/resolve-provider-secrets.js';
 import { ingestProviderPurchasedKey } from '../src/infra/procurement/ingest-provider-key.js';
 
 vi.mock('../src/infra/procurement/bamboo-manual-buyer.js', () => ({
   createBambooManualBuyer: vi.fn(),
+}));
+
+vi.mock('../src/infra/procurement/approute-manual-buyer.js', () => ({
+  createAppRouteManualBuyer: vi.fn(),
 }));
 
 vi.mock('../src/infra/marketplace/resolve-provider-secrets.js', () => ({
@@ -31,6 +36,7 @@ const ACCOUNT_ID = 'cccccccc-cccc-4ccc-bddd-eeeeeeeeeeee';
 
 describe('BuyerManualPurchaseService', () => {
   const mockedCreateBuyer = vi.mocked(createBambooManualBuyer);
+  const mockedCreateAppRouteBuyer = vi.mocked(createAppRouteManualBuyer);
   const mockedSecrets = vi.mocked(resolveProviderSecrets);
   const mockedIngest = vi.mocked(ingestProviderPurchasedKey);
 
@@ -39,6 +45,7 @@ describe('BuyerManualPurchaseService', () => {
     mockedSecrets.mockResolvedValue({
       BAMBOO_CLIENT_ID: 'client',
       BAMBOO_CLIENT_SECRET: 'secret',
+      APPROUTE_API_KEY: 'approute-key',
     });
     mockedIngest.mockResolvedValue('ingested-key-id');
   });
@@ -162,6 +169,42 @@ describe('BuyerManualPurchaseService', () => {
       'provider_purchase_attempts',
       { id: 'attempt-row-id' },
       expect.objectContaining({ status: 'success', provider_order_ref: 'bamboo-ref' }),
+    );
+  });
+
+  it('completes AppRoute manual purchase, ingests keys, and records supplier_reference approute:*', async () => {
+    const db = baseMocks();
+    const approute = {
+      purchase: vi.fn().mockResolvedValue({
+        success: true,
+        keys: ['VOUCH-A'],
+        provider_order_ref: 'uuid-approute-ref',
+        cost_cents: 250,
+        currency: 'EUR',
+      }),
+    };
+    mockedCreateAppRouteBuyer.mockReturnValue(approute as never);
+
+    const svc = new BuyerManualPurchaseService(db);
+    const result = await svc.execute({
+      variant_id: VARIANT_ID,
+      provider_code: 'approute',
+      offer_id: 'denom-ext',
+      quantity: 1,
+      admin_id: ADMIN_ID,
+    });
+
+    expect(mockedCreateBuyer).not.toHaveBeenCalled();
+    expect(approute.purchase).toHaveBeenCalledWith('denom-ext', 1, expect.any(String));
+    expect(result.success).toBe(true);
+    expect(mockedIngest).toHaveBeenCalledWith(
+      db,
+      expect.objectContaining({
+        plaintext_key: 'VOUCH-A',
+        supplier_reference: 'approute:uuid-approute-ref',
+        purchase_currency: 'EUR',
+      }),
+      expect.any(String),
     );
   });
 

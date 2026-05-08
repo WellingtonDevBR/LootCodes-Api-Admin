@@ -101,6 +101,7 @@ export async function adminSellerRoutes(app: FastifyInstance) {
 
     const sellerConfigPatch = body.seller_config as Record<string, unknown> | undefined;
     const procurementConfigPatch = body.procurement_config as Record<string, unknown> | undefined;
+    const apiProfilePatch = body.api_profile as Record<string, unknown> | undefined;
 
     const dto: Record<string, unknown> = { id };
 
@@ -110,6 +111,7 @@ export async function adminSellerRoutes(app: FastifyInstance) {
 
     if (sellerConfigPatch) dto.seller_config = sellerConfigPatch;
     if (procurementConfigPatch) dto.procurement_config = procurementConfigPatch;
+    if (apiProfilePatch) dto.api_profile = apiProfilePatch;
 
     const result = await uc.execute(dto as unknown as import('../../core/use-cases/seller/seller.types.js').UpdateProviderAccountDto);
     return reply.send(result);

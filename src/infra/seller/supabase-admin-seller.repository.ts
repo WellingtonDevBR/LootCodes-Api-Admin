@@ -26,6 +26,8 @@ import type {
   ProcurementConfig,
 } from '../../core/use-cases/seller/seller.types.js';
 import { parseSellerConfig } from '../../core/use-cases/seller/seller.types.js';
+import { mergeApiProfilePatch } from './merge-api-profile.js';
+import { extractPublicApiProfileFields } from './extract-public-api-profile-fields.js';
 import type {
   CreateSellerListingDto,
   CreateSellerListingResult,
@@ -181,6 +183,7 @@ export class SupabaseAdminSellerRepository implements IAdminSellerRepository {
       seller_config: parseSellerConfig(rawSeller),
       procurement_config: rawProcurement as ProcurementConfig,
       api_profile_keys: Object.keys(rawApiProfile),
+      api_profile_public: extractPublicApiProfileFields(rawApiProfile),
       created_at: row.created_at as string,
       updated_at: row.updated_at as string,
     };
@@ -256,7 +259,6 @@ export class SupabaseAdminSellerRepository implements IAdminSellerRepository {
     if (fields.display_name !== undefined) updates.display_name = fields.display_name;
     if (fields.priority !== undefined) updates.priority = fields.priority;
     if (fields.is_enabled !== undefined) updates.is_enabled = fields.is_enabled;
-    if (fields.api_profile !== undefined) updates.api_profile = fields.api_profile;
     if (fields.supports_catalog !== undefined) updates.supports_catalog = fields.supports_catalog;
     if (fields.supports_quote !== undefined) updates.supports_quote = fields.supports_quote;
     if (fields.supports_purchase !== undefined) updates.supports_purchase = fields.supports_purchase;
@@ -280,6 +282,18 @@ export class SupabaseAdminSellerRepository implements IAdminSellerRepository {
         const existingProcurement = (existing.procurement_config as Record<string, unknown>) ?? {};
         updates.procurement_config = { ...existingProcurement, ...fields.procurement_config };
       }
+    }
+
+    if (fields.api_profile !== undefined) {
+      const existingRow = await this.db.queryOne<Record<string, unknown>>('provider_accounts', {
+        filter: { id },
+        select: 'api_profile',
+      });
+      if (!existingRow) throw new Error(`Provider account ${id} not found`);
+      updates.api_profile = mergeApiProfilePatch(
+        existingRow.api_profile as Record<string, unknown>,
+        fields.api_profile,
+      );
     }
 
     const rows = await this.db.update<Record<string, unknown>>('provider_accounts', { id }, updates);

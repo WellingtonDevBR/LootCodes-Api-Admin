@@ -48,6 +48,11 @@ import {
   productSearchResultsToLiveSearchOffers,
 } from './live-search-mapping.js';
 import { refreshBambooOfferSnapshotsForVariant } from './bamboo-variant-offer-quote-refresh.js';
+import { refreshAppRouteOfferSnapshotsForVariant } from './approute-variant-offer-quote-refresh.js';
+import { syncAppRouteProductCatalog } from './approute-catalog-sync.js';
+import { catalogProductNameIlikeClauses } from './catalog-product-name-search.js';
+import { randomUUID } from 'node:crypto';
+import { InternalError, NotFoundError } from '../../core/errors/domain-errors.js';
 
 const logger = createLogger('AdminProcurementRepository');
 
@@ -78,6 +83,7 @@ export class SupabaseAdminProcurementRepository implements IAdminProcurementRepo
       readonly id: string;
       readonly provider_account_id: string;
       readonly external_offer_id: string | null;
+      external_parent_product_id: string | null;
       currency: string | null;
       last_price_cents: number | null;
       available_quantity: number | null;
@@ -135,6 +141,10 @@ export class SupabaseAdminProcurementRepository implements IAdminProcurementRepo
     );
 
     await refreshBambooOfferSnapshotsForVariant(this.db, offers, accountsById, {
+      providerCodeFilter: filterCode.length > 0 ? filterCode : undefined,
+    });
+
+    await refreshAppRouteOfferSnapshotsForVariant(this.db, offers, accountsById, {
       providerCodeFilter: filterCode.length > 0 ? filterCode : undefined,
     });
 
@@ -203,6 +213,29 @@ export class SupabaseAdminProcurementRepository implements IAdminProcurementRepo
   async ingestProviderCatalog(dto: IngestProviderCatalogDto): Promise<IngestProviderCatalogResult> {
     logger.info('Starting provider catalog ingestion', { provider: dto.provider_code, adminId: dto.admin_id });
 
+    const code = dto.provider_code.trim().toLowerCase();
+    if (code === 'approute') {
+      const rows = await this.db.query<{ id: string }>('provider_accounts', {
+        select: 'id',
+        eq: [['provider_code', 'approute']],
+        limit: 1,
+      });
+      const accountId = rows[0]?.id;
+      if (!accountId) {
+        throw new NotFoundError('No provider_accounts row with provider_code approute');
+      }
+
+      const syncResult = await syncAppRouteProductCatalog(this.db, accountId);
+      if (!syncResult.success) {
+        throw new InternalError(syncResult.error);
+      }
+
+      return {
+        job_id: `inline-sync-approute-${randomUUID()}`,
+        status: 'completed',
+      };
+    }
+
     const result = await this.db.rpc<{ job_id: string; status: string }>(
       'start_catalog_ingestion_job',
       { p_provider_code: dto.provider_code, p_admin_id: dto.admin_id },
@@ -212,6 +245,14 @@ export class SupabaseAdminProcurementRepository implements IAdminProcurementRepo
   }
 
   async ingestProviderCatalogStatus(dto: IngestProviderCatalogStatusDto): Promise<IngestProviderCatalogStatusResult> {
+    if (dto.job_id.startsWith('inline-sync-approute-')) {
+      return {
+        job_id: dto.job_id,
+        status: 'completed',
+        progress: 100,
+      };
+    }
+
     const job = await this.db.queryOne<{ id: string; status: string; progress: number; error: string | null }>(
       'provider_product_catalog',
       { filter: { job_id: dto.job_id }, single: true },
@@ -257,36 +298,65 @@ export class SupabaseAdminProcurementRepository implements IAdminProcurementRepo
   }
 
   async searchCatalog(dto: SearchCatalogDto): Promise<SearchCatalogResult> {
-    const pageSize = dto.page_size ?? 20;
+    const pageSize = dto.page_size ?? DEFAULT_SEARCH_LIMIT;
     const page = dto.page ?? 1;
-    const from = (page - 1) * pageSize;
-    const to = from + pageSize - 1;
 
     logger.info('Searching provider catalog table', { search: dto.search, provider: dto.provider_code, page });
 
-    const select = 'id, provider_code, external_product_id, product_name, platform, region, min_price_cents, currency, qty, available_to_buy, thumbnail, slug, wholesale_price_cents, updated_at';
-    const ilike: Array<[string, string]> = [];
-    const filter: Record<string, unknown> = {};
+    const select =
+      'id, provider_code, external_product_id, external_parent_product_id, product_name, platform, region, min_price_cents, currency, qty, available_to_buy, thumbnail, slug, wholesale_price_cents, updated_at';
 
-    if (dto.search) {
-      ilike.push(['product_name', `%${dto.search}%`]);
-    }
-    if (dto.provider_code) {
-      filter.provider_code = dto.provider_code;
-    }
+    const ilike = catalogProductNameIlikeClauses(dto.search);
 
-    const { data, total } = await this.db.queryPaginated<CatalogProductRow>(
-      'provider_product_catalog',
-      {
-        select,
-        filter: Object.keys(filter).length > 0 ? filter : undefined,
-        ilike: ilike.length > 0 ? ilike : undefined,
-        order: { column: 'product_name', ascending: true },
+    const sharedOpts = {
+      select,
+      ilike: ilike.length > 0 ? ilike : undefined,
+      order: { column: 'product_name', ascending: true } as const,
+    };
+
+    const providerFilter = dto.provider_code?.trim();
+    if (providerFilter) {
+      const from = (page - 1) * pageSize;
+      const to = from + pageSize - 1;
+      const { data, total } = await this.db.queryPaginated<CatalogProductRow>('provider_product_catalog', {
+        ...sharedOpts,
+        filter: { provider_code: providerFilter },
         range: [from, to],
-      },
+      });
+      return { products: data, total };
+    }
+
+    /** Blended catalog search: one global page slice used to starve late-sort providers (same class of bug as live-search local merge). */
+    const codes = [...new Set(this.registry.getSupportedProviders())].filter((c) => c.trim().length > 0).sort();
+    if (codes.length === 0) {
+      return { products: [], total: 0 };
+    }
+
+    const { total } = await this.db.queryPaginated<CatalogProductRow>('provider_product_catalog', {
+      ...sharedOpts,
+      range: [0, 0],
+    });
+
+    const slotsNeeded = page * pageSize;
+    const perProvider = Math.max(1, Math.ceil(slotsNeeded / codes.length));
+
+    const slices = await Promise.all(
+      codes.map((code) =>
+        this.db
+          .queryPaginated<CatalogProductRow>('provider_product_catalog', {
+            ...sharedOpts,
+            filter: { provider_code: code },
+            range: [0, perProvider - 1],
+          })
+          .then((r) => r.data),
+      ),
     );
 
-    return { products: data, total };
+    const merged = slices.flat().sort((a, b) => a.product_name.localeCompare(b.product_name));
+    const from = (page - 1) * pageSize;
+    const products = merged.slice(from, from + pageSize);
+
+    return { products, total };
   }
 
   async linkCatalogProduct(dto: LinkCatalogProductDto): Promise<LinkCatalogProductResult> {
@@ -309,6 +379,24 @@ export class SupabaseAdminProcurementRepository implements IAdminProcurementRepo
 
     let offerId: string | null = null;
     if (createProcurementOffer) {
+      let externalParentProductId =
+        typeof dto.external_parent_product_id === 'string' ? dto.external_parent_product_id.trim() : '';
+      if (!externalParentProductId) {
+        const catHits = await this.db.query<{
+          readonly external_parent_product_id: string | null;
+          readonly slug: string | null;
+        }>('provider_product_catalog', {
+          filter: {
+            provider_account_id: account.id,
+            external_product_id: dto.external_product_id,
+          },
+          limit: 1,
+        });
+        const hit = catHits[0];
+        externalParentProductId =
+          hit?.external_parent_product_id?.trim() || hit?.slug?.trim() || '';
+      }
+
       const offerRow: Record<string, unknown> = {
         variant_id: dto.variant_id,
         provider_account_id: account.id,
@@ -317,6 +405,9 @@ export class SupabaseAdminProcurementRepository implements IAdminProcurementRepo
         last_price_cents: dto.price_cents,
         is_active: true,
       };
+      if (externalParentProductId) {
+        offerRow.external_parent_product_id = externalParentProductId;
+      }
       if (dto.platform_code !== undefined && dto.platform_code !== '') {
         offerRow.external_platform_code = dto.platform_code;
       }
@@ -447,6 +538,15 @@ export class SupabaseAdminProcurementRepository implements IAdminProcurementRepo
         provider_code: group.provider_code,
         offers: group.offers.slice(0, maxResults),
       });
+    }
+
+    /** Catalog-only adapters (e.g. AppRoute) have no HTTP `product_search`; include them so CRM Live Search lists every registered procurement source, even when the query matches nothing locally yet. */
+    const includedCodes = new Set(providers.map((p) => p.provider_code));
+    for (const code of catalogOnlyProviders) {
+      if (!includedCodes.has(code)) {
+        providers.push({ provider_code: code, offers: [] });
+        includedCodes.add(code);
+      }
     }
 
     const orderIdx = new Map(allProviders.map((c, i) => [c, i]));
@@ -676,29 +776,32 @@ export class SupabaseAdminProcurementRepository implements IAdminProcurementRepo
     maxPerProvider: number,
   ): Promise<LiveSearchProviderGroup[]> {
     try {
-      const { data } = await this.db.queryPaginated<CatalogProductRow>(
-        'provider_product_catalog',
-        {
-          select: 'id, provider_code, external_product_id, product_name, platform, region, min_price_cents, currency, qty, available_to_buy, thumbnail',
-          ilike: [['product_name', `%${query}%`]],
-          in: [['provider_code', providerCodes]],
-          order: { column: 'product_name', ascending: true },
-          range: [0, providerCodes.length * maxPerProvider - 1],
-        },
+      const uniqueCodes = [...new Set(providerCodes)];
+      const ilike = catalogProductNameIlikeClauses(query);
+      const groups = await Promise.all(
+        uniqueCodes.map(async (code): Promise<LiveSearchProviderGroup | null> => {
+          const { data } = await this.db.queryPaginated<CatalogProductRow>(
+            'provider_product_catalog',
+            {
+              select:
+                'id, provider_code, external_product_id, external_parent_product_id, product_name, platform, region, min_price_cents, currency, qty, available_to_buy, thumbnail',
+              filter: { provider_code: code },
+              ilike: ilike.length > 0 ? ilike : undefined,
+              order: { column: 'product_name', ascending: true },
+              range: [0, maxPerProvider - 1],
+            },
+          );
+
+          if (data.length === 0) return null;
+
+          return {
+            provider_code: code,
+            offers: data.map((row) => catalogProductRowToLiveSearchOffer(row)),
+          };
+        }),
       );
 
-      const grouped = new Map<string, LiveSearchProviderGroup>();
-      for (const row of data) {
-        let group = grouped.get(row.provider_code);
-        if (!group) {
-          group = { provider_code: row.provider_code, offers: [] };
-          grouped.set(row.provider_code, group);
-        }
-        if (group.offers.length >= maxPerProvider) continue;
-        group.offers.push(catalogProductRowToLiveSearchOffer(row));
-      }
-
-      return [...grouped.values()];
+      return groups.filter((g): g is LiveSearchProviderGroup => g != null);
     } catch (err) {
       logger.warn('Local catalog search failed for live search fallback', err as Error);
       return [];
