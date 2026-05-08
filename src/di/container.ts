@@ -38,6 +38,9 @@ import { SellerJitProcurementService } from '../infra/seller/seller-jit-procurem
 import { SellerKeyOperationsService } from '../infra/seller/seller-key-operations.service.js';
 import { SellerDomainEventsService } from '../infra/seller/seller-domain-events.service.js';
 import { KeyDecryptionService } from '../infra/crypto/key-decryption.service.js';
+import { SecureKeyManagerAdapter } from '../infra/crypto/secure-key-manager.adapter.js';
+import { SupabaseKeyRotationRepository } from '../infra/inventory/supabase-key-rotation.repository.js';
+import { RecryptProductKeysBatchUseCase } from '../core/use-cases/inventory/recrypt-product-keys-batch.use-case.js';
 import { ListingHealthService } from '../infra/seller/listing-health.service.js';
 import { VariantUnavailabilityService } from '../infra/seller/variant-unavailability.service.js';
 import { MarketplaceAdapterRegistry } from '../infra/marketplace/marketplace-adapter-registry.js';
@@ -669,6 +672,9 @@ container.register(UC_TOKENS.ReconcileSellerListings, { useClass: ReconcileSelle
 // Singleton: tsyringe defaults to Transient; bootstrap and repositories must share one registry.
 container.registerSingleton(TOKENS.MarketplaceAdapterRegistry, MarketplaceAdapterRegistry);
 container.register(TOKENS.KeyDecryption, { useClass: KeyDecryptionService });
+container.register(TOKENS.KeyEncryptionPort, { useClass: SecureKeyManagerAdapter });
+container.register(TOKENS.KeyRotationRepository, { useClass: SupabaseKeyRotationRepository });
+container.register(UC_TOKENS.RecryptProductKeysBatch, { useClass: RecryptProductKeysBatchUseCase });
 container.register(TOKENS.ListingHealth, { useClass: ListingHealthService });
 container.register(TOKENS.VariantUnavailability, { useClass: VariantUnavailabilityService });
 container.register(TOKENS.SellerKeyOperations, { useClass: SellerKeyOperationsService });

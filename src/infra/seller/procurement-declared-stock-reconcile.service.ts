@@ -126,22 +126,13 @@ export class ProcurementDeclaredStockReconcileService implements IProcurementDec
           continue;
         }
 
+        // Trust what the adapter reports it actually set. Adapters may cap or
+        // transform the quantity (e.g. Kinguin's 20-unit max) — that is their
+        // contract to enforce, not ours to warn about. If the adapter returns
+        // success, the quantity it reports is the ground truth.
         const appliedQty = typeof declareResult.declaredQuantity === 'number' && Number.isFinite(declareResult.declaredQuantity)
           ? declareResult.declaredQuantity
           : targetQty;
-        if (appliedQty !== targetQty) {
-          // Marketplaces routinely cap declared quantities (e.g. Kinguin caps at 20 per
-          // listing). This is normal operational behavior — not actionable — so we keep
-          // it as `info` to avoid Sentry noise. The applied qty is persisted on the
-          // listing row below for any downstream review.
-          logger.info('Marketplace applied declared qty differs from target (provider cap or API behavior)', {
-            requestId,
-            listingId: listing.id,
-            providerCode,
-            targetQty,
-            appliedQty,
-          });
-        }
 
         await this.db.update('seller_listings', { id: listing.id }, {
           declared_stock: appliedQty,

@@ -41,6 +41,8 @@ export const TOKENS = {
 
   // Crypto & key management
   KeyDecryption: Symbol.for('IKeyDecryptionPort'),
+  KeyEncryptionPort: Symbol.for('IKeyEncryptionPort'),
+  KeyRotationRepository: Symbol.for('IKeyRotationRepository'),
 
   // Marketplace adapters & seller services
   MarketplaceAdapterRegistry: Symbol.for('IMarketplaceAdapterRegistry'),
@@ -92,6 +94,7 @@ export const UC_TOKENS = {
   UpdateAffectedKey: Symbol.for('UpdateAffectedKeyUseCase'),
   DecryptKeys: Symbol.for('DecryptKeysUseCase'),
   RecryptProductKeys: Symbol.for('RecryptProductKeysUseCase'),
+  RecryptProductKeysBatch: Symbol.for('RecryptProductKeysBatchUseCase'),
   SetKeysSalesBlocked: Symbol.for('SetKeysSalesBlockedUseCase'),
   SetVariantSalesBlocked: Symbol.for('SetVariantSalesBlockedUseCase'),
   MarkKeysFaulty: Symbol.for('MarkKeysFaultyUseCase'),

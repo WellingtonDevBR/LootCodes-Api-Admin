@@ -7,6 +7,7 @@ import {
   RECONCILE_PHASES,
   type ReconcileSellerListingsDto,
 } from '../../core/use-cases/seller/reconcile-seller-listings.types.js';
+import type { RecryptProductKeysBatchUseCase } from '../../core/use-cases/inventory/recrypt-product-keys-batch.use-case.js';
 import { procurementCronSecretGuard } from '../middleware/procurement-cron-secret.guard.js';
 import { createLogger } from '../../shared/logger.js';
 
@@ -21,6 +22,12 @@ const reconcileBodySchema = z
   })
   .strict();
 
+const recryptBodySchema = z
+  .object({
+    batch_size: z.number().int().min(1).max(500).optional(),
+  })
+  .strict();
+
 function resolveRequestId(request: FastifyRequest, fallback: string): string {
   const header = request.headers['x-request-id'];
   if (typeof header === 'string' && header.trim().length > 0) return header.trim();
@@ -30,6 +37,39 @@ function resolveRequestId(request: FastifyRequest, fallback: string): string {
 }
 
 export async function internalCronRoutes(app: FastifyInstance): Promise<void> {
+  app.post(
+    '/recrypt-product-keys',
+    { preHandler: [procurementCronSecretGuard] },
+    async (request, reply) => {
+      const requestId = resolveRequestId(request, 'cron-recrypt-product-keys');
+
+      const parsed = recryptBodySchema.safeParse(request.body ?? {});
+      if (!parsed.success) {
+        const issues = parsed.error.issues.map((i) => ({
+          path: i.path.join('.') || '<root>',
+          message: i.message,
+        }));
+        logger.warn('Recrypt product-keys cron rejected — invalid body', { requestId, issues });
+        return reply.code(400).send({ error: 'invalid_request_body', issues });
+      }
+
+      const { batch_size } = parsed.data;
+      logger.info('Recrypt product-keys cron invoked', { requestId, batch_size });
+
+      try {
+        const uc = container.resolve<RecryptProductKeysBatchUseCase>(
+          UC_TOKENS.RecryptProductKeysBatch,
+        );
+        const result = await uc.execute({ batchSize: batch_size });
+        return reply.send(result);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.error('Recrypt product-keys cron failed', err as Error, { requestId });
+        return reply.code(500).send({ error: 'recrypt_failed', message });
+      }
+    },
+  );
+
   app.post(
     '/reconcile-seller-listings',
     { preHandler: [procurementCronSecretGuard] },
