@@ -107,15 +107,17 @@ export class SellerStockSyncService implements ISellerStockSyncService {
         result.errors++;
         const errMsg = err instanceof Error ? err.message : String(err);
         // Circuit-breaker / rate-limit failures are expected operational state when an
-        // upstream marketplace is degraded; log as warn so they don't fire Sentry alerts.
-        // Real adapter/contract errors stay at error level.
+        // upstream marketplace is degraded. The failure is already persisted on the
+        // listing's `error_message` column below for admin visibility, so we log at
+        // `info` to keep Sentry quiet — a sustained breaker-open state is alerted on
+        // separately. Real adapter/contract errors stay at error level.
         const errName = err instanceof Error ? err.name : '';
         const isTransient =
           errName === 'CircuitOpenError' ||
           errName === 'RateLimitExceededError' ||
           /^Circuit breaker open for /.test(errMsg) ||
           /^Rate limit exceeded for /.test(errMsg);
-        const logFn = isTransient ? logger.warn.bind(logger) : logger.error.bind(logger);
+        const logFn = isTransient ? logger.info.bind(logger) : logger.error.bind(logger);
         logFn('Failed to sync stock for listing', {
           requestId, listingId: listing.id,
           error: errMsg,

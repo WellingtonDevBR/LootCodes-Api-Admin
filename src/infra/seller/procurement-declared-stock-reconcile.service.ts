@@ -130,7 +130,11 @@ export class ProcurementDeclaredStockReconcileService implements IProcurementDec
           ? declareResult.declaredQuantity
           : targetQty;
         if (appliedQty !== targetQty) {
-          logger.warn('Marketplace applied declared qty differs from target (provider cap or API behavior)', {
+          // Marketplaces routinely cap declared quantities (e.g. Kinguin caps at 20 per
+          // listing). This is normal operational behavior — not actionable — so we keep
+          // it as `info` to avoid Sentry noise. The applied qty is persisted on the
+          // listing row below for any downstream review.
+          logger.info('Marketplace applied declared qty differs from target (provider cap or API behavior)', {
             requestId,
             listingId: listing.id,
             providerCode,
@@ -150,15 +154,19 @@ export class ProcurementDeclaredStockReconcileService implements IProcurementDec
         const msg = err instanceof Error ? err.message : String(err);
         const errName = err instanceof Error ? err.name : '';
         // Transient operational failures from upstream marketplaces (circuit breaker
-        // open, rate-limit exceeded) are expected when a provider degrades. Log them
-        // as warnings so they don't fire as Sentry errors; surface real errors as is.
+        // open, rate-limit exceeded) are expected when a provider degrades. They are
+        // already (a) recorded on the failures[] result returned to the caller and
+        // (b) persisted on the listing's `error_message` column below for admin
+        // visibility. Logging them at `info` keeps them out of Sentry — sustained
+        // breaker-open state is a separate, dedicated alert. Real errors stay at
+        // error so they continue to surface.
         const isTransient =
           errName === 'CircuitOpenError' ||
           errName === 'RateLimitExceededError' ||
           /^Circuit breaker open for /.test(msg) ||
           /^Rate limit exceeded for /.test(msg);
         failures.push({ listing_id: listing.id, reason: msg });
-        const logFn = isTransient ? logger.warn.bind(logger) : logger.error.bind(logger);
+        const logFn = isTransient ? logger.info.bind(logger) : logger.error.bind(logger);
         logFn('Procurement declared stock reconcile failed', {
           requestId,
           listingId: listing.id,

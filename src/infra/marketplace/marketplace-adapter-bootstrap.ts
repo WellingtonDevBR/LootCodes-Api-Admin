@@ -17,6 +17,7 @@ import { G2AAdapter } from './g2a/adapter.js';
 import { GamivoMarketplaceAdapter } from './gamivo/adapter.js';
 import { KinguinMarketplaceAdapter } from './kinguin/adapter.js';
 import { DigisellerMarketplaceAdapter } from './digiseller/adapter.js';
+import { DigisellerTokenManager, type DigisellerCachedToken } from './digiseller/token-manager.js';
 import { BambooMarketplaceAdapter } from './bamboo/adapter.js';
 import { resolveAppRouteBaseUrlFromApiProfile } from './approute/resolve-app-route-base-url.js';
 import type { AnyMarketplaceAdapter } from './marketplace-adapter-registry.js';
@@ -32,6 +33,7 @@ interface ProviderAccountRow {
   provider_code: string;
   api_profile: Record<string, unknown> | null;
   seller_config: Record<string, unknown> | null;
+  cached_token: DigisellerCachedToken | null;
 }
 
 const ENEBA_BASE_URL = 'https://api.eneba.com';
@@ -73,7 +75,7 @@ export async function bootstrapMarketplaceAdapters(
 
   try {
     const accounts = await db.query<ProviderAccountRow>('provider_accounts', {
-      select: 'id, provider_code, api_profile, seller_config',
+      select: 'id, provider_code, api_profile, seller_config, cached_token',
       filter: { is_enabled: true },
     });
 
@@ -91,7 +93,7 @@ export async function bootstrapMarketplaceAdapters(
       try {
         const secrets = await resolveProviderSecrets(db, account.id);
         const profile = asProfile(account.api_profile);
-        const adapter = buildAdapter(account, secrets, profile);
+        const adapter = await buildAdapter(db, account, secrets, profile);
         if (adapter) {
           registry.registerAdapter(account.provider_code, adapter);
         }
@@ -113,11 +115,12 @@ export async function bootstrapMarketplaceAdapters(
   }
 }
 
-function buildAdapter(
+async function buildAdapter(
+  db: IDatabase,
   account: ProviderAccountRow,
   secrets: Record<string, string>,
   profile: Record<string, unknown>,
-): unknown | null {
+): Promise<unknown | null> {
   switch (account.provider_code) {
     case 'eneba':
       return buildEnebaAdapter(secrets, profile);
@@ -128,7 +131,7 @@ function buildAdapter(
     case 'kinguin':
       return buildKinguinAdapter(secrets, profile);
     case 'digiseller':
-      return buildDigisellerAdapter(secrets, profile, account.seller_config);
+      return buildDigisellerAdapter(db, account.id, secrets, profile, account.seller_config, account.cached_token);
     case 'bamboo':
       return buildBambooAdapter(secrets, profile);
     case 'approute':
@@ -174,13 +177,15 @@ function buildEnebaAdapter(
   }
 
   if (!baseFromEnv && shouldReplaceEnebaProfileUrlWithPublic(baseUrl)) {
-    logger.warn('Eneba api_profile base_url looks like an HTTP/AWS relay; using official GraphQL host', {
+    // Profile drift is auto-corrected to the official Eneba host. Bootstrap-time
+    // info — not actionable at runtime — keep out of Sentry.
+    logger.info('Eneba api_profile base_url looks like an HTTP/AWS relay; using official GraphQL host', {
       previousBaseUrl: baseUrl,
     });
     baseUrl = ENEBA_BASE_URL;
   }
   if (!tokenFromEnv && shouldReplaceEnebaProfileUrlWithPublic(tokenEndpoint)) {
-    logger.warn('Eneba api_profile token_endpoint looks like an HTTP/AWS relay; using official OAuth URL', {
+    logger.info('Eneba api_profile token_endpoint looks like an HTTP/AWS relay; using official OAuth URL', {
       previousTokenUrl: tokenEndpoint,
     });
     tokenEndpoint = ENEBA_TOKEN_URL_FALLBACK;
@@ -343,40 +348,79 @@ function buildKinguinAdapter(
   return new KinguinMarketplaceAdapter(httpClient, webhookClient, buyerClient);
 }
 
-function buildDigisellerAdapter(
+async function buildDigisellerAdapter(
+  db: IDatabase,
+  accountId: string,
   secrets: Record<string, string>,
   profile: Record<string, unknown>,
   sellerConfig: Record<string, unknown> | null,
-): DigisellerMarketplaceAdapter | null {
+  cachedToken: DigisellerCachedToken | null,
+): Promise<DigisellerMarketplaceAdapter | null> {
   const apiKey = secrets['DIGISELLER_API_KEY'];
-  const sellerId = secrets['DIGISELLER_SELLER_ID'];
-  const baseUrl = profileStr(profile, 'base_url') ?? 'https://api.digiseller.ru/api';
+  const sellerIdRaw = secrets['DIGISELLER_SELLER_ID'];
+  const baseUrl = (profileStr(profile, 'base_url') ?? 'https://api.digiseller.com').replace(/\/$/, '');
+  const apiLoginUrl = `${baseUrl}/api/apilogin`;
 
-  if (!apiKey || !sellerId) {
+  if (!apiKey || !sellerIdRaw) {
     logger.warn('Digiseller seller adapter skipped — need DIGISELLER_API_KEY and DIGISELLER_SELLER_ID');
     return null;
   }
 
-  const httpClient = new MarketplaceHttpClient({
-    baseUrl: baseUrl.replace(/\/$/, ''),
-    providerCode: 'digiseller',
-    headers: async () => ({
-      Authorization: `Bearer ${apiKey}`,
-      'X-Seller-Id': sellerId,
-    }),
-  });
+  const sellerNumericId = Number.parseInt(sellerIdRaw.trim(), 10);
+  if (!Number.isFinite(sellerNumericId)) {
+    logger.warn('Digiseller seller adapter skipped — DIGISELLER_SELLER_ID is not a valid integer', {
+      raw: sellerIdRaw,
+    });
+    return null;
+  }
 
   const cfg = sellerConfig != null && typeof sellerConfig === 'object' && !Array.isArray(sellerConfig)
     ? sellerConfig
     : {};
 
-  const sellerNumericId = Number.parseInt(String(sellerId).trim(), 10);
+  const tokenManager = new DigisellerTokenManager({
+    apiKey,
+    sellerId: sellerNumericId,
+    apiLoginUrl,
+    initialCache: cachedToken,
+    onTokenRefreshed: (entry) => {
+      db.update('provider_accounts', { id: accountId }, { cached_token: entry }).catch((err: unknown) => {
+        logger.warn('Digiseller: failed to persist refreshed token to DB', {
+          accountId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+    },
+  });
+
+  const httpClient = new MarketplaceHttpClient({
+    baseUrl,
+    providerCode: 'digiseller',
+    headers: async () => ({ Accept: 'application/json' }),
+    queryParams: async () => ({
+      token: await tokenManager.getToken(),
+    }),
+  });
+
+  const callbackUrl = (cfg['callback_url'] as string | undefined) ?? '';
+  const callbackAuthToken = (cfg['callback_auth_token'] as string | undefined) ?? '';
 
   return new DigisellerMarketplaceAdapter(httpClient, {
-    defaultCurrency: (cfg['default_currency'] as string) ?? 'USD',
-    sellerNumericId: Number.isFinite(sellerNumericId) ? sellerNumericId : undefined,
+    defaultCurrency: (cfg['default_currency'] as string) ?? 'EUR',
+    commissionRatePercent: typeof cfg['commission_rate_percent'] === 'number'
+      ? cfg['commission_rate_percent'] : undefined,
+    sellerNumericId,
+    listingOpts: {
+      callbackUrl,
+      callbackAuthToken,
+      contentType: (cfg['content_type'] as string | undefined) === 'Form' ? 'Form' : 'Text',
+      guaranteeHours: typeof cfg['guarantee_hours'] === 'number' ? cfg['guarantee_hours'] : 24,
+      platiCategoryId: typeof cfg['plati_category_id'] === 'number' ? cfg['plati_category_id'] : null,
+      locale: (cfg['locale'] as string | undefined) ?? 'en-US',
+    },
   });
 }
+
 
 /**
  * Registers AppRoute in the adapter registry without marketplace HTTP capabilities — CRM live-search

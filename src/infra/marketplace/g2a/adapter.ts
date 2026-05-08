@@ -325,8 +325,14 @@ export class G2AAdapter
         });
       }
     } catch (err) {
-      logger.warn('Import API competitor lookup failed, trying Export API', err as Error, {
+      // Import API returns 404 for products not in our seller catalog; this is the
+      // expected control-flow signal to fall back to the Export API. Log at `info`
+      // (no Error object) so the failure is observable in logs without firing
+      // Sentry — the only actionable failure is when the Export API also fails,
+      // which is captured by the catch below.
+      logger.info('Import API competitor lookup failed, trying Export API', {
         externalProductId,
+        error: err instanceof Error ? err.message : String(err),
       } as LogContext);
     }
 
@@ -347,6 +353,8 @@ export class G2AAdapter
         }));
       }
     } catch (err) {
+      // Both APIs failed — this is the actionable case (the caller will compute
+      // pricing without competitor data). Surface as warn so it shows up in Sentry.
       logger.warn('Export API competitor lookup also failed', err as Error, {
         externalProductId,
       } as LogContext);

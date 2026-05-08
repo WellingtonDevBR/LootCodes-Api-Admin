@@ -40,6 +40,11 @@ export interface MarketplaceHttpConfig {
   rateLimiter?: Partial<RateLimiterConfig>;
   headers?: () => Promise<Record<string, string>>;
   /**
+   * Optional per-request query parameters appended to every outbound URL.
+   * Evaluated lazily so tokens are always fresh (e.g. Digiseller `?token=X`).
+   */
+  queryParams?: () => Promise<Record<string, string>>;
+  /**
    * Optional HMAC signing headers for outbound requests through a reverse proxy
    * (same semantics as Edge `buildProviderProxyHeaders`).
    * Receives the wire JSON body string, or empty string for GET/DELETE.
@@ -188,6 +193,7 @@ export class MarketplaceHttpClient {
   private readonly timeoutMs: number;
   private readonly retryConfig: RetryConfig;
   private readonly resolveHeaders: () => Promise<Record<string, string>>;
+  private readonly resolveQueryParams?: () => Promise<Record<string, string>>;
   private readonly proxySigner?: (rawBody: string) => Promise<Record<string, string>>;
   private readonly cb: CircuitBreaker;
   private readonly rl: RateLimiter;
@@ -198,6 +204,7 @@ export class MarketplaceHttpClient {
     this.timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.retryConfig = { ...DEFAULT_RETRY, ...config.retry };
     this.resolveHeaders = config.headers ?? (() => Promise.resolve({}));
+    this.resolveQueryParams = config.queryParams;
     this.proxySigner = config.proxySigner;
     this.cb = new CircuitBreaker({ ...DEFAULT_CB, ...config.circuitBreaker });
     this.rl = new RateLimiter({ ...DEFAULT_RL, ...config.rateLimiter });
@@ -274,7 +281,12 @@ export class MarketplaceHttpClient {
           this.cb.recordFailure();
         }
 
-        logger.warn('Request failed, retrying', {
+        // Retries are by design — most succeed on the next attempt. Logging
+        // each retry as `warn` floods Sentry with non-actionable noise. If
+        // every attempt fails, `lastError` is thrown above and the per-listing
+        // handler in the caller converts it into either a transient `info` or
+        // a real `error` depending on the failure shape.
+        logger.info('Request failed, retrying', {
           provider: this.providerCode,
           method,
           path,
@@ -294,7 +306,11 @@ export class MarketplaceHttpClient {
     body?: unknown,
     extraHeaders?: Record<string, string>,
   ): Promise<T> {
-    const url = path ? `${this.baseUrl}/${path.replace(/^\//, '')}` : this.baseUrl;
+    const rawPath = path ? `${this.baseUrl}/${path.replace(/^\//, '')}` : this.baseUrl;
+    const extraParams = this.resolveQueryParams ? await this.resolveQueryParams() : null;
+    const url = extraParams && Object.keys(extraParams).length > 0
+      ? `${rawPath}${rawPath.includes('?') ? '&' : '?'}${new URLSearchParams(extraParams).toString()}`
+      : rawPath;
     const baseHeaders = await this.resolveHeaders();
 
     const rawBody = body !== undefined ? JSON.stringify(body) : '';
