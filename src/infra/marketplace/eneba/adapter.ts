@@ -41,6 +41,7 @@ import type {
   BatchPriceUpdate,
   BatchPriceUpdateResult,
   BatchDeclaredStockUpdate,
+  ProductSearchResult,
 } from '../../../core/ports/marketplace-adapter.port.js';
 import type { EnebaGraphQLClient } from './graphql-client.js';
 import type {
@@ -608,24 +609,61 @@ export class EnebaAdapter
     return data.P_enableDeclaredStockKeyReplacements.success;
   }
 
+  /**
+   * Batch-fetch lowest marketplace offer per product from `S_competition` (pricing is not on `S_products`).
+   */
+  private async cheapestCompetitionPriceByProductId(
+    productIds: string[],
+  ): Promise<Map<string, { cents: number; currency: string }>> {
+    const result = new Map<string, { cents: number; currency: string }>();
+    if (productIds.length === 0 || this.isSandbox) return result;
+
+    const chunkSize = 25;
+    for (let i = 0; i < productIds.length; i += chunkSize) {
+      const chunk = productIds.slice(i, i + chunkSize);
+      const data = await this.gqlClient.execute<EnebaCompetitionData>(GET_COMPETITION_QUERY, {
+        productIds: chunk,
+      });
+      for (const entry of data.S_competition ?? []) {
+        const edges = entry.competition?.edges ?? [];
+        if (edges.length === 0) continue;
+        let minAmount = Number.POSITIVE_INFINITY;
+        let currency = 'EUR';
+        for (const e of edges) {
+          const a = e.node.price.amount;
+          if (a < minAmount) {
+            minAmount = a;
+            currency = e.node.price.currency;
+          }
+        }
+        if (minAmount !== Number.POSITIVE_INFINITY) {
+          result.set(entry.productId, { cents: Math.round(minAmount), currency });
+        }
+      }
+    }
+    return result;
+  }
+
   // ─── IProductSearchAdapter ─────────────────────────────────────────
 
-  async searchProducts(
-    query: string,
-    limit = 20,
-  ): Promise<import('../../../core/ports/marketplace-adapter.port.js').ProductSearchResult[]> {
+  async searchProducts(query: string, limit = 20): Promise<ProductSearchResult[]> {
     const data = await this.searchProductsRaw(query, limit);
-    return (data.S_products?.edges ?? []).map((edge) => {
+    const edges = data.S_products?.edges ?? [];
+    const ids = edges.map((e) => e.node.id);
+    const priceByProduct = await this.cheapestCompetitionPriceByProductId(ids);
+
+    return edges.map((edge) => {
       const p = edge.node;
       const drm = p.drm?.slug ?? null;
       const regionCodes = (p.regions ?? []).map((r) => r.code);
+      const hinted = priceByProduct.get(p.id);
       return {
         externalProductId: p.id,
         productName: p.name,
         platform: drm,
         region: regionCodes.length > 0 ? regionCodes.join(', ') : null,
-        priceCents: 0,
-        currency: 'EUR',
+        priceCents: hinted?.cents ?? 0,
+        currency: hinted?.currency ?? 'EUR',
         available: true,
       };
     });

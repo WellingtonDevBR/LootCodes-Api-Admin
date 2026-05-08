@@ -120,6 +120,11 @@ export interface LinkCatalogProductDto {
   platform_code?: string;
   region_code?: string;
   admin_id: string;
+  /**
+   * When false, only wires marketplace seller integration — no `provider_variant_offers` row.
+   * When omitted or true, legacy behavior (procurement offer is created).
+   */
+  create_procurement_offer?: boolean;
 }
 
 export interface LinkCatalogProductMarketplacePublishSnap {
@@ -130,7 +135,7 @@ export interface LinkCatalogProductMarketplacePublishSnap {
 }
 
 export interface LinkCatalogProductResult {
-  offer_id: string;
+  offer_id: string | null;
   seller_listing_id: string | null;
   marketplace_publish?: LinkCatalogProductMarketplacePublishSnap | null;
 }

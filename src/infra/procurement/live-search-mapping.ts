@@ -32,6 +32,56 @@ export function productSearchResultsToLiveSearchOffers(
   }));
 }
 
+/** When live marketplace search omits price (0), fill from ingested catalog if available. */
+export function combineLiveSearchOfferWithCatalog(
+  live: LiveSearchOffer,
+  catalog: LiveSearchOffer,
+): LiveSearchOffer {
+  const livePrice = live.price_cents;
+  const catalogPrice = catalog.price_cents;
+  const useCatalogPrice = livePrice <= 0 && catalogPrice > 0;
+  const price_cents = useCatalogPrice
+    ? catalogPrice
+    : livePrice > 0
+      ? livePrice
+      : catalogPrice;
+  const currency = useCatalogPrice ? catalog.currency : live.currency;
+
+  return {
+    ...live,
+    price_cents,
+    currency,
+    thumbnail: live.thumbnail ?? catalog.thumbnail ?? null,
+  };
+}
+
+/**
+ * Per-provider merge: live hits first (fresh titles / regions), catalog fills missing-only SKUs,
+ * and catalog replaces live price when live price is zero but catalog has a positive snapshot.
+ */
+export function mergeLiveSearchOffers(
+  live: readonly LiveSearchOffer[],
+  local: readonly LiveSearchOffer[],
+  maxResults: number,
+): LiveSearchOffer[] {
+  const localById = new Map(local.map((o) => [o.external_product_id, o]));
+  const merged = new Map<string, LiveSearchOffer>();
+
+  for (const liveOffer of live) {
+    const cat = localById.get(liveOffer.external_product_id);
+    merged.set(
+      liveOffer.external_product_id,
+      cat ? combineLiveSearchOfferWithCatalog(liveOffer, cat) : liveOffer,
+    );
+  }
+  for (const locOffer of local) {
+    if (!merged.has(locOffer.external_product_id)) {
+      merged.set(locOffer.external_product_id, locOffer);
+    }
+  }
+  return [...merged.values()].slice(0, maxResults);
+}
+
 export function liveSearchOffersToCatalogUpsertRows(
   offers: readonly LiveSearchOffer[],
   providerCode: string,

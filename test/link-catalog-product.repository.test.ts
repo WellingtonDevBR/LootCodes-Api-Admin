@@ -75,4 +75,44 @@ describe('SupabaseAdminProcurementRepository.linkCatalogProduct', () => {
       }),
     );
   });
+
+  it('skips provider_variant_offers when create_procurement_offer is false but still upserts seller_listings when supports_seller', async () => {
+    const insert = vi.fn().mockImplementation(async (table: string) => {
+      if (table === 'seller_listings') return { id: 'listing-uuid-1' };
+      throw new Error(`unexpected insert into ${table}`);
+    });
+    const query = vi.fn().mockImplementation(async (table: string) => {
+      if (table === 'provider_accounts') {
+        return [{ id: 'pa-eneba', supports_seller: true }];
+      }
+      if (table === 'seller_listings') {
+        return [];
+      }
+      return [];
+    });
+
+    const db = { insert, query } as unknown as IDatabase;
+    const repo = new SupabaseAdminProcurementRepository(db, {} as IMarketplaceAdapterRegistry);
+
+    const result = await repo.linkCatalogProduct({
+      variant_id: 'var-sell',
+      provider_code: 'eneba',
+      external_product_id: 'ext-prod-99',
+      currency: 'EUR',
+      price_cents: 500,
+      admin_id: 'admin-1',
+      create_procurement_offer: false,
+    });
+
+    expect(result).toEqual({ offer_id: null, seller_listing_id: 'listing-uuid-1' });
+    expect(insert).toHaveBeenCalledTimes(1);
+    expect(insert).toHaveBeenCalledWith(
+      'seller_listings',
+      expect.objectContaining({
+        variant_id: 'var-sell',
+        provider_account_id: 'pa-eneba',
+        external_product_id: 'ext-prod-99',
+      }),
+    );
+  });
 });

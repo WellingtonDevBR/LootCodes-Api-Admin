@@ -76,14 +76,80 @@ describe('SupabaseAdminProcurementRepository.liveSearchProviders merge + upsert'
     const offers = result.providers[0]?.offers ?? [];
     expect(offers.map((o) => o.external_product_id)).toEqual(['dup', 'live-only', 'local-only']);
     expect(offers.find((o) => o.external_product_id === 'dup')?.product_name).toBe('Live title');
-
     expect(upsertMany).toHaveBeenCalledTimes(1);
     const upsertArg = upsertMany.mock.calls[0];
     expect(upsertArg?.[0]).toBe('provider_product_catalog');
     expect(upsertArg?.[2]).toBe('provider_account_id,external_product_id');
     const rows = upsertArg?.[1] as Record<string, unknown>[];
-    expect(rows).toHaveLength(2);
+    expect(rows).toHaveLength(3);
     expect(rows.every((r) => r.provider_account_id === 'acct-z')).toBe(true);
+    const prices = rows.map((r) => r.min_price_cents as number).sort((a, b) => a - b);
+    expect(prices).toEqual([100, 222, 999]);
+  });
+
+  it('fills zero live prices from catalog merge and only upserts rows with positive merged prices', async () => {
+    const fooAdapter = {
+      searchProducts: vi.fn().mockResolvedValue([
+        {
+          externalProductId: 'dup',
+          productName: 'Live title',
+          platform: 'PC',
+          region: 'EU',
+          priceCents: 0,
+          currency: 'EUR',
+          available: true,
+        },
+        {
+          externalProductId: 'live-zero-only',
+          productName: 'No catalog row',
+          platform: null,
+          region: null,
+          priceCents: 0,
+          currency: 'EUR',
+          available: true,
+        },
+      ]),
+    };
+
+    const registry = {
+      getSupportedProviders: (): string[] => ['foo'],
+      hasCapability: (code: string, cap: string): boolean => code === 'foo' && cap === 'product_search',
+      getProductSearchAdapter: (code: string) => (code === 'foo' ? fooAdapter : null),
+    };
+
+    const queryPaginated = vi.fn().mockResolvedValue({
+      data: [
+        {
+          provider_code: 'foo',
+          external_product_id: 'dup',
+          product_name: 'Catalog dup',
+          platform: 'Xbox',
+          region: null,
+          min_price_cents: 555,
+          currency: 'EUR',
+          qty: 5,
+          available_to_buy: true,
+          thumbnail: null,
+        },
+      ],
+    });
+
+    const query = vi.fn().mockResolvedValue([{ id: 'acct-z', provider_code: 'foo' }]);
+    const upsertMany = vi.fn().mockResolvedValue(undefined);
+    const db = { queryPaginated, query, upsertMany } as unknown as IDatabase;
+
+    const repo = new SupabaseAdminProcurementRepository(db, registry as unknown as IMarketplaceAdapterRegistry);
+    const result = await repo.liveSearchProviders({ query: 'test', max_results: 10 });
+
+    const offers = result.providers[0]?.offers ?? [];
+    const dup = offers.find((o) => o.external_product_id === 'dup');
+    expect(dup?.price_cents).toBe(555);
+
+    expect(upsertMany).toHaveBeenCalledTimes(1);
+    const rows = upsertMany.mock.calls[0]?.[1] as Record<string, unknown>[];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.external_product_id).toBe('dup');
+    expect(rows[0]?.min_price_cents).toBe(555);
   });
 
   it('returns catalog-only groups when adapter has no product_search capability', async () => {

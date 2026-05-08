@@ -19,6 +19,8 @@ export class PublishSellerListingToMarketplaceUseCase {
   async execute(dto: PublishSellerListingToMarketplaceDtoInput): Promise<PublishSellerListingToMarketplaceResult> {
     if (!dto.listing_id) throw new Error('listing_id is required');
 
+    await this.sellerRepo.repairSellerListingRowIfStaleFailure(dto.listing_id);
+
     const ctx = await this.sellerRepo.getSellerListingPublishContext(dto.listing_id);
     if (!ctx) throw new Error(`Seller listing ${dto.listing_id} not found`);
 

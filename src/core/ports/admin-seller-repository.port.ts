@@ -80,6 +80,8 @@ export interface IAdminSellerRepository {
 
   /** Loads seller_listings joined with provider_accounts.provider_code for marketplace adapter routing. */
   getSellerListingPublishContext(listingId: string): Promise<SellerListingPublishContext | null>;
+  /** Corrects rows stuck `failed` after DB partially succeeded (marketplace id present); safe no-op otherwise. */
+  repairSellerListingRowIfStaleFailure(listingId: string): Promise<void>;
   countAvailableProductKeysForVariant(variantId: string): Promise<number>;
   finalizeSellerListingMarketplacePublishSuccess(params: {
     listing_id: string;

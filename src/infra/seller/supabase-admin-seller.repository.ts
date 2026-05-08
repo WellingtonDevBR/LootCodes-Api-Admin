@@ -74,10 +74,24 @@ export class SupabaseAdminSellerRepository implements IAdminSellerRepository {
   }
 
   async listSellerListingsForVariant(dto: ListSellerListingsDto): Promise<ListSellerListingsResult> {
-    const rows = await this.db.query<Record<string, unknown>>('seller_listings', {
-      eq: [['variant_id', dto.variant_id]],
+    const listingQueryOpts = {
+      eq: [['variant_id', dto.variant_id]] as Array<[string, unknown]>,
       order: { column: 'created_at', ascending: true },
-    });
+    };
+
+    let rows = await this.db.query<Record<string, unknown>>('seller_listings', listingQueryOpts);
+
+    let repairedAny = false;
+    for (const r of rows) {
+      const ext = (r.external_listing_id as string | null)?.trim();
+      if (ext && r.status === 'failed') {
+        await this.repairSellerListingRowIfStaleFailure(r.id as string);
+        repairedAny = true;
+      }
+    }
+    if (repairedAny) {
+      rows = await this.db.query<Record<string, unknown>>('seller_listings', listingQueryOpts);
+    }
 
     const accountMap = rows.length > 0 ? await this.buildAccountMap() : new Map();
 
@@ -710,6 +724,26 @@ export class SupabaseAdminSellerRepository implements IAdminSellerRepository {
     };
   }
 
+  async repairSellerListingRowIfStaleFailure(listingId: string): Promise<void> {
+    const listing = await this.db.queryOne<Record<string, unknown>>('seller_listings', {
+      filter: { id: listingId },
+    });
+    if (!listing) return;
+
+    const ext = (listing.external_listing_id as string | null)?.trim();
+    if (!ext || listing.status !== 'failed') return;
+
+    await this.db.update('seller_listings', { id: listingId }, {
+      status: 'active',
+      error_message: null,
+      updated_at: new Date().toISOString(),
+    });
+
+    logger.info('Repaired seller listing stuck as failed despite marketplace auction id', {
+      listing_id: listingId,
+    });
+  }
+
   async countAvailableProductKeysForVariant(variantId: string): Promise<number> {
     const keys = await this.db.query<Record<string, unknown>>('product_keys', {
       eq: [
@@ -760,11 +794,32 @@ export class SupabaseAdminSellerRepository implements IAdminSellerRepository {
   }
 
   async markSellerListingPublishFailure(listing_id: string, error_message: string): Promise<void> {
+    const listing = await this.db.queryOne<Record<string, unknown>>('seller_listings', {
+      filter: { id: listing_id },
+    });
+    if (!listing) return;
+
+    const hasRemoteAuction = Boolean((listing.external_listing_id as string | null)?.trim());
+    const now = new Date().toISOString();
+
+    if (hasRemoteAuction) {
+      logger.warn(
+        'Publish failed after marketplace row was linked — keeping active (likely audit insert followed listing update)',
+        { listing_id, truncated_error: error_message.slice(0, 500) },
+      );
+      await this.db.update('seller_listings', { id: listing_id }, {
+        status: 'active',
+        error_message: null,
+        updated_at: now,
+      });
+      return;
+    }
+
     await this.db.update('seller_listings', { id: listing_id }, {
       error_message,
       /** Matches Postgres `seller_listings_status_check` (there is no `error` value). */
       status: 'failed',
-      updated_at: new Date().toISOString(),
+      updated_at: now,
     });
   }
 

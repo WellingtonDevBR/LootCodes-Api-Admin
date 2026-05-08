@@ -152,6 +152,9 @@ export async function adminProcurementRoutes(app: FastifyInstance) {
       platform_code: body.platform_code as string | undefined,
       region_code: body.region_code as string | undefined,
       admin_id: adminId,
+      ...(typeof body.create_procurement_offer === 'boolean'
+        ? { create_procurement_offer: body.create_procurement_offer }
+        : {}),
     });
 
     let marketplace_publish: LinkCatalogProductMarketplacePublishSnap | null = null;

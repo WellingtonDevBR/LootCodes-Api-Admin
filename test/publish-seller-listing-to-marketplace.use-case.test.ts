@@ -13,8 +13,9 @@ describe('PublishSellerListingToMarketplaceUseCase', () => {
 
     const sellerRepo: Pick<
       IAdminSellerRepository,
-      'getSellerListingPublishContext' | 'countAvailableProductKeysForVariant' | 'finalizeSellerListingMarketplacePublishSuccess' | 'markSellerListingPublishFailure'
+      'getSellerListingPublishContext' | 'repairSellerListingRowIfStaleFailure' | 'countAvailableProductKeysForVariant' | 'finalizeSellerListingMarketplacePublishSuccess' | 'markSellerListingPublishFailure'
     > = {
+      repairSellerListingRowIfStaleFailure: vi.fn(),
       getSellerListingPublishContext: vi.fn().mockResolvedValue({
         listing_id: 'lst-1',
         variant_id: 'var-1',
@@ -65,8 +66,9 @@ describe('PublishSellerListingToMarketplaceUseCase', () => {
 
     const sellerRepo: Pick<
       IAdminSellerRepository,
-      'getSellerListingPublishContext' | 'countAvailableProductKeysForVariant' | 'finalizeSellerListingMarketplacePublishSuccess' | 'markSellerListingPublishFailure'
+      'getSellerListingPublishContext' | 'repairSellerListingRowIfStaleFailure' | 'countAvailableProductKeysForVariant' | 'finalizeSellerListingMarketplacePublishSuccess' | 'markSellerListingPublishFailure'
     > = {
+      repairSellerListingRowIfStaleFailure: vi.fn(),
       getSellerListingPublishContext: vi.fn().mockResolvedValue({
         listing_id: 'lst-2',
         variant_id: 'var-2',
@@ -127,8 +129,9 @@ describe('PublishSellerListingToMarketplaceUseCase', () => {
 
     const sellerRepo: Pick<
       IAdminSellerRepository,
-      'getSellerListingPublishContext' | 'countAvailableProductKeysForVariant' | 'finalizeSellerListingMarketplacePublishSuccess' | 'markSellerListingPublishFailure'
+      'getSellerListingPublishContext' | 'repairSellerListingRowIfStaleFailure' | 'countAvailableProductKeysForVariant' | 'finalizeSellerListingMarketplacePublishSuccess' | 'markSellerListingPublishFailure'
     > = {
+      repairSellerListingRowIfStaleFailure: vi.fn(),
       getSellerListingPublishContext: vi.fn().mockResolvedValue({
         listing_id: 'lst-ku',
         variant_id: 'var-ku',
@@ -185,8 +188,9 @@ describe('PublishSellerListingToMarketplaceUseCase', () => {
 
     const sellerRepo: Pick<
       IAdminSellerRepository,
-      'getSellerListingPublishContext' | 'countAvailableProductKeysForVariant' | 'finalizeSellerListingMarketplacePublishSuccess' | 'markSellerListingPublishFailure'
+      'getSellerListingPublishContext' | 'repairSellerListingRowIfStaleFailure' | 'countAvailableProductKeysForVariant' | 'finalizeSellerListingMarketplacePublishSuccess' | 'markSellerListingPublishFailure'
     > = {
+      repairSellerListingRowIfStaleFailure: vi.fn(),
       getSellerListingPublishContext: vi.fn().mockResolvedValue({
         listing_id: 'lst-disc',
         variant_id: 'var-disc',
@@ -244,8 +248,9 @@ describe('PublishSellerListingToMarketplaceUseCase', () => {
 
     const sellerRepo: Pick<
       IAdminSellerRepository,
-      'getSellerListingPublishContext' | 'countAvailableProductKeysForVariant' | 'finalizeSellerListingMarketplacePublishSuccess' | 'markSellerListingPublishFailure'
+      'getSellerListingPublishContext' | 'repairSellerListingRowIfStaleFailure' | 'countAvailableProductKeysForVariant' | 'finalizeSellerListingMarketplacePublishSuccess' | 'markSellerListingPublishFailure'
     > = {
+      repairSellerListingRowIfStaleFailure: vi.fn(),
       getSellerListingPublishContext: vi.fn().mockResolvedValue({
         listing_id: 'lst-disc-ku',
         variant_id: 'var-disc-ku',
@@ -290,8 +295,9 @@ describe('PublishSellerListingToMarketplaceUseCase', () => {
 
     const sellerRepo: Pick<
       IAdminSellerRepository,
-      'getSellerListingPublishContext' | 'countAvailableProductKeysForVariant' | 'finalizeSellerListingMarketplacePublishSuccess' | 'markSellerListingPublishFailure'
+      'getSellerListingPublishContext' | 'repairSellerListingRowIfStaleFailure' | 'countAvailableProductKeysForVariant' | 'finalizeSellerListingMarketplacePublishSuccess' | 'markSellerListingPublishFailure'
     > = {
+      repairSellerListingRowIfStaleFailure: vi.fn(),
       getSellerListingPublishContext: vi.fn().mockResolvedValue({
         listing_id: 'lst-3',
         variant_id: 'var-3',
@@ -329,8 +335,9 @@ describe('PublishSellerListingToMarketplaceUseCase', () => {
 
     const sellerRepo: Pick<
       IAdminSellerRepository,
-      'getSellerListingPublishContext' | 'countAvailableProductKeysForVariant' | 'finalizeSellerListingMarketplacePublishSuccess' | 'markSellerListingPublishFailure'
+      'getSellerListingPublishContext' | 'repairSellerListingRowIfStaleFailure' | 'countAvailableProductKeysForVariant' | 'finalizeSellerListingMarketplacePublishSuccess' | 'markSellerListingPublishFailure'
     > = {
+      repairSellerListingRowIfStaleFailure: vi.fn(),
       getSellerListingPublishContext: vi.fn().mockResolvedValue({
         listing_id: 'lst-4',
         variant_id: 'var-4',
@@ -373,8 +380,9 @@ describe('PublishSellerListingToMarketplaceUseCase', () => {
 
     const sellerRepo: Pick<
       IAdminSellerRepository,
-      'getSellerListingPublishContext' | 'countAvailableProductKeysForVariant' | 'finalizeSellerListingMarketplacePublishSuccess' | 'markSellerListingPublishFailure'
+      'getSellerListingPublishContext' | 'repairSellerListingRowIfStaleFailure' | 'countAvailableProductKeysForVariant' | 'finalizeSellerListingMarketplacePublishSuccess' | 'markSellerListingPublishFailure'
     > = {
+      repairSellerListingRowIfStaleFailure: vi.fn(),
       getSellerListingPublishContext: vi.fn().mockResolvedValue({
         listing_id: 'lst-n-keys',
         variant_id: 'var-n-keys',

@@ -44,6 +44,7 @@ import { createLogger } from '../../shared/logger.js';
 import {
   catalogProductRowToLiveSearchOffer,
   liveSearchOffersToCatalogUpsertRows,
+  mergeLiveSearchOffers,
   productSearchResultsToLiveSearchOffers,
 } from './live-search-mapping.js';
 import { refreshBambooOfferSnapshotsForVariant } from './bamboo-variant-offer-quote-refresh.js';
@@ -304,22 +305,28 @@ export class SupabaseAdminProcurementRepository implements IAdminProcurementRepo
       throw new Error(`No provider account found for provider_code=${dto.provider_code}`);
     }
 
-    const offerRow: Record<string, unknown> = {
-      variant_id: dto.variant_id,
-      provider_account_id: account.id,
-      external_offer_id: dto.external_product_id,
-      currency: dto.currency,
-      last_price_cents: dto.price_cents,
-      is_active: true,
-    };
-    if (dto.platform_code !== undefined && dto.platform_code !== '') {
-      offerRow.external_platform_code = dto.platform_code;
-    }
-    if (dto.region_code !== undefined && dto.region_code !== '') {
-      offerRow.external_region_code = dto.region_code;
-    }
+    const createProcurementOffer = dto.create_procurement_offer !== false;
 
-    const offer = await this.db.insert<{ id: string }>('provider_variant_offers', offerRow);
+    let offerId: string | null = null;
+    if (createProcurementOffer) {
+      const offerRow: Record<string, unknown> = {
+        variant_id: dto.variant_id,
+        provider_account_id: account.id,
+        external_offer_id: dto.external_product_id,
+        currency: dto.currency,
+        last_price_cents: dto.price_cents,
+        is_active: true,
+      };
+      if (dto.platform_code !== undefined && dto.platform_code !== '') {
+        offerRow.external_platform_code = dto.platform_code;
+      }
+      if (dto.region_code !== undefined && dto.region_code !== '') {
+        offerRow.external_region_code = dto.region_code;
+      }
+
+      const offer = await this.db.insert<{ id: string }>('provider_variant_offers', offerRow);
+      offerId = offer.id;
+    }
 
     let sellerListingId: string | null = null;
 
@@ -360,7 +367,7 @@ export class SupabaseAdminProcurementRepository implements IAdminProcurementRepo
       }
     }
 
-    return { offer_id: offer.id, seller_listing_id: sellerListingId };
+    return { offer_id: offerId, seller_listing_id: sellerListingId };
   }
 
   async liveSearchProviders(dto: LiveSearchProvidersDto): Promise<LiveSearchProvidersResult> {
@@ -400,11 +407,6 @@ export class SupabaseAdminProcurementRepository implements IAdminProcurementRepo
           const results = await adapter.searchProducts(dto.query, maxResults);
           const offers = productSearchResultsToLiveSearchOffers(providerCode, results);
 
-          const accountId = accountByCode.get(providerCode);
-          if (offers.length > 0 && accountId) {
-            this.scheduleLiveSearchCatalogUpsert(offers, providerCode, accountId);
-          }
-
           return { providerCode, offers };
         } catch (err) {
           logger.warn(`Live search failed for provider ${providerCode}`, err as Error);
@@ -426,12 +428,17 @@ export class SupabaseAdminProcurementRepository implements IAdminProcurementRepo
       if (settled.status !== 'fulfilled') continue;
       const { providerCode, offers: liveOffers } = settled.value;
       const localGroup = localByCode.get(providerCode);
-      const merged = this.mergeLiveAndLocalOffers(
-        liveOffers,
-        localGroup?.offers ?? [],
-        maxResults,
-      );
+      const merged = mergeLiveSearchOffers(liveOffers, localGroup?.offers ?? [], maxResults);
       providers.push({ provider_code: providerCode, offers: merged });
+
+      const accountId = accountByCode.get(providerCode);
+      if (accountId) {
+        const pricedForCatalog = merged.filter((o) => o.price_cents > 0);
+        if (pricedForCatalog.length > 0) {
+          this.scheduleLiveSearchCatalogUpsert(pricedForCatalog, providerCode, accountId);
+        }
+      }
+
       if (localGroup) localByCode.delete(providerCode);
     }
 
@@ -639,19 +646,6 @@ export class SupabaseAdminProcurementRepository implements IAdminProcurementRepo
     }
 
     return map;
-  }
-
-  private mergeLiveAndLocalOffers(
-    live: LiveSearchOffer[],
-    local: LiveSearchOffer[],
-    maxResults: number,
-  ): LiveSearchOffer[] {
-    const merged = new Map<string, LiveSearchOffer>();
-    for (const o of live) merged.set(o.external_product_id, o);
-    for (const o of local) {
-      if (!merged.has(o.external_product_id)) merged.set(o.external_product_id, o);
-    }
-    return [...merged.values()].slice(0, maxResults);
   }
 
   private scheduleLiveSearchCatalogUpsert(
