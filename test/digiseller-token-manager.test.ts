@@ -168,6 +168,44 @@ describe('DigisellerTokenManager', () => {
     expect(body.sign).toMatch(/^[0-9a-f]{64}$/);
   });
 
+  // ─── Correct sign formula: sha256(api_key + timestamp) ───────────
+
+  it('computes sign as sha256(api_key + timestamp) — single hash per Digiseller docs', async () => {
+    const { createHash } = await import('node:crypto');
+    const freshToken = 'sign-check-token';
+    const validThru = new Date(Date.now() + 3600 * 1000).toISOString();
+
+    globalFetch = mockFetch({ retval: 0, token: freshToken, valid_thru: validThru });
+    vi.stubGlobal('fetch', globalFetch);
+
+    const manager = new DigisellerTokenManager({
+      apiKey: API_KEY,
+      sellerId: SELLER_ID,
+      apiLoginUrl: API_LOGIN_URL,
+    });
+
+    await manager.getToken();
+
+    const [, init] = globalFetch.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string) as {
+      seller_id: number;
+      timestamp: number;
+      sign: string;
+    };
+
+    const expectedSign = createHash('sha256')
+      .update(API_KEY + String(body.timestamp))
+      .digest('hex');
+
+    expect(body.sign).toBe(expectedSign);
+
+    // Guard: ensure it does NOT match the double-hash formula
+    const doubleHashSign = createHash('sha256')
+      .update(createHash('sha256').update(API_KEY).digest('hex') + String(body.timestamp))
+      .digest('hex');
+    expect(body.sign).not.toBe(doubleHashSign);
+  });
+
   // ─── Concurrent callers share one refresh ────────────────────────
 
   it('coalesces concurrent getToken calls into a single apilogin request', async () => {

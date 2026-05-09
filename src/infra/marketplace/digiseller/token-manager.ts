@@ -1,13 +1,14 @@
 /**
  * DigisellerTokenManager
  *
- * Digiseller uses a short-lived session token (valid ~1 hour) obtained by
+ * Digiseller uses a short-lived session token (valid ~2 hours) obtained by
  * POST /api/apilogin with a SHA-256 signature:
  *
- *   credsHash = sha256(api_key)           — computed once, stored in DB cache
- *   sign      = sha256(credsHash + timestamp_seconds)
+ *   sign = sha256(api_key + timestamp_seconds)   — single-hash per Digiseller docs
  *   POST /api/apilogin { seller_id, timestamp, sign }
  *   → { retval: 0, token: "<session_token>", valid_thru: "<ISO>" }
+ *
+ * Reference: https://my.digiseller.com/inside/api_general.asp#token
  *
  * The session token is then appended to every API call as `?token=<session_token>`.
  *
@@ -50,18 +51,20 @@ interface ApiLoginResponse {
 }
 
 export class DigisellerTokenManager {
+  private readonly apiKey: string;
   private readonly sellerId: number;
   private readonly apiLoginUrl: string;
   private readonly preemptiveRefreshMs: number;
   private readonly onTokenRefreshed?: (entry: DigisellerCachedToken) => void;
 
-  /** sha256(api_key) — computed once, stable for a given api_key */
+  /** sha256(api_key) — stored as a credential fingerprint in the DB cache entry */
   private readonly credsHash: string;
 
   private cached: DigisellerCachedToken | null;
   private refreshPromise: Promise<DigisellerCachedToken> | null = null;
 
   constructor(opts: DigisellerTokenManagerOptions) {
+    this.apiKey = opts.apiKey;
     this.sellerId = opts.sellerId;
     this.apiLoginUrl = opts.apiLoginUrl;
     this.preemptiveRefreshMs = opts.preemptiveRefreshMs ?? DEFAULT_PREEMPTIVE_REFRESH_MS;
@@ -102,7 +105,8 @@ export class DigisellerTokenManager {
 
   private async refresh(): Promise<DigisellerCachedToken> {
     const timestamp = Math.floor(Date.now() / 1000);
-    const sign = sha256hex(this.credsHash + String(timestamp));
+    // Digiseller sign formula: sha256(api_key + timestamp) — single hash per official docs
+    const sign = sha256hex(this.apiKey + String(timestamp));
 
     logger.info('Digiseller apilogin: requesting fresh session token', {
       sellerId: this.sellerId,

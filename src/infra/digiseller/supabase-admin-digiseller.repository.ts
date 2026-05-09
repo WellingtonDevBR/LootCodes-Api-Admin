@@ -10,6 +10,7 @@ import { createHash } from 'node:crypto';
 import { TOKENS } from '../../di/tokens.js';
 import type { IDatabase } from '../../core/ports/database.port.js';
 import type { IAdminDigisellerRepository } from '../../core/ports/admin-digiseller-repository.port.js';
+import { resolveProviderSecrets } from '../marketplace/resolve-provider-secrets.js';
 import type {
   DigisellerReconcileProfitDto,
   DigisellerReconcileProfitResult,
@@ -384,10 +385,9 @@ export class SupabaseAdminDigisellerRepository implements IAdminDigisellerReposi
   ): Promise<{ token: string; baseUrl: string }> {
     const account = await this.db.queryOne<{
       api_profile: Record<string, unknown> | null;
-      provider_secrets_ref: Record<string, string> | null;
       cached_token: { accessToken: string; expiresAt: number } | null;
     }>('provider_accounts', {
-      select: 'api_profile, provider_secrets_ref, cached_token',
+      select: 'api_profile, cached_token',
       eq: [['id', providerAccountId]],
       single: true,
     });
@@ -401,7 +401,7 @@ export class SupabaseAdminDigisellerRepository implements IAdminDigisellerReposi
       return { token: account.cached_token.accessToken, baseUrl };
     }
 
-    const secrets = (account.provider_secrets_ref ?? {}) as Record<string, string>;
+    const secrets = await resolveProviderSecrets(this.db, providerAccountId);
     const sellerId = secrets['DIGISELLER_SELLER_ID'];
     const apiKey = secrets['DIGISELLER_API_KEY'];
     if (!sellerId || !apiKey) {
@@ -410,6 +410,7 @@ export class SupabaseAdminDigisellerRepository implements IAdminDigisellerReposi
 
     const tokenEndpoint = profile['token_endpoint'] ?? `${baseUrl}/api/apilogin`;
     const timestamp = Math.floor(Date.now() / 1000);
+    // Digiseller sign formula: sha256(api_key + timestamp) — single hash per official docs
     const sign = createHash('sha256').update(apiKey + String(timestamp)).digest('hex');
 
     const resp = await fetch(tokenEndpoint, {
