@@ -617,7 +617,12 @@ export class SellerKeyOperationsService implements ISellerKeyOperationsPort {
         p_restockable_states: SellerKeyOperationsService.RESTOCKABLE_KEY_STATES,
       });
       keysRestocked = Array.isArray(restocked) ? restocked.length : 0;
-    } catch {
+    } catch (batchErr) {
+      logger.warn(
+        'batch_restock_seller_keys failed; falling back to per-key restock_seller_key',
+        batchErr as Error,
+        { reservationId, keyCount: productKeyIds.length },
+      );
       for (const keyId of productKeyIds) {
         try {
           const result = await this.db.rpc<{ success: boolean }>('restock_seller_key', {
@@ -625,8 +630,8 @@ export class SellerKeyOperationsService implements ISellerKeyOperationsPort {
             p_restockable_states: SellerKeyOperationsService.RESTOCKABLE_KEY_STATES,
           });
           if (result?.success) keysRestocked++;
-        } catch {
-          logger.warn('Failed to restock key', { keyId, reservationId });
+        } catch (perKeyErr) {
+          logger.warn('Failed to restock key', perKeyErr as Error, { keyId, reservationId });
         }
       }
     }
