@@ -105,10 +105,25 @@ export class SupabaseAdminAlertsRepository implements IAdminAlertsRepository {
   }
 
   async syncSellerListingPausedAlerts(): Promise<SyncSellerListingPausedAlertsResult> {
-    const pausedListings = await this.db.queryAll<PausedListingRow>('seller_listings', {
-      select: 'id, external_listing_id, status, error_message, reservation_consecutive_failures, provider_code, variant_id',
+    const rawListings = await this.db.queryAll<RawPausedListingRow>('seller_listings', {
+      select: 'id, external_listing_id, status, error_message, reservation_consecutive_failures, provider_account_id, variant_id',
       in: [['status', PAUSED_STATES]],
     });
+
+    // Resolve provider_code via provider_accounts (seller_listings has no provider_code column)
+    const accountIds = [...new Set(rawListings.map((r) => r.provider_account_id).filter(Boolean))];
+    const providerAccounts = accountIds.length
+      ? await this.db.queryAll<{ id: string; provider_code: string }>('provider_accounts', {
+          select: 'id, provider_code',
+          in: [['id', accountIds]],
+        })
+      : [];
+    const providerCodeById = new Map(providerAccounts.map((a) => [a.id, a.provider_code]));
+
+    const pausedListings: PausedListingRow[] = rawListings.map((r) => ({
+      ...r,
+      provider_code: providerCodeById.get(r.provider_account_id) ?? null,
+    }));
 
     const openAlerts = await this.db.queryAll<OpenSellerPausedAlertRow>('admin_alerts', {
       select: 'id, metadata',
@@ -165,14 +180,18 @@ const PAUSED_STATES: string[] = ['paused', 'failed', 'error'];
 /** Reservation circuit-breaker tripped at this consecutive-failure count → escalate severity. */
 const CRITICAL_RESERVATION_FAILURE_FLOOR = 2;
 
-interface PausedListingRow {
+interface RawPausedListingRow {
   readonly id: string;
   readonly external_listing_id: string | null;
   readonly status: string;
   readonly error_message: string | null;
   readonly reservation_consecutive_failures: number | null;
-  readonly provider_code: string | null;
+  readonly provider_account_id: string;
   readonly variant_id: string;
+}
+
+interface PausedListingRow extends Omit<RawPausedListingRow, 'provider_account_id'> {
+  readonly provider_code: string | null;
 }
 
 interface OpenSellerPausedAlertRow {
