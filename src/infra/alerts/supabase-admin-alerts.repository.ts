@@ -222,6 +222,6 @@ function buildSellerListingPausedAlert(listing: PausedListingRow): Record<string
       reservationConsecutiveFailures: consecutive,
     },
     requires_action: true,
-    priority: severity === 'critical' ? 90 : 60,
+    priority: severity === 'critical' ? 1 : 2,
   };
 }
