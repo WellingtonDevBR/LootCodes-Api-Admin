@@ -69,6 +69,7 @@ export const TOKENS = {
   SellerCostBasisService: Symbol.for('SellerCostBasisService'),
   SellerStockSyncService: Symbol.for('ISellerStockSyncService'),
   ProcurementDeclaredStockReconcileService: Symbol.for('IProcurementDeclaredStockReconcileService'),
+  BuyerOfferSnapshotSyncService: Symbol.for('IBuyerOfferSnapshotSyncService'),
 
   // Platform-wide runtime settings (read by orchestrators / cron)
   PlatformSettingsRepository: Symbol.for('IPlatformSettingsPort'),

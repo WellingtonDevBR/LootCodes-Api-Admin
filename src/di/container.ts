@@ -62,6 +62,7 @@ import { SellerPriceIntelligenceService } from '../infra/seller/pricing/seller-p
 import { SellerCostBasisService } from '../infra/seller/pricing/seller-cost-basis.service.js';
 import { SellerStockSyncService } from '../infra/seller/pricing/seller-stock-sync.service.js';
 import { ProcurementDeclaredStockReconcileService } from '../infra/seller/procurement-declared-stock-reconcile.service.js';
+import { BuyerOfferSnapshotSyncService } from '../infra/procurement/buyer-offer-snapshot-sync.service.js';
 import { SupabasePlatformSettingsRepository } from '../infra/platform-settings/supabase-platform-settings.repository.js';
 import { SupabaseAdminOpportunitiesRepository } from '../infra/opportunities/supabase-admin-opportunities.repository.js';
 import { SupabaseAdminAlertsRepository } from '../infra/alerts/supabase-admin-alerts.repository.js';
@@ -736,6 +737,9 @@ container.register(TOKENS.SellerAutoPricingService, { useClass: SellerAutoPricin
 container.register(TOKENS.SellerStockSyncService, { useClass: SellerStockSyncService });
 container.register(TOKENS.ProcurementDeclaredStockReconcileService, {
   useClass: ProcurementDeclaredStockReconcileService,
+});
+container.register(TOKENS.BuyerOfferSnapshotSyncService, {
+  useClass: BuyerOfferSnapshotSyncService,
 });
 container.register(TOKENS.PlatformSettingsRepository, { useClass: SupabasePlatformSettingsRepository });
 

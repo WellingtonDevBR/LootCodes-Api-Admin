@@ -2,7 +2,8 @@ import * as Sentry from '@sentry/node';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { container } from '../../di/container.js';
-import { UC_TOKENS } from '../../di/tokens.js';
+import { TOKENS, UC_TOKENS } from '../../di/tokens.js';
+import type { IBuyerOfferSnapshotSyncService } from '../../core/ports/buyer-offer-snapshot-sync.port.js';
 import type { ReconcileSellerListingsUseCase } from '../../core/use-cases/seller/reconcile-seller-listings.use-case.js';
 import {
   RECONCILE_PHASES,
@@ -215,6 +216,43 @@ export async function internalCronRoutes(app: FastifyInstance): Promise<void> {
           logger.error('Settle pending referrals cron failed', error, { requestId, batchSize });
         });
         return reply.code(500).send({ error: 'settle_pending_referrals_failed', message: error.message });
+      }
+    },
+  );
+
+  /**
+   * POST /internal/cron/sync-buyer-catalog
+   *
+   * Fetches live quotes from all active buyer providers (currently Bamboo) and
+   * refreshes `provider_variant_offers` in place. Replaces the deprecated
+   * Supabase `provider-catalog-sync` pg_cron job.
+   *
+   * Schedule this endpoint from your external cron runner at whatever cadence
+   * you need (recommended: every 5 minutes, right before reconcile-seller-listings).
+   * No body required.
+   */
+  app.post(
+    '/sync-buyer-catalog',
+    { preHandler: [procurementCronSecretGuard] },
+    async (request, reply) => {
+      const requestId = resolveRequestId(request, 'cron-sync-buyer-catalog');
+      logger.info('Sync buyer catalog cron invoked', { requestId });
+
+      try {
+        const svc = container.resolve<IBuyerOfferSnapshotSyncService>(
+          TOKENS.BuyerOfferSnapshotSyncService,
+        );
+        const result = await svc.syncAll(requestId);
+        logger.info('Sync buyer catalog cron completed', { requestId, ...result });
+        return reply.send(result);
+      } catch (err) {
+        const error = err instanceof Error ? err : new Error(String(err));
+        Sentry.withScope((scope) => {
+          scope.setTag('cron.job', 'sync-buyer-catalog');
+          scope.setContext('cron', { requestId });
+          logger.error('Sync buyer catalog cron failed', error, { requestId });
+        });
+        return reply.code(500).send({ error: 'sync_buyer_catalog_failed', message: error.message });
       }
     },
   );

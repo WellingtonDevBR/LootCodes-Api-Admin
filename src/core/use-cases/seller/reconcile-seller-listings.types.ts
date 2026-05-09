@@ -8,6 +8,12 @@ export const RECONCILE_PHASES = [
   'expire-reservations',
   'cost-basis',
   'pricing',
+  /**
+   * Fetches live quotes from Bamboo (and future buyer providers) and refreshes
+   * `provider_variant_offers` before the declared-stock phase reads it.
+   * Replaces the deprecated Supabase `provider-catalog-sync` pg_cron job.
+   */
+  'sync-buyer-catalog',
   'declared-stock',
   'remote-stock',
   /**

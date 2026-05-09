@@ -1,13 +1,14 @@
 /**
  * Single orchestrated cron entry point for seller-side maintenance.
  *
- * Runs six phases per request, in order:
+ * Runs seven phases per request, in order:
  *   1. expire-reservations    — release stale `seller_stock_reservations`
  *   2. cost-basis             — refresh `seller_listings.cost_basis_cents`
  *   3. pricing                — recompute prices (manual + strategy + smart) and push to marketplaces
- *   4. declared-stock         — reconcile declared-stock target and push to marketplaces
- *   5. remote-stock           — pull remote stock for `auto_sync_stock=true` listings
- *   6. paused-listing-alerts  — sync `admin_alerts` of type `seller_listing_paused` so the CRM
+ *   4. sync-buyer-catalog     — fetch live quotes from Bamboo, refresh `provider_variant_offers`
+ *   5. declared-stock         — reconcile declared-stock target and push to marketplaces
+ *   6. remote-stock           — pull remote stock for `auto_sync_stock=true` listings
+ *   7. paused-listing-alerts  — sync `admin_alerts` of type `seller_listing_paused` so the CRM
  *                               surfaces every paused/failed listing as an actionable alert
  *
  * Pauses entirely when `platform_settings.fulfillment_mode = 'hold_all'`.
@@ -22,6 +23,7 @@ import type {
   ISellerStockSyncService,
 } from '../../ports/seller-pricing.port.js';
 import type { IProcurementDeclaredStockReconcileService } from '../../ports/procurement-declared-stock-reconcile.port.js';
+import type { IBuyerOfferSnapshotSyncService } from '../../ports/buyer-offer-snapshot-sync.port.js';
 import { ExpireReservationsUseCase } from './expire-reservations.use-case.js';
 import { SyncSellerListingPausedAlertsUseCase } from './sync-seller-listing-paused-alerts.use-case.js';
 import {
@@ -46,6 +48,8 @@ export class ReconcileSellerListingsUseCase {
     private readonly declaredStock: IProcurementDeclaredStockReconcileService,
     @inject(TOKENS.SellerStockSyncService)
     private readonly stockSync: ISellerStockSyncService,
+    @inject(TOKENS.BuyerOfferSnapshotSyncService)
+    private readonly buyerCatalogSync: IBuyerOfferSnapshotSyncService,
     @inject(UC_TOKENS.ExpireReservations)
     private readonly expireReservations: ExpireReservationsUseCase,
     @inject(UC_TOKENS.SyncSellerListingPausedAlerts)
@@ -125,6 +129,8 @@ export class ReconcileSellerListingsUseCase {
         return this.autoPricing.refreshAllCostBases(requestId);
       case 'pricing':
         return this.autoPricing.refreshAllPrices(requestId);
+      case 'sync-buyer-catalog':
+        return this.buyerCatalogSync.syncAll(requestId);
       case 'declared-stock':
         return this.declaredStock.execute(requestId, {
           variant_ids: dto.variant_ids,
