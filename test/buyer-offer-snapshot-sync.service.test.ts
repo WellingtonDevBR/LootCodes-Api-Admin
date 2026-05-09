@@ -178,7 +178,7 @@ describe('BuyerOfferSnapshotSyncService.syncAll', () => {
   it('skips unhealthy Bamboo accounts', async () => {
     const offer = makeBambooOffer();
     const account = makeBambooAccount({ health_status: 'degraded' });
-    const { db, update } = buildDb([offer], [account]);
+    const { db } = buildDb([offer], [account]);
 
     const result = await buildService(db).syncAll('req-unhealthy');
 

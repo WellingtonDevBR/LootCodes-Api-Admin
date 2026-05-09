@@ -18,7 +18,6 @@ import { createLogger } from '../../shared/logger.js';
 
 const logger = createLogger('cron-scheduler');
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 export async function registerCronJobs(_app: FastifyInstance): Promise<void> {
   logger.info(
     'In-process cron registry is empty — all jobs are triggered by AWS EventBridge Scheduler via POST /internal/cron/*',

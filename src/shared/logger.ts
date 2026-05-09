@@ -53,7 +53,6 @@ class Logger {
   warn(message: string, error: Error | unknown, context?: LogContext): void;
   warn(message: string, second?: Error | unknown | LogContext, third?: LogContext) {
     const details = this.mergeErrorContext(second, third);
-    // eslint-disable-next-line no-console
     console.warn(this.formatJson('warn', message, details));
     this.forwardToSentry('warning', message, second, third, details);
   }
@@ -62,7 +61,6 @@ class Logger {
   error(message: string, error: Error | unknown, context?: LogContext): void;
   error(message: string, second?: Error | unknown | LogContext, third?: LogContext) {
     const details = this.mergeErrorContext(second, third);
-    // eslint-disable-next-line no-console
     console.error(this.formatJson('error', message, details));
     this.forwardToSentry('error', message, second, third, details);
   }
