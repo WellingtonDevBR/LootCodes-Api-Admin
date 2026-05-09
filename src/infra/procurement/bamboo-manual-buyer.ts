@@ -340,7 +340,7 @@ export class BambooManualBuyer {
       }
       checkoutAccountId = resolved.accountId;
       if (resolved.resolutionNote) {
-        logger.warn(resolved.resolutionNote, {
+        logger.info(resolved.resolutionNote, {
           configuredAccountId: this.accountId,
           checkoutAccountId,
         });
