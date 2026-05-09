@@ -566,6 +566,27 @@ describe('CreditAwareDeclaredStockSelectorUseCase', () => {
 
   // ─── 12. prioritize_quote_sync tie-breaker ──────────────────────
 
+  it('declares 0 units when provider explicitly reports available_quantity=0 (no JIT override)', async () => {
+    const offers: DeclaredStockOfferRow[] = [
+      offerRow({
+        provider_code: 'bamboo',
+        provider_account_id: 'acct-bamboo',
+        last_price_cents: 500,
+        currency: 'USD',
+        available_quantity: 0,
+      }),
+    ];
+    const snapshot = snapshotOf([['acct-bamboo', [['USD', 100_000]]]]);
+
+    const out = await uc.execute({ offers, snapshot, config: baseConfig });
+
+    expect(out.kind).toBe('declare');
+    if (out.kind === 'declare') {
+      // Provider explicitly has 0 stock — must NOT JIT-assume 1.
+      expect(out.declaredQty).toBe(0);
+    }
+  });
+
   it('uses prioritize_quote_sync as tie-breaker when USD prices match', async () => {
     const offers: DeclaredStockOfferRow[] = [
       offerRow({

@@ -280,8 +280,13 @@ function clampNonNegative(input: number | undefined): number {
 
 function capDeclaredQty(available: number | null): number {
   if (typeof available !== 'number' || !Number.isFinite(available)) {
+    // Unknown quantity (null) → assume JIT procurement can supply 1.
     return 1;
   }
-  if (available <= 0) return 1;
+  if (available <= 0) {
+    // Provider explicitly reported zero stock — do not JIT-assume 1.
+    // Declaring 0 lets the marketplace hide the listing until stock returns.
+    return 0;
+  }
   return Math.min(Math.trunc(available), MAX_PROCUREMENT_DECLARED_STOCK);
 }

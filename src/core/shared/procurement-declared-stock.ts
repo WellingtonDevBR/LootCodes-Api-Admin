@@ -21,13 +21,15 @@ export function compareProcurementOffers(a: ProcurementOfferSortRow, b: Procurem
 
 /**
  * Supplier-reported quantity tiers for declared-stock reconciliation:
- * prefer rows with known positive stock before cheapest/prioritized rows with unknown qty (null).
+ * - tier 2: provider has confirmed positive stock (best signal)
+ * - tier 1: quantity is null/unknown (JIT may still work)
+ * - tier 0: provider explicitly reported 0 — do not prefer this offer
  */
 function procurementQuantityConfidenceTier(row: ProcurementOfferSortRow): number {
   const q = row.available_quantity;
-  if (typeof q !== 'number' || !Number.isFinite(q)) return 0;
+  if (typeof q !== 'number' || !Number.isFinite(q)) return 1;
   if (q > 0) return 2;
-  return 1;
+  return 0;
 }
 
 /**
