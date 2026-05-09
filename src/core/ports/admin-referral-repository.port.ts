@@ -9,6 +9,7 @@ import type {
   InvalidateReferralResult,
   PayLeaderboardPrizesDto,
   PayLeaderboardPrizesResult,
+  SettlePendingBatchResult,
 } from '../use-cases/referrals/referral.types.js';
 
 export interface IAdminReferralRepository {
@@ -17,4 +18,7 @@ export interface IAdminReferralRepository {
   resolveDispute(dto: ResolveReferralDisputeDto): Promise<ResolveReferralDisputeResult>;
   invalidate(dto: InvalidateReferralDto): Promise<InvalidateReferralResult>;
   payPrizes(dto: PayLeaderboardPrizesDto): Promise<PayLeaderboardPrizesResult>;
+
+  // Cron operations
+  settlePendingBatch(batchSize: number): Promise<SettlePendingBatchResult>;
 }

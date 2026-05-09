@@ -11,6 +11,20 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 export type EnebaCallbackAction = 'RESERVE' | 'PROVIDE' | 'CANCEL';
 
+/**
+ * Eneba key-replacement RESERVE: sent when a buyer reports a faulty key.
+ * Flat format (no auctions array) — auctionId is the external_listing_id,
+ * keyId is Eneba's internal reference to the previously-delivered key.
+ */
+export interface EnebaKeyReplacementPayload {
+  action: 'RESERVE';
+  isReplacement: true;
+  orderId: string;
+  originalOrderId: string | null;
+  auctionId: string;
+  enebaKeyId: string;
+}
+
 export interface EnebaCallbackMoney {
   amount: string | number;
   currency: string;
@@ -27,13 +41,17 @@ export interface EnebaCallbackAuction {
   extraInfo?: string;
 }
 
-export interface EnebaCallbackPayload {
+export interface EnebaStandardCallbackPayload {
   action: EnebaCallbackAction;
+  isReplacement?: false;
   orderId: string;
   originalOrderId: string | null;
   auctions?: EnebaCallbackAuction[];
   wholesale?: boolean;
 }
+
+/** Discriminated union — check `isReplacement` to narrow the type. */
+export type EnebaCallbackPayload = EnebaStandardCallbackPayload | EnebaKeyReplacementPayload;
 
 // ─── Response Types ──────────────────────────────────────────────────
 
@@ -72,6 +90,8 @@ export class ParseError extends Error {
 // ─── Parser ──────────────────────────────────────────────────────────
 
 export function parseCallbackPayload(body: unknown): EnebaCallbackPayload {
+  // Returns EnebaKeyReplacementPayload for flat replacement RESERVE,
+  // or EnebaStandardCallbackPayload for normal RESERVE/PROVIDE/CANCEL.
   if (!body || typeof body !== 'object') {
     throw new ParseError('Invalid request body');
   }
@@ -95,6 +115,20 @@ export function parseCallbackPayload(body: unknown): EnebaCallbackPayload {
   let auctions: EnebaCallbackAuction[] | undefined;
   if (action === 'RESERVE') {
     if (!Array.isArray(raw.auctions) || raw.auctions.length === 0) {
+      // Flat key-replacement format: auctionId (external_listing_id) + keyId (Eneba's key ref)
+      if (
+        typeof raw.auctionId === 'string' && UUID_RE.test(raw.auctionId) &&
+        typeof raw.keyId === 'string'
+      ) {
+        return {
+          action: 'RESERVE',
+          isReplacement: true,
+          orderId,
+          originalOrderId,
+          auctionId: raw.auctionId,
+          enebaKeyId: raw.keyId,
+        } satisfies EnebaKeyReplacementPayload;
+      }
       throw new ParseError('RESERVE requires non-empty auctions array');
     }
     auctions = raw.auctions.map(parseAuction);
@@ -102,7 +136,7 @@ export function parseCallbackPayload(body: unknown): EnebaCallbackPayload {
 
   const wholesale = typeof raw.wholesale === 'boolean' ? raw.wholesale : undefined;
 
-  return { action, orderId, originalOrderId, auctions, wholesale };
+  return { action, orderId, originalOrderId, auctions, wholesale } satisfies EnebaStandardCallbackPayload;
 }
 
 // ─── Internal helpers ────────────────────────────────────────────────

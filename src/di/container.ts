@@ -187,6 +187,8 @@ import { CreatePriceMatchBlockedDomainUseCase } from '../core/use-cases/price-ma
 import { UpdatePriceMatchBlockedDomainUseCase } from '../core/use-cases/price-match/update-price-match-blocked-domain.use-case.js';
 import { GetPriceMatchConfigUseCase } from '../core/use-cases/price-match/get-price-match-config.use-case.js';
 import { UpdatePriceMatchConfigUseCase } from '../core/use-cases/price-match/update-price-match-config.use-case.js';
+import { ExpirePriceMatchClaimsUseCase } from '../core/use-cases/price-match/expire-price-match-claims.use-case.js';
+import { ProcessPriceDropRefundsUseCase } from '../core/use-cases/price-match/process-price-drop-refunds.use-case.js';
 
 // Use cases — Referrals
 import { ListReferralsUseCase } from '../core/use-cases/referrals/list-referrals.use-case.js';
@@ -194,6 +196,7 @@ import { ListReferralLeaderboardUseCase } from '../core/use-cases/referrals/list
 import { ResolveReferralDisputeUseCase } from '../core/use-cases/referrals/resolve-referral-dispute.use-case.js';
 import { InvalidateReferralUseCase } from '../core/use-cases/referrals/invalidate-referral.use-case.js';
 import { PayLeaderboardPrizesUseCase } from '../core/use-cases/referrals/pay-leaderboard-prizes.use-case.js';
+import { SettlePendingReferralsUseCase } from '../core/use-cases/referrals/settle-pending-referrals.use-case.js';
 
 // Use cases — Reviews
 import { ListTrustpilotReviewClaimsUseCase } from '../core/use-cases/reviews/list-trustpilot-review-claims.use-case.js';
@@ -313,6 +316,7 @@ import { SyncSellerListingPausedAlertsUseCase } from '../core/use-cases/seller/s
 import { HandleDeclaredStockReserveUseCase } from '../core/use-cases/seller-webhook/eneba/handle-declared-stock-reserve.use-case.js';
 import { HandleDeclaredStockProvideUseCase } from '../core/use-cases/seller-webhook/eneba/handle-declared-stock-provide.use-case.js';
 import { HandleDeclaredStockCancelUseCase } from '../core/use-cases/seller-webhook/eneba/handle-declared-stock-cancel.use-case.js';
+import { HandleEnebaKeyReplacementReserveUseCase } from '../core/use-cases/seller-webhook/eneba/handle-eneba-key-replacement-reserve.use-case.js';
 import { HandleKeyUploadOrderUseCase } from '../core/use-cases/seller-webhook/handle-key-upload-order.use-case.js';
 import { HandleMarketplaceRefundUseCase } from '../core/use-cases/seller-webhook/handle-marketplace-refund.use-case.js';
 import { HandleListingDeactivationUseCase } from '../core/use-cases/seller-webhook/handle-listing-deactivation.use-case.js';
@@ -562,6 +566,8 @@ container.register(UC_TOKENS.CreatePriceMatchBlockedDomain, { useClass: CreatePr
 container.register(UC_TOKENS.UpdatePriceMatchBlockedDomain, { useClass: UpdatePriceMatchBlockedDomainUseCase });
 container.register(UC_TOKENS.GetPriceMatchConfig, { useClass: GetPriceMatchConfigUseCase });
 container.register(UC_TOKENS.UpdatePriceMatchConfig, { useClass: UpdatePriceMatchConfigUseCase });
+container.register(UC_TOKENS.ExpirePriceMatchClaims, { useClass: ExpirePriceMatchClaimsUseCase });
+container.register(UC_TOKENS.ProcessPriceDropRefunds, { useClass: ProcessPriceDropRefundsUseCase });
 
 // Use cases — Referrals
 container.register(UC_TOKENS.ListReferrals, { useClass: ListReferralsUseCase });
@@ -569,6 +575,7 @@ container.register(UC_TOKENS.ListReferralLeaderboard, { useClass: ListReferralLe
 container.register(UC_TOKENS.ResolveReferralDispute, { useClass: ResolveReferralDisputeUseCase });
 container.register(UC_TOKENS.InvalidateReferral, { useClass: InvalidateReferralUseCase });
 container.register(UC_TOKENS.PayLeaderboardPrizes, { useClass: PayLeaderboardPrizesUseCase });
+container.register(UC_TOKENS.SettlePendingReferrals, { useClass: SettlePendingReferralsUseCase });
 
 // Use cases — Reviews
 container.register(UC_TOKENS.ListTrustpilotReviewClaims, { useClass: ListTrustpilotReviewClaimsUseCase });
@@ -733,6 +740,7 @@ container.register(TOKENS.PlatformSettingsRepository, { useClass: SupabasePlatfo
 container.register(UC_TOKENS.HandleDeclaredStockReserve, { useClass: HandleDeclaredStockReserveUseCase });
 container.register(UC_TOKENS.HandleDeclaredStockProvide, { useClass: HandleDeclaredStockProvideUseCase });
 container.register(UC_TOKENS.HandleDeclaredStockCancel, { useClass: HandleDeclaredStockCancelUseCase });
+container.register(UC_TOKENS.HandleEnebaKeyReplacementReserve, { useClass: HandleEnebaKeyReplacementReserveUseCase });
 container.register(UC_TOKENS.HandleKeyUploadOrder, { useClass: HandleKeyUploadOrderUseCase });
 container.register(UC_TOKENS.HandleMarketplaceRefund, { useClass: HandleMarketplaceRefundUseCase });
 container.register(UC_TOKENS.HandleListingDeactivation, { useClass: HandleListingDeactivationUseCase });

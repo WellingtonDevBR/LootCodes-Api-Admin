@@ -213,6 +213,8 @@ export const UC_TOKENS = {
   UpdatePriceMatchBlockedDomain: Symbol.for('UpdatePriceMatchBlockedDomainUseCase'),
   GetPriceMatchConfig: Symbol.for('GetPriceMatchConfigUseCase'),
   UpdatePriceMatchConfig: Symbol.for('UpdatePriceMatchConfigUseCase'),
+  ExpirePriceMatchClaims: Symbol.for('ExpirePriceMatchClaimsUseCase'),
+  ProcessPriceDropRefunds: Symbol.for('ProcessPriceDropRefundsUseCase'),
 
   // Referrals
   ListReferrals: Symbol.for('ListReferralsUseCase'),
@@ -220,6 +222,7 @@ export const UC_TOKENS = {
   ResolveReferralDispute: Symbol.for('ResolveReferralDisputeUseCase'),
   InvalidateReferral: Symbol.for('InvalidateReferralUseCase'),
   PayLeaderboardPrizes: Symbol.for('PayLeaderboardPrizesUseCase'),
+  SettlePendingReferrals: Symbol.for('SettlePendingReferralsUseCase'),
 
   // Reviews
   ListTrustpilotReviewClaims: Symbol.for('ListTrustpilotReviewClaimsUseCase'),
@@ -348,6 +351,7 @@ export const UC_TOKENS = {
   HandleDeclaredStockReserve: Symbol.for('HandleDeclaredStockReserveUseCase'),
   HandleDeclaredStockProvide: Symbol.for('HandleDeclaredStockProvideUseCase'),
   HandleDeclaredStockCancel: Symbol.for('HandleDeclaredStockCancelUseCase'),
+  HandleEnebaKeyReplacementReserve: Symbol.for('HandleEnebaKeyReplacementReserveUseCase'),
   HandleKeyUploadOrder: Symbol.for('HandleKeyUploadOrderUseCase'),
   HandleMarketplaceRefund: Symbol.for('HandleMarketplaceRefundUseCase'),
   HandleListingDeactivation: Symbol.for('HandleListingDeactivationUseCase'),

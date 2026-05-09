@@ -180,3 +180,13 @@ export interface UpdatePriceMatchConfigDto {
   config: Record<string, unknown>;
   admin_id: string;
 }
+
+// ── Cron use-case results ─────────────────────────────────────────────────
+
+export interface ExpirePriceMatchClaimsResult {
+  expiredCount: number;
+}
+
+export interface ProcessPriceDropRefundsResult {
+  grantedCount: number;
+}

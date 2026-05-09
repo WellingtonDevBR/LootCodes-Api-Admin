@@ -15,6 +15,7 @@ import type {
   InvalidateReferralResult,
   PayLeaderboardPrizesDto,
   PayLeaderboardPrizesResult,
+  SettlePendingBatchResult,
 } from '../../core/use-cases/referrals/referral.types.js';
 import { createLogger } from '../../shared/logger.js';
 
@@ -213,6 +214,26 @@ export class SupabaseAdminReferralRepository implements IAdminReferralRepository
       period_key: dto.period_key,
       granted_count: result.granted_count ?? 0,
       granted_total_cents: result.granted_total_cents ?? 0,
+    };
+  }
+
+  // ── Cron operations ──────────────────────────────────────────────────────
+
+  async settlePendingBatch(batchSize: number): Promise<SettlePendingBatchResult> {
+    const raw = await this.db.rpc<{
+      attempted?: number;
+      settled?: number;
+      still_pending?: number;
+      errors?: number;
+      min_age_hours?: number;
+    }>('referral_settle_retry_batch', { p_batch_size: batchSize });
+
+    return {
+      attempted: raw?.attempted ?? 0,
+      settled: raw?.settled ?? 0,
+      stillPending: raw?.still_pending ?? 0,
+      errors: raw?.errors ?? 0,
+      minAgeHours: raw?.min_age_hours ?? 0,
     };
   }
 }

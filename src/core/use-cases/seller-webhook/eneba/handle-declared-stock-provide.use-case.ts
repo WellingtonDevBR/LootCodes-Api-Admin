@@ -129,6 +129,7 @@ export class HandleDeclaredStockProvideUseCase {
           priceCents: grossPerUnit,
           currency: saleCurrency,
           marketplaceFinancialsSnapshot: meta.marketplaceFinancials,
+          isReplacement: meta.isReplacement ?? false,
         });
       } catch (orchestrationErr) {
         // Keys were already decrypted and returned to Eneba — success:true will still be sent.
@@ -211,12 +212,14 @@ export class HandleDeclaredStockProvideUseCase {
     auctionId?: string;
     price?: { amount: number; currency: string };
     marketplaceFinancials?: { gross_cents_per_unit?: number; currency?: string; [key: string]: unknown };
+    isReplacement?: boolean;
   } {
     return {
       auctionId: raw.auctionId as string | undefined,
       price: raw.price as { amount: number; currency: string } | undefined,
       marketplaceFinancials: raw.marketplaceFinancials as
         { gross_cents_per_unit?: number; currency?: string; [key: string]: unknown } | undefined,
+      isReplacement: raw.isReplacement === true,
     };
   }
 

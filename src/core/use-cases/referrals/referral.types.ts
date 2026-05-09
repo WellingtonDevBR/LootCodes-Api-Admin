@@ -104,3 +104,13 @@ export interface PayLeaderboardPrizesResult {
   granted_count: number;
   granted_total_cents: number;
 }
+
+// ── Cron use-case results ─────────────────────────────────────────────────
+
+export interface SettlePendingBatchResult {
+  attempted: number;
+  settled: number;
+  stillPending: number;
+  errors: number;
+  minAgeHours: number;
+}

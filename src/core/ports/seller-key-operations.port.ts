@@ -53,6 +53,8 @@ export interface CompleteProvisionParams {
   currency: string;
   marketplaceFinancialsSnapshot?: Record<string, unknown>;
   buyerEmail?: string;
+  /** When true, suppresses marketplace_sale transaction — used for key replacements. */
+  isReplacement?: boolean;
 }
 
 export interface ReleaseKeysResult {

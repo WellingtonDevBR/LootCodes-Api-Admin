@@ -25,6 +25,8 @@ import type {
   UpdateBlockedDomainDto,
   PriceMatchConfigResult,
   UpdatePriceMatchConfigDto,
+  ExpirePriceMatchClaimsResult,
+  ProcessPriceDropRefundsResult,
 } from '../../core/use-cases/price-match/price-match.types.js';
 import { createLogger } from '../../shared/logger.js';
 
@@ -592,6 +594,18 @@ export class SupabaseAdminPriceMatchRepository implements IAdminPriceMatchReposi
     } catch (err: unknown) {
       logger.error('Failed to log admin action', { error: err instanceof Error ? err.message : String(err) });
     }
+  }
+
+  // ── Cron operations ──────────────────────────────────────────────────────
+
+  async expireStaleClaims(): Promise<ExpirePriceMatchClaimsResult> {
+    const expiredCount = await this.db.rpc<number>('expire_stale_price_match_claims');
+    return { expiredCount: expiredCount ?? 0 };
+  }
+
+  async processPriceDropRefunds(): Promise<ProcessPriceDropRefundsResult> {
+    const grantedCount = await this.db.rpc<number>('process_price_drop_refunds');
+    return { grantedCount: grantedCount ?? 0 };
   }
 
   private async emitDomainEvent(

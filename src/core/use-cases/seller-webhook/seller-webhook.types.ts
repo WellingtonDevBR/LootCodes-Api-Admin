@@ -58,6 +58,20 @@ export interface MarketplaceFinancialsRawWire {
   substitute_auction_fee_currency?: string;
 }
 
+// ─── Eneba Key Replacement Reserve ───────────────────────────────────
+
+export interface EnebaKeyReplacementReserveDto {
+  orderId: string;
+  originalOrderId: string | null;
+  /** external_listing_id from Eneba's flat RESERVE payload */
+  auctionId: string;
+  /** Eneba's internal reference to the previously-delivered key */
+  enebaKeyId: string;
+  providerCode: string;
+}
+
+export type EnebaKeyReplacementReserveResult = DeclaredStockReserveResult;
+
 export interface DeclaredStockReserveDto {
   orderId: string;
   originalOrderId: string | null;

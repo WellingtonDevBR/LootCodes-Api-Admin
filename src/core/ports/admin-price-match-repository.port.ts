@@ -18,6 +18,8 @@ import type {
   UpdateBlockedDomainDto,
   PriceMatchConfigResult,
   UpdatePriceMatchConfigDto,
+  ExpirePriceMatchClaimsResult,
+  ProcessPriceDropRefundsResult,
 } from '../use-cases/price-match/price-match.types.js';
 
 export interface IAdminPriceMatchRepository {
@@ -45,4 +47,8 @@ export interface IAdminPriceMatchRepository {
   // Config
   getConfig(): Promise<PriceMatchConfigResult>;
   updateConfig(dto: UpdatePriceMatchConfigDto): Promise<boolean>;
+
+  // Cron operations
+  expireStaleClaims(): Promise<ExpirePriceMatchClaimsResult>;
+  processPriceDropRefunds(): Promise<ProcessPriceDropRefundsResult>;
 }

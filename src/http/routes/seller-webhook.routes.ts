@@ -38,6 +38,7 @@ import type { IDatabase } from '../../core/ports/database.port.js';
 import type { HandleDeclaredStockReserveUseCase } from '../../core/use-cases/seller-webhook/eneba/handle-declared-stock-reserve.use-case.js';
 import type { HandleDeclaredStockProvideUseCase } from '../../core/use-cases/seller-webhook/eneba/handle-declared-stock-provide.use-case.js';
 import type { HandleDeclaredStockCancelUseCase } from '../../core/use-cases/seller-webhook/eneba/handle-declared-stock-cancel.use-case.js';
+import type { HandleEnebaKeyReplacementReserveUseCase } from '../../core/use-cases/seller-webhook/eneba/handle-eneba-key-replacement-reserve.use-case.js';
 import type { HandleDigisellerDeliveryUseCase } from '../../core/use-cases/seller-webhook/digiseller/handle-digiseller-delivery.use-case.js';
 import type { HandleDigisellerQuantityCheckUseCase } from '../../core/use-cases/seller-webhook/digiseller/handle-digiseller-quantity-check.use-case.js';
 import type { HandleG2AReservationUseCase } from '../../core/use-cases/seller-webhook/g2a/handle-g2a-reservation.use-case.js';
@@ -117,6 +118,21 @@ export async function sellerWebhookRoutes(app: FastifyInstance) {
         return reply.status(400).send({ error: err.message });
       }
       throw err;
+    }
+
+    // Key-replacement RESERVE: flat format with auctionId+keyId, no auctions array
+    if (parsed.isReplacement) {
+      const uc = container.resolve<HandleEnebaKeyReplacementReserveUseCase>(
+        UC_TOKENS.HandleEnebaKeyReplacementReserve,
+      );
+      const result = await uc.execute({
+        orderId: parsed.orderId,
+        originalOrderId: parsed.originalOrderId,
+        auctionId: parsed.auctionId,
+        enebaKeyId: parsed.enebaKeyId,
+        providerCode: 'eneba',
+      });
+      return reply.send(buildReservationResponse(result.orderId, result.success));
     }
 
     const { action, orderId, originalOrderId, auctions, wholesale } = parsed;

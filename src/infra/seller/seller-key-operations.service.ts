@@ -162,25 +162,34 @@ export class SellerKeyOperationsService implements ISellerKeyOperationsPort {
       reservationId, listingId, variantId, productId, providerCode,
       externalOrderId, keyIds, keysProvisionedCount, priceCents,
       feeCents, currency, marketplaceFinancialsSnapshot, buyerEmail,
+      isReplacement,
     } = params;
 
-    try {
-      await this.recordMarketplaceSale({
-        reservationId,
-        listingId,
-        variantId,
-        productId,
-        providerCode,
-        externalOrderId,
-        keyIds,
-        priceCents,
-        feeCents,
-        currency,
-        marketplaceFinancialsSnapshot,
-        buyerEmail,
+    if (isReplacement) {
+      // Key replacement: the original sale revenue was already written off during the
+      // replacement RESERVE. Skip marketplace_sale recording to avoid double-counting.
+      logger.info('Replacement PROVIDE: skipping marketplace_sale recording', {
+        reservationId, externalOrderId,
       });
-    } catch (err) {
-      logger.error('Failed to record marketplace sale', err as Error, { reservationId, externalOrderId });
+    } else {
+      try {
+        await this.recordMarketplaceSale({
+          reservationId,
+          listingId,
+          variantId,
+          productId,
+          providerCode,
+          externalOrderId,
+          keyIds,
+          priceCents,
+          feeCents,
+          currency,
+          marketplaceFinancialsSnapshot,
+          buyerEmail,
+        });
+      } catch (err) {
+        logger.error('Failed to record marketplace sale', err as Error, { reservationId, externalOrderId });
+      }
     }
 
     await this.events.emitSellerEvent({

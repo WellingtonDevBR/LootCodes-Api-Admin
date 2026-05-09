@@ -1,3 +1,4 @@
+import * as Sentry from '@sentry/node';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { container } from '../../di/container.js';
@@ -8,6 +9,9 @@ import {
   type ReconcileSellerListingsDto,
 } from '../../core/use-cases/seller/reconcile-seller-listings.types.js';
 import type { RecryptProductKeysBatchUseCase } from '../../core/use-cases/inventory/recrypt-product-keys-batch.use-case.js';
+import type { ExpirePriceMatchClaimsUseCase } from '../../core/use-cases/price-match/expire-price-match-claims.use-case.js';
+import type { ProcessPriceDropRefundsUseCase } from '../../core/use-cases/price-match/process-price-drop-refunds.use-case.js';
+import type { SettlePendingReferralsUseCase } from '../../core/use-cases/referrals/settle-pending-referrals.use-case.js';
 import { procurementCronSecretGuard } from '../middleware/procurement-cron-secret.guard.js';
 import { createLogger } from '../../shared/logger.js';
 
@@ -25,6 +29,12 @@ const reconcileBodySchema = z
 const recryptBodySchema = z
   .object({
     batch_size: z.number().int().min(1).max(500).optional(),
+  })
+  .strict();
+
+const settlePendingReferralsBodySchema = z
+  .object({
+    batch_size: z.number().int().min(1).max(1000).optional(),
   })
   .strict();
 
@@ -109,6 +119,102 @@ export async function internalCronRoutes(app: FastifyInstance): Promise<void> {
         const message = err instanceof Error ? err.message : String(err);
         logger.error('Reconcile seller-listings cron failed', err as Error, { requestId });
         return reply.code(500).send({ error: 'reconcile_failed', message });
+      }
+    },
+  );
+
+  app.post(
+    '/expire-price-match-claims',
+    { preHandler: [procurementCronSecretGuard] },
+    async (request, reply) => {
+      const requestId = resolveRequestId(request, 'cron-expire-price-match-claims');
+      logger.info('Expire price-match claims cron invoked', { requestId });
+
+      try {
+        const uc = container.resolve<ExpirePriceMatchClaimsUseCase>(
+          UC_TOKENS.ExpirePriceMatchClaims,
+        );
+        const result = await uc.execute();
+        logger.info('Expire price-match claims cron completed', { requestId, expiredCount: result.expiredCount });
+        return reply.send(result);
+      } catch (err) {
+        const error = err instanceof Error ? err : new Error(String(err));
+        Sentry.withScope((scope) => {
+          scope.setTag('cron.job', 'expire-price-match-claims');
+          scope.setContext('cron', { requestId, job: 'expire-price-match-claims' });
+          logger.error('Expire price-match claims cron failed', error, { requestId });
+        });
+        return reply.code(500).send({ error: 'expire_price_match_claims_failed', message: error.message });
+      }
+    },
+  );
+
+  app.post(
+    '/process-price-drop-refunds',
+    { preHandler: [procurementCronSecretGuard] },
+    async (request, reply) => {
+      const requestId = resolveRequestId(request, 'cron-process-price-drop-refunds');
+      logger.info('Process price-drop refunds cron invoked', { requestId });
+
+      try {
+        const uc = container.resolve<ProcessPriceDropRefundsUseCase>(
+          UC_TOKENS.ProcessPriceDropRefunds,
+        );
+        const result = await uc.execute();
+        logger.info('Process price-drop refunds cron completed', { requestId, grantedCount: result.grantedCount });
+        return reply.send(result);
+      } catch (err) {
+        const error = err instanceof Error ? err : new Error(String(err));
+        Sentry.withScope((scope) => {
+          scope.setTag('cron.job', 'process-price-drop-refunds');
+          scope.setContext('cron', { requestId, job: 'process-price-drop-refunds' });
+          logger.error('Process price-drop refunds cron failed', error, { requestId });
+        });
+        return reply.code(500).send({ error: 'process_price_drop_refunds_failed', message: error.message });
+      }
+    },
+  );
+
+  app.post(
+    '/settle-pending-referrals',
+    { preHandler: [procurementCronSecretGuard] },
+    async (request, reply) => {
+      const requestId = resolveRequestId(request, 'cron-settle-pending-referrals');
+
+      const parsed = settlePendingReferralsBodySchema.safeParse(request.body ?? {});
+      if (!parsed.success) {
+        const issues = parsed.error.issues.map((i) => ({
+          path: i.path.join('.') || '<root>',
+          message: i.message,
+        }));
+        logger.warn('Settle pending referrals cron rejected — invalid body', { requestId, issues });
+        return reply.code(400).send({ error: 'invalid_request_body', issues });
+      }
+
+      const batchSize = parsed.data.batch_size ?? 200;
+      logger.info('Settle pending referrals cron invoked', { requestId, batchSize });
+
+      try {
+        const uc = container.resolve<SettlePendingReferralsUseCase>(
+          UC_TOKENS.SettlePendingReferrals,
+        );
+        const result = await uc.execute({ batchSize });
+        logger.info('Settle pending referrals cron completed', {
+          requestId,
+          attempted: result.attempted,
+          settled: result.settled,
+          stillPending: result.stillPending,
+          errors: result.errors,
+        });
+        return reply.send(result);
+      } catch (err) {
+        const error = err instanceof Error ? err : new Error(String(err));
+        Sentry.withScope((scope) => {
+          scope.setTag('cron.job', 'settle-pending-referrals');
+          scope.setContext('cron', { requestId, job: 'settle-pending-referrals', batchSize });
+          logger.error('Settle pending referrals cron failed', error, { requestId, batchSize });
+        });
+        return reply.code(500).send({ error: 'settle_pending_referrals_failed', message: error.message });
       }
     },
   );
