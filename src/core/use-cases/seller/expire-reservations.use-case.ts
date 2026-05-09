@@ -1,6 +1,7 @@
 import { injectable, inject } from 'tsyringe';
 import { TOKENS } from '../../../di/tokens.js';
 import type { IDatabase } from '../../ports/database.port.js';
+import type { ISellerKeyOperationsPort } from '../../ports/seller-key-operations.port.js';
 import type { ExpireReservationsDto, ExpireReservationsResult } from './seller-listing.types.js';
 import { createLogger } from '../../../shared/logger.js';
 
@@ -12,6 +13,7 @@ const DEFAULT_MAX_AGE_MINUTES = 60;
 export class ExpireReservationsUseCase {
   constructor(
     @inject(TOKENS.Database) private db: IDatabase,
+    @inject(TOKENS.SellerKeyOperations) private keyOps: ISellerKeyOperationsPort,
   ) {}
 
   async execute(dto: ExpireReservationsDto): Promise<ExpireReservationsResult> {
@@ -31,9 +33,11 @@ export class ExpireReservationsUseCase {
     let expired = 0;
     for (const reservation of stale) {
       try {
-        await this.db.update('seller_stock_reservations', { id: reservation.id }, {
-          status: 'expired',
-        });
+        // releaseReservationKeys releases claimed keys back to available inventory,
+        // marks pending provisions as failed, and sets reservation status to 'expired'.
+        // Previously this only set status='expired' without releasing the keys, leaving
+        // seller_reserved keys permanently locked out of the available pool.
+        await this.keyOps.releaseReservationKeys(reservation.id, 'expired');
         expired++;
       } catch (err) {
         logger.warn('Failed to expire reservation', {

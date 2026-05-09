@@ -40,6 +40,7 @@ interface OriginalReservationRow {
   provider_metadata: Record<string, unknown>;
   external_order_id: string;
   created_at: string;
+  provisioned_at: string | null;
 }
 
 interface OriginalProvisionRow {
@@ -88,19 +89,29 @@ export class HandleEnebaKeyReplacementReserveUseCase {
         return { success: false, orderId, reason: 'listing_inactive' };
       }
 
-      // 2. Find the original provisioned reservation for this order
+      // 2. Find the original provisioned reservation for this order.
+      //    After a CANCEL triggers handlePostProvisionReturn, the reservation transitions
+      //    from 'provisioned' → 'cancelled' while provisioned_at remains set.
+      //    We query both statuses and filter by provisioned_at to handle that case.
       const existingReservations = await this.db.query<OriginalReservationRow>(
         'seller_stock_reservations',
         {
-          select: 'id, seller_listing_id, status, provider_metadata, external_order_id, created_at',
-          eq: [['seller_listing_id', listing.id], ['status', 'provisioned']],
-          in: [['external_order_id', [orderId, ...(originalOrderId ? [originalOrderId] : [])]]],
+          select: 'id, seller_listing_id, status, provider_metadata, external_order_id, created_at, provisioned_at',
+          eq: [['seller_listing_id', listing.id]],
+          in: [
+            ['status', ['provisioned', 'cancelled']],
+            ['external_order_id', [orderId, ...(originalOrderId ? [originalOrderId] : [])]],
+          ],
           order: { column: 'created_at', ascending: false },
           limit: 1,
         },
       );
 
-      const originalReservation = existingReservations[0] ?? null;
+      // Accept the reservation only if it was ever provisioned (either still 'provisioned'
+      // or 'cancelled' after handlePostProvisionReturn ran and set provisioned_at).
+      const originalReservation = existingReservations.find(
+        (r) => r.status === 'provisioned' || r.provisioned_at !== null,
+      ) ?? null;
 
       if (!originalReservation) {
         logger.warn('Replacement RESERVE: no provisioned reservation found — proceeding to claim only', {
@@ -215,11 +226,14 @@ export class HandleEnebaKeyReplacementReserveUseCase {
     providerCode: string,
   ): Promise<void> {
     try {
+      // Look for 'delivered' (still provisioned) or 'refunded' (restocked by handlePostProvisionReturn
+      // after a CANCEL — the key is back in available inventory but was the one originally delivered).
       const provision = await this.db.queryOne<OriginalProvisionRow>(
         'seller_key_provisions',
         {
           select: 'id, product_key_id, status',
-          eq: [['reservation_id', originalReservation.id], ['status', 'delivered']],
+          eq: [['reservation_id', originalReservation.id]],
+          in: [['status', ['delivered', 'refunded']]],
           single: true,
         },
       );
