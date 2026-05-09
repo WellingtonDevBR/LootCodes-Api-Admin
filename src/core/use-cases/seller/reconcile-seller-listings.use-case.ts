@@ -1,12 +1,14 @@
 /**
  * Single orchestrated cron entry point for seller-side maintenance.
  *
- * Runs five phases per request, in order:
- *   1. expire-reservations  — release stale `seller_stock_reservations`
- *   2. cost-basis           — refresh `seller_listings.cost_basis_cents`
- *   3. pricing              — recompute prices (manual + strategy + smart) and push to marketplaces
- *   4. declared-stock       — reconcile declared-stock target and push to marketplaces
- *   5. remote-stock         — pull remote stock for `auto_sync_stock=true` listings
+ * Runs six phases per request, in order:
+ *   1. expire-reservations    — release stale `seller_stock_reservations`
+ *   2. cost-basis             — refresh `seller_listings.cost_basis_cents`
+ *   3. pricing                — recompute prices (manual + strategy + smart) and push to marketplaces
+ *   4. declared-stock         — reconcile declared-stock target and push to marketplaces
+ *   5. remote-stock           — pull remote stock for `auto_sync_stock=true` listings
+ *   6. paused-listing-alerts  — sync `admin_alerts` of type `seller_listing_paused` so the CRM
+ *                               surfaces every paused/failed listing as an actionable alert
  *
  * Pauses entirely when `platform_settings.fulfillment_mode = 'hold_all'`.
  * Per-phase failures are isolated: one phase's exception is logged and
@@ -21,6 +23,7 @@ import type {
 } from '../../ports/seller-pricing.port.js';
 import type { IProcurementDeclaredStockReconcileService } from '../../ports/procurement-declared-stock-reconcile.port.js';
 import { ExpireReservationsUseCase } from './expire-reservations.use-case.js';
+import { SyncSellerListingPausedAlertsUseCase } from './sync-seller-listing-paused-alerts.use-case.js';
 import {
   RECONCILE_PHASES,
   type PhaseOutcome,
@@ -45,6 +48,8 @@ export class ReconcileSellerListingsUseCase {
     private readonly stockSync: ISellerStockSyncService,
     @inject(UC_TOKENS.ExpireReservations)
     private readonly expireReservations: ExpireReservationsUseCase,
+    @inject(UC_TOKENS.SyncSellerListingPausedAlerts)
+    private readonly syncPausedAlerts: SyncSellerListingPausedAlertsUseCase,
   ) {}
 
   async execute(
@@ -128,6 +133,8 @@ export class ReconcileSellerListingsUseCase {
         });
       case 'remote-stock':
         return this.stockSync.refreshAllStock(requestId);
+      case 'paused-listing-alerts':
+        return this.syncPausedAlerts.execute();
     }
   }
 }

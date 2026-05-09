@@ -56,6 +56,7 @@ import type {
 import { DIGISELLER_CREATE_PATHS, DIGISELLER_LOCALES, DEFAULT_LISTING_OPTS } from './types.js';
 import { createLogger } from '../../../shared/logger.js';
 import { floatToCents } from '../../../shared/pricing.js';
+import { isTransientMarketplaceError } from '../../seller/recognize-transient-marketplace-error.js';
 
 const logger = createLogger('digiseller-adapter');
 
@@ -376,8 +377,16 @@ export class DigisellerMarketplaceAdapter
       this.assertRetval(resp, 'setupFormDelivery');
       logger.info('Digiseller form delivery configured', { productId });
     } catch (err) {
-      logger.warn('Digiseller setupFormDelivery failed', {
-        productId, error: err instanceof Error ? err.message : String(err),
+      // Form delivery setup is best-effort here — the listing was already
+      // created or stock was already updated. A transient infra failure
+      // (circuit breaker open, rate limit, upstream auth wobble) is not
+      // an actionable bug; the next reconcile cron tick recovers it.
+      const isTransient = isTransientMarketplaceError(err);
+      const logFn = isTransient ? logger.info.bind(logger) : logger.warn.bind(logger);
+      logFn('Digiseller setupFormDelivery failed', {
+        productId,
+        error: err instanceof Error ? err.message : String(err),
+        transient: isTransient,
       });
     }
   }

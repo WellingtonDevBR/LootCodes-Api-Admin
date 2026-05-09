@@ -25,6 +25,11 @@ function makeOrchestratorResult(
     'pricing': { ran: true, duration_ms: 1 },
     'declared-stock': { ran: true, duration_ms: 1 },
     'remote-stock': { ran: true, duration_ms: 1 },
+    'paused-listing-alerts': {
+      ran: true,
+      duration_ms: 1,
+      result: { alertsCreated: 0, alertsResolved: 0, pausedListingCount: 0 },
+    },
   } as Record<ReconcilePhase, { ran: boolean; duration_ms: number; result?: unknown }>;
 
   return {

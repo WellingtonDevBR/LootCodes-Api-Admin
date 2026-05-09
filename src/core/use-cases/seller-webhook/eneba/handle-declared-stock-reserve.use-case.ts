@@ -44,7 +44,7 @@ export class HandleDeclaredStockReserveUseCase {
 
     if (!auctions || auctions.length === 0) {
       logger.error('RESERVE with no auctions', { orderId });
-      return { success: false, orderId };
+      return { success: false, orderId, reason: 'no_auctions' };
     }
 
     try {
@@ -60,20 +60,22 @@ export class HandleDeclaredStockReserveUseCase {
         if (!listing) {
           logger.error('Listing not found for auctionId', { auctionId, orderId });
           await this.healthPort.updateHealthCounters(auctionId, 'reservation', false);
-          return { success: false, orderId };
+          return { success: false, orderId, reason: 'listing_not_found' };
         }
 
         if (!listing.provider_account_id) {
           logger.error('Listing missing provider_account_id', { auctionId, orderId });
           await this.healthPort.updateHealthCounters(auctionId, 'reservation', false);
-          return { success: false, orderId };
+          return { success: false, orderId, reason: 'listing_misconfigured' };
         }
 
         if (listing.status !== 'active') {
-          logger.warn('Listing not active, rejecting reservation', {
+          // Listing being deactivated mid-RESERVE is rare but expected when
+          // an admin or the reconcile cron has just taken it offline.
+          logger.info('Listing not active, rejecting reservation', {
             auctionId, orderId, status: listing.status,
           });
-          return { success: false, orderId };
+          return { success: false, orderId, reason: 'listing_inactive' };
         }
 
         const candidates = buildOrderIdCandidates(orderId, originalOrderId);
@@ -99,22 +101,29 @@ export class HandleDeclaredStockReserveUseCase {
 
         const expiresAt = new Date(Date.now() + THREE_CALENDAR_DAYS_MS).toISOString();
 
-        // Use priceWithoutCommission (what Eneba actually pays us, net of their
-        // commission) as the effective sale price for the JIT margin gate.
-        // Fall back to auction.price if not provided (older Eneba API versions).
+        // Use seller_profit_cents_per_unit as the effective sale price for the
+        // JIT margin gate. This field is computed by the financials builder using
+        // Eneba's commission formula on originalPrice (seller_net = originalPrice
+        // − commission), which is what S_calculatePrice returns and what the
+        // Eneba seller UI shows as "I want to get".
+        //
+        // IMPORTANT: do NOT additionally subtract campaign_fee_cents_per_unit.
+        // Eneba's `campaignFee` in the reserve callback is the BUYER PREMIUM
+        // (price − originalPrice) — i.e. the markup Eneba adds for buyers. It is
+        // NOT deducted from the seller's payout. The seller_profit field already
+        // reflects the true net via the commission formula.
         const financials = auction.marketplaceFinancials;
         const listingCurrency = (financials?.currency ?? auction.price.currency).trim().toUpperCase();
 
-        const salePriceCents = financials?.price_without_commission_cents_per_unit
+        const salePriceCents = financials?.seller_profit_cents_per_unit
           ?? (typeof auction.price.amount === 'number'
             ? auction.price.amount
             : parseInt(String(auction.price.amount), 10));
         const salePriceCurrency = listingCurrency.length > 0 ? listingCurrency : undefined;
 
-        // Per-auction campaign fee (if Eneba charged us for a promotional campaign).
-        // priceWithoutCommission already excludes Eneba's base commission, so
-        // campaignFee is the only remaining deductible cost for the margin gate.
-        const perAuctionFeesCents = financials?.campaign_fee_cents_per_unit ?? 0;
+        // No additional fee deduction — the seller net already accounts for
+        // Eneba's commission. See comment above.
+        const perAuctionFeesCents = 0;
 
         const buyerIp = financials?.buyer_ip ?? null;
 
@@ -149,9 +158,23 @@ export class HandleDeclaredStockReserveUseCase {
             feesCents: perAuctionFeesCents > 0 ? perAuctionFeesCents : undefined,
           });
         } catch (claimErr) {
-          logger.error('Key claim failed — propagating variant unavailability', claimErr as Error, {
-            orderId, auctionId, variantId: listing.variant_id,
-          });
+          const claimMsg = claimErr instanceof Error ? claimErr.message : String(claimErr);
+          // Production reference (Sentry LOOTCODES-API-R/S/T): an Eneba RESERVE
+          // arriving when no buyer-capable provider has stock at a profitable
+          // price is normal market behavior. The downstream code already
+          // handles it (propagate variant unavailability, return success:false).
+          // Only surface to Sentry as `error` if the claim path produced an
+          // unrecognized failure — those are real bugs.
+          const isExpectedNoStock = /INSUFFICIENT_STOCK|Key claim failed/.test(claimMsg);
+          if (isExpectedNoStock) {
+            logger.info('No keys available for marketplace reserve — propagating variant unavailability', {
+              orderId, auctionId, variantId: listing.variant_id, error: claimMsg,
+            });
+          } else {
+            logger.error('Key claim failed unexpectedly — propagating variant unavailability', claimErr as Error, {
+              orderId, auctionId, variantId: listing.variant_id,
+            });
+          }
 
           await this.healthPort.updateHealthCounters(auctionId, 'reservation', false);
 
@@ -160,7 +183,11 @@ export class HandleDeclaredStockReserveUseCase {
             'jit_failed',
           );
 
-          return { success: false, orderId };
+          return {
+            success: false,
+            orderId,
+            reason: isExpectedNoStock ? 'out_of_stock' : 'unexpected_error',
+          };
         }
 
         await this.healthPort.updateHealthCounters(auctionId, 'reservation', true);
@@ -206,7 +233,7 @@ export class HandleDeclaredStockReserveUseCase {
       if (auctions[0]) {
         await this.healthPort.updateHealthCounters(auctions[0].auctionId, 'reservation', false);
       }
-      return { success: false, orderId };
+      return { success: false, orderId, reason: 'unexpected_error' };
     }
   }
 

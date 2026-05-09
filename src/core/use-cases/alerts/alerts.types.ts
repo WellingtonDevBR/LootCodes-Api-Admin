@@ -44,3 +44,16 @@ export interface DismissAllByFilterDto {
   readonly severity?: string;
   readonly alert_type?: string;
 }
+
+/**
+ * Outcome of {@link IAdminAlertsRepository.syncSellerListingPausedAlerts}.
+ *
+ * `alertsCreated` — number of net-new `seller_listing_paused` rows inserted (paused listings that had no open alert).
+ * `alertsResolved` — number of stale open alerts auto-closed (their listing is no longer paused).
+ * `pausedListingCount` — total listings observed in a paused/failed/error state during this run.
+ */
+export interface SyncSellerListingPausedAlertsResult {
+  readonly alertsCreated: number;
+  readonly alertsResolved: number;
+  readonly pausedListingCount: number;
+}

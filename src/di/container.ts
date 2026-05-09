@@ -307,6 +307,7 @@ import { EnableKeyReplacementsUseCase } from '../core/use-cases/seller/enable-ke
 import { RemoveCallbackUseCase } from '../core/use-cases/seller/remove-callback.use-case.js';
 import { ExpireReservationsUseCase } from '../core/use-cases/seller/expire-reservations.use-case.js';
 import { ReconcileSellerListingsUseCase } from '../core/use-cases/seller/reconcile-seller-listings.use-case.js';
+import { SyncSellerListingPausedAlertsUseCase } from '../core/use-cases/seller/sync-seller-listing-paused-alerts.use-case.js';
 
 // Use cases — Seller Webhooks
 import { HandleDeclaredStockReserveUseCase } from '../core/use-cases/seller-webhook/eneba/handle-declared-stock-reserve.use-case.js';
@@ -680,6 +681,7 @@ container.register(UC_TOKENS.EnableDeclaredStock, { useClass: EnableDeclaredStoc
 container.register(UC_TOKENS.EnableKeyReplacements, { useClass: EnableKeyReplacementsUseCase });
 container.register(UC_TOKENS.RemoveCallback, { useClass: RemoveCallbackUseCase });
 container.register(UC_TOKENS.ExpireReservations, { useClass: ExpireReservationsUseCase });
+container.register(UC_TOKENS.SyncSellerListingPausedAlerts, { useClass: SyncSellerListingPausedAlertsUseCase });
 container.register(UC_TOKENS.ReconcileSellerListings, { useClass: ReconcileSellerListingsUseCase });
 
 // Infrastructure — Marketplace & Seller Services

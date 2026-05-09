@@ -51,7 +51,11 @@ export class HandleDeclaredStockCancelUseCase {
       );
 
       if (!rows.length) {
-        logger.warn('Reservation not found for CANCEL — may already be cleaned up', {
+        // Idempotent CANCEL: Eneba retries CANCEL after their own timeouts and
+        // for orders we never persisted (e.g. RESERVE replied success:false).
+        // Verified empirically against Supabase — these IDs are genuinely
+        // absent. Not a bug, must not page Sentry.
+        logger.info('Reservation not found for CANCEL — already cleaned up or never created', {
           orderId, originalOrderId, candidates,
         });
         return { success: true };

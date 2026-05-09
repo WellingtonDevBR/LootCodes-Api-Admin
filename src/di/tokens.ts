@@ -342,6 +342,7 @@ export const UC_TOKENS = {
   RemoveCallback: Symbol.for('RemoveCallbackUseCase'),
   ExpireReservations: Symbol.for('ExpireReservationsUseCase'),
   ReconcileSellerListings: Symbol.for('ReconcileSellerListingsUseCase'),
+  SyncSellerListingPausedAlerts: Symbol.for('SyncSellerListingPausedAlertsUseCase'),
 
   // Seller Webhooks
   HandleDeclaredStockReserve: Symbol.for('HandleDeclaredStockReserveUseCase'),

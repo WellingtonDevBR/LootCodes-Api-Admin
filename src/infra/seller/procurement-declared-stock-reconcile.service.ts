@@ -34,6 +34,7 @@ import { parseSellerConfig, type SellerProviderConfig } from '../../core/use-cas
 import { mergeSellerListingPricingOverrides } from '../../core/use-cases/seller/listing-pricing-overrides-merge.js';
 import { loadBuyerCapableOffersByVariant } from './load-procurement-offer-supply.js';
 import { dispatchListingDisable } from './dispatch-listing-disable.js';
+import { isTransientMarketplaceError } from './recognize-transient-marketplace-error.js';
 import { createLogger } from '../../shared/logger.js';
 
 const logger = createLogger('procurement-declared-stock-reconcile');
@@ -243,13 +244,7 @@ export class ProcurementDeclaredStockReconcileService implements IProcurementDec
       return typeof usd === 'number' && Number.isFinite(usd) && usd > 0 ? usd : payout.netPayoutCents;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      const errName = err instanceof Error ? err.name : '';
-      const isTransient =
-        errName === 'CircuitOpenError'
-        || errName === 'RateLimitExceededError'
-        || /^Circuit breaker open for /.test(msg)
-        || /^Rate limit exceeded for /.test(msg)
-        || /Too Many Requests/i.test(msg);
+      const isTransient = isTransientMarketplaceError(err);
       const logFn = isTransient ? logger.info.bind(logger) : logger.warn.bind(logger);
       logFn('Live marketplace pricing call failed; selector falling back to manual config', {
         listingId: listing.id,
@@ -371,12 +366,7 @@ export class ProcurementDeclaredStockReconcileService implements IProcurementDec
     failures: ProcurementDeclaredStockReconcileFailure[],
   ): void {
     const msg = err instanceof Error ? err.message : String(err);
-    const errName = err instanceof Error ? err.name : '';
-    const isTransient =
-      errName === 'CircuitOpenError' ||
-      errName === 'RateLimitExceededError' ||
-      /^Circuit breaker open for /.test(msg) ||
-      /^Rate limit exceeded for /.test(msg);
+    const isTransient = isTransientMarketplaceError(err);
     failures.push({ listing_id: listingId, reason: msg });
     const logFn = isTransient ? logger.info.bind(logger) : logger.error.bind(logger);
     logFn('Procurement declared stock reconcile failed', {

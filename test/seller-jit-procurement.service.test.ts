@@ -7,9 +7,15 @@
  * ceiling of $15.18, making every buy-side offer with USD cost > 1518
  * falsely appear unprofitable (the production incident that prompted this fix).
  */
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, vi } from 'vitest';
+import * as Sentry from '@sentry/node';
 import { loadEnv } from '../src/config/env.js';
 import { SellerJitProcurementService } from '../src/infra/seller/seller-jit-procurement.service.js';
+
+vi.mock('@sentry/node', () => ({
+  captureException: vi.fn(),
+  captureMessage: vi.fn(),
+}));
 import type { IProcurementFxConverter } from '../src/core/ports/procurement-fx-converter.port.js';
 import type {
   RouteAndPurchaseJitOffersInput,
@@ -258,6 +264,40 @@ describe('SellerJitProcurementService', () => {
       );
 
       expect(result).toBe(false);
+    });
+
+    // Production Sentry issue LOOTCODES-API-Z: this `did not yield ingested keys`
+    // log was firing at `warn` level for every Eneba RESERVE that landed when
+    // none of our buyer providers had stock at a profitable price — i.e. the
+    // expected business outcome that downstream code already handles by
+    // propagating variant unavailability. It must not reach Sentry.
+    it('does NOT forward to Sentry when JIT cannot find a profitable buyer (expected business outcome)', async () => {
+      const captureMessage = vi.mocked(Sentry.captureMessage);
+      const captureException = vi.mocked(Sentry.captureException);
+      captureMessage.mockClear();
+      captureException.mockClear();
+
+      const route = new FakeRouteUseCase();
+      route.result = {
+        purchased: false,
+        ingestedKeyCount: 0,
+        winningProviderCode: null,
+        winningProviderAccountId: null,
+        attemptedProviders: [
+          { providerCode: 'bamboo', providerAccountId: 'acct-bamboo', reason: 'above_margin_gate' },
+          { providerCode: 'approute', providerAccountId: 'acct-approute', reason: 'above_margin_gate' },
+        ],
+      };
+      const fx = new FixedFxConverter(new Map());
+      const svc = new SellerJitProcurementService(route as never, fx);
+
+      const result = await svc.tryJitPurchaseForReservation(
+        makeParams({ salePriceCents: 1518, salePriceCurrency: 'USD' }),
+      );
+
+      expect(result).toBe(false);
+      expect(captureMessage).not.toHaveBeenCalled();
+      expect(captureException).not.toHaveBeenCalled();
     });
   });
 });

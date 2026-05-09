@@ -105,6 +105,43 @@ export function parseEnebaDeclaredStockMoneyField(
   return { cents, currency, rawAmount };
 }
 
+// ─── Eneba seller commission formula ─────────────────────────────────
+//
+// Eneba's declared-stock commission tiers (from S_calculatePrice API):
+//   ≥ €5  → 6 % + €0.25  ("Games, DLCs equal to and above 5 EUR")
+//   < €5  → 5 %          (flat rate for low-value items)
+//
+// The reserve callback's `priceWithoutCommission` field is computed from the
+// BUYER's price (originalPrice + buyer premium), not from the seller's listing
+// price. Using `priceWithoutCommission − campaignFee` therefore over-deducts
+// the commission by the difference between the two commission bases (~7 cents
+// on a €15.18 listing), causing the JIT margin gate to under-report seller net.
+//
+// The correct seller net = originalPrice − commission(originalPrice), which
+// matches what S_calculatePrice returns as `priceWithoutCommission`.
+//
+// Note: `campaignFee` in the reserve callback = buyer premium
+//        (price − originalPrice), NOT an additional seller cost.
+
+const ENEBA_HIGH_TIER_THRESHOLD_CENTS = 500; // €5.00
+
+/**
+ * Compute the seller net for an Eneba declared-stock sale given the
+ * seller's listing price (`originalPriceCents`), applying Eneba's
+ * commission formula.
+ *
+ * Confirmed against S_calculatePrice API:
+ *   input 1518 → commission 116 (= round(0.06 × 1518 + 25)) → net 1402 ✓
+ *   input  193 → commission  10 (= round(0.05 × 193))        → net 183  ✓
+ */
+export function computeEnebaSellerNetCents(originalPriceCents: number): number {
+  const commissionCents =
+    originalPriceCents >= ENEBA_HIGH_TIER_THRESHOLD_CENTS
+      ? Math.round(originalPriceCents * 0.06 + 25)  // 6 % + €0.25
+      : Math.round(originalPriceCents * 0.05);       // 5 %
+  return originalPriceCents - commissionCents;
+}
+
 // ─── Financials snapshot builder ─────────────────────────────────────
 
 export function buildMarketplaceFinancialsFromEnebaAuction(
@@ -136,7 +173,15 @@ export function buildMarketplaceFinancialsFromEnebaAuction(
 
   const pwcCentsPerUnit = pwcParsed?.cents ?? grossCentsPerUnit;
   const campaignCentsPerUnit = campaignParsed?.cents ?? 0;
-  const sellerProfitCentsPerUnit = pwcCentsPerUnit - campaignCentsPerUnit;
+
+  // Prefer the commission-formula path when originalPrice is present —
+  // it avoids the buyer-premium double-deduction bug described above.
+  // Fall back to pwc − campaignFee only when originalPrice is absent
+  // (older Eneba API responses that omit the field).
+  const sellerProfitCentsPerUnit =
+    originalParsed != null
+      ? computeEnebaSellerNetCents(originalParsed.cents)
+      : (pwcCentsPerUnit - campaignCentsPerUnit);
 
   const totalGrossCents = grossCentsPerUnit * keyCount;
   const totalSellerProfitCents = sellerProfitCentsPerUnit * keyCount;

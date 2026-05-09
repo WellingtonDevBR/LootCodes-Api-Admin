@@ -93,7 +93,6 @@ import {
   computeAggregateFeesCents,
 } from '../../core/use-cases/seller-webhook/eneba/eneba-marketplace-financials.js';
 import { createLogger } from '../../shared/logger.js';
-import * as Sentry from '@sentry/node';
 
 const logger = createLogger('webhook-routes');
 
@@ -151,13 +150,26 @@ export async function sellerWebhookRoutes(app: FastifyInstance) {
         });
 
         if (!result.success) {
-          logger.warn('Eneba RESERVE returned failure — responding success:false', {
-            orderId, originalOrderId,
-          });
-          Sentry.captureMessage('Eneba RESERVE failed', {
-            level: 'warning',
-            extra: { orderId, originalOrderId, auctionIds: auctions?.map((a) => a.auctionId) },
-          });
+          // Production reference (Sentry LOOTCODES-API-T / -S): every
+          // success:false here was double-reported — once via logger.warn
+          // (auto-forwarded) and once via Sentry.captureMessage. The vast
+          // majority of these failures are normal market behavior:
+          //   - `out_of_stock`: no buyer-capable provider has stock at our floor
+          //   - `listing_inactive` / `listing_not_found`: race with reconcile
+          //   - `no_auctions`: caller-side payload weirdness
+          // Use case has already logged at the right level for each case.
+          // Only surface to Sentry as `warn` for `unexpected_error` — true bugs.
+          const reason = result.reason ?? 'unexpected_error';
+          if (reason === 'unexpected_error') {
+            logger.warn('Eneba RESERVE returned failure (unexpected) — responding success:false', {
+              orderId, originalOrderId, reason,
+              auctionIds: auctions?.map((a) => a.auctionId),
+            });
+          } else {
+            logger.info('Eneba RESERVE responding success:false (expected business outcome)', {
+              orderId, originalOrderId, reason,
+            });
+          }
         }
 
         return reply.send(buildReservationResponse(result.orderId, result.success));
@@ -172,12 +184,11 @@ export async function sellerWebhookRoutes(app: FastifyInstance) {
         });
 
         if (!result.success || !result.auctions) {
-          logger.warn('Eneba PROVIDE returned failure — responding success:false', {
+          // PROVIDE failures are genuine errors — we promised Eneba we had
+          // keys (RESERVE returned success) but cannot deliver them now.
+          // Single error log; logger.error auto-forwards to Sentry.
+          logger.error('Eneba PROVIDE returned failure — responding success:false', {
             orderId, originalOrderId,
-          });
-          Sentry.captureMessage('Eneba PROVIDE failed', {
-            level: 'error',
-            extra: { orderId, originalOrderId },
           });
           return reply.send(buildProvisionResponse(result.orderId, result.success));
         }

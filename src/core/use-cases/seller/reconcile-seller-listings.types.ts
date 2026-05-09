@@ -10,6 +10,12 @@ export const RECONCILE_PHASES = [
   'pricing',
   'declared-stock',
   'remote-stock',
+  /**
+   * Idempotent reconciliation of `admin_alerts` of type `seller_listing_paused`. Runs last so
+   * earlier phases (which may pause a listing they could not heal) are reflected in the
+   * alerts surface within the same cron tick.
+   */
+  'paused-listing-alerts',
 ] as const;
 
 export type ReconcilePhase = (typeof RECONCILE_PHASES)[number];

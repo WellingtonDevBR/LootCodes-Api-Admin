@@ -92,15 +92,41 @@ export class SellerJitProcurementService {
       }
     }
 
+    // FX-convert the per-listing minimum margin to USD. The field is stored in
+    // the listing's sale currency (e.g. EUR for Eneba listings) but the margin
+    // gate operates in USD — passing it raw would under-count the required
+    // margin whenever the listing currency is not USD.
+    let minMarginUsdCents: number | undefined;
+    if (typeof params.minMarginCents === 'number' && params.minMarginCents > 0) {
+      const currency = params.salePriceCurrency ?? 'USD';
+      if (currency === 'USD') {
+        minMarginUsdCents = params.minMarginCents;
+      } else {
+        const converted = await this.fx.toUsdCents(params.minMarginCents, currency);
+        if (converted != null && Number.isFinite(converted) && converted > 0) {
+          minMarginUsdCents = converted;
+          logger.debug('Min margin FX-converted for JIT margin gate', {
+            variantId: params.variantId,
+            original: params.minMarginCents,
+            currency,
+            usdCents: converted,
+          });
+        } else {
+          logger.warn('Min margin FX conversion unavailable; JIT will run without a minimum margin', {
+            variantId: params.variantId,
+            currency,
+          });
+        }
+      }
+    }
+
     const result = await this.route.execute({
       variantId: params.variantId,
       quantity: params.quantity,
       externalReservationId: params.externalReservationId,
       adminUserId,
       ...(salePriceUsdCents != null ? { salePriceUsdCents } : {}),
-      ...(typeof params.minMarginCents === 'number'
-        ? { minMarginUsdCents: params.minMarginCents }
-        : {}),
+      ...(minMarginUsdCents != null ? { minMarginUsdCents } : {}),
       ...(feesUsdCents != null ? { feesUsdCents } : {}),
     });
 
@@ -113,7 +139,11 @@ export class SellerJitProcurementService {
       return true;
     }
 
-    logger.warn('JIT procurement did not yield ingested keys', {
+    // Expected business outcome: every buyer-capable provider was either out of
+    // stock or quoted above the profitability ceiling. The seller webhook caller
+    // already handles this by propagating variant unavailability to the
+    // marketplace — this is not a bug, so it must not page Sentry.
+    logger.info('JIT procurement did not yield ingested keys', {
       variantId: params.variantId,
       attempted: result.attemptedProviders.length,
       attemptedProviders: result.attemptedProviders,

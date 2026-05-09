@@ -18,6 +18,8 @@ import type {
 import type { ExpireReservationsUseCase } from '../src/core/use-cases/seller/expire-reservations.use-case.js';
 import { ReconcileSellerListingsUseCase } from '../src/core/use-cases/seller/reconcile-seller-listings.use-case.js';
 import type { ReconcilePhase } from '../src/core/use-cases/seller/reconcile-seller-listings.types.js';
+import type { SyncSellerListingPausedAlertsUseCase } from '../src/core/use-cases/seller/sync-seller-listing-paused-alerts.use-case.js';
+import type { SyncSellerListingPausedAlertsResult } from '../src/core/use-cases/alerts/alerts.types.js';
 
 interface CallTracker {
   readonly calls: ReconcilePhase[];
@@ -59,6 +61,10 @@ function emptyDeclaredStockResult(dryRun = false): ProcurementDeclaredStockRecon
   return { dry_run: dryRun, scanned: 0, updated: 0, skipped: 0, failures: [] };
 }
 
+function emptyPausedAlertsResult(): SyncSellerListingPausedAlertsResult {
+  return { alertsCreated: 0, alertsResolved: 0, pausedListingCount: 0 };
+}
+
 interface FakeSetup {
   readonly tracker: CallTracker;
   readonly platformSettings: IPlatformSettingsPort;
@@ -66,6 +72,7 @@ interface FakeSetup {
   readonly declaredStock: IProcurementDeclaredStockReconcileService;
   readonly stockSync: ISellerStockSyncService;
   readonly expireReservations: Pick<ExpireReservationsUseCase, 'execute'>;
+  readonly syncPausedAlerts: Pick<SyncSellerListingPausedAlertsUseCase, 'execute'>;
 }
 
 interface SetupOptions {
@@ -105,6 +112,9 @@ function setup(options: SetupOptions = {}): FakeSetup {
     expireReservations: {
       execute: vi.fn().mockImplementation(async () => record('expire-reservations', emptyExpireResult())),
     },
+    syncPausedAlerts: {
+      execute: vi.fn().mockImplementation(async () => record('paused-listing-alerts', emptyPausedAlertsResult())),
+    },
   };
 }
 
@@ -115,11 +125,12 @@ function build(s: FakeSetup): ReconcileSellerListingsUseCase {
     s.declaredStock,
     s.stockSync,
     s.expireReservations as unknown as ExpireReservationsUseCase,
+    s.syncPausedAlerts as unknown as SyncSellerListingPausedAlertsUseCase,
   );
 }
 
 describe('ReconcileSellerListingsUseCase', () => {
-  it("runs all five phases in canonical order when fulfillment_mode is 'auto'", async () => {
+  it("runs all six phases in canonical order when fulfillment_mode is 'auto'", async () => {
     const s = setup();
     const uc = build(s);
 
@@ -131,6 +142,7 @@ describe('ReconcileSellerListingsUseCase', () => {
       'pricing',
       'declared-stock',
       'remote-stock',
+      'paused-listing-alerts',
     ]);
     expect(result.fulfillment_mode).toBe('auto');
     expect(result.request_id).toBe('req-1');
@@ -146,7 +158,7 @@ describe('ReconcileSellerListingsUseCase', () => {
 
     const result = await uc.execute('req-2', {});
 
-    expect(s.tracker.calls).toHaveLength(5);
+    expect(s.tracker.calls).toHaveLength(6);
     expect(result.fulfillment_mode).toBe('hold_new_cards');
   });
 
@@ -164,6 +176,7 @@ describe('ReconcileSellerListingsUseCase', () => {
       'pricing',
       'declared-stock',
       'remote-stock',
+      'paused-listing-alerts',
     ] as ReconcilePhase[]) {
       expect(result.phases[phase].ran).toBe(false);
       expect(result.phases[phase].skipped_reason).toBe('global_hold');
@@ -183,6 +196,7 @@ describe('ReconcileSellerListingsUseCase', () => {
       'pricing',
       'declared-stock',
       'remote-stock',
+      'paused-listing-alerts',
     ] as ReconcilePhase[]) {
       expect(result.phases[phase].ran).toBe(false);
       expect(result.phases[phase].skipped_reason).toBe('phase_filter');
@@ -233,11 +247,13 @@ describe('ReconcileSellerListingsUseCase', () => {
       'pricing',
       'declared-stock',
       'remote-stock',
+      'paused-listing-alerts',
     ]);
     expect(result.phases['pricing'].ran).toBe(true);
     expect(result.phases['pricing'].error).toMatch(/fake failure on pricing/);
     expect(result.phases['declared-stock'].ran).toBe(true);
     expect(result.phases['declared-stock'].error).toBeUndefined();
+    expect(result.phases['paused-listing-alerts'].ran).toBe(true);
   });
 
   it('records duration_ms for every phase outcome and a total_duration_ms on the result', async () => {
@@ -253,6 +269,7 @@ describe('ReconcileSellerListingsUseCase', () => {
       'pricing',
       'declared-stock',
       'remote-stock',
+      'paused-listing-alerts',
     ] as ReconcilePhase[]) {
       expect(result.phases[phase].duration_ms).toBeGreaterThanOrEqual(0);
     }
@@ -266,6 +283,29 @@ describe('ReconcileSellerListingsUseCase', () => {
 
     expect(s.expireReservations.execute).toHaveBeenCalledWith({
       admin_id: 'cron-req-id',
+    });
+  });
+
+  it("invokes the paused-listing-alerts phase exactly once per run", async () => {
+    const s = setup();
+    const uc = build(s);
+
+    await uc.execute('req-paused-alerts', {});
+
+    expect(s.syncPausedAlerts.execute).toHaveBeenCalledOnce();
+  });
+
+  it("includes 'paused-listing-alerts' in the result payload so cron logs surface alert sync metrics", async () => {
+    const s = setup();
+    const uc = build(s);
+
+    const result = await uc.execute('req-cron-result', {});
+
+    expect(result.phases['paused-listing-alerts'].ran).toBe(true);
+    expect(result.phases['paused-listing-alerts'].result).toEqual({
+      alertsCreated: 0,
+      alertsResolved: 0,
+      pausedListingCount: 0,
     });
   });
 });

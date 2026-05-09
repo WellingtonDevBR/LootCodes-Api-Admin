@@ -67,9 +67,25 @@ export interface DeclaredStockReserveDto {
   feesCents?: number;
 }
 
+/**
+ * Why a declared-stock RESERVE returned success:false. The route uses this
+ * to discriminate expected business outcomes (no stock anywhere, listing
+ * inactive) from genuine bugs when choosing the Sentry log level. Production
+ * Sentry issues `LOOTCODES-API-R/S/T` were all firing for the
+ * `out_of_stock` case, which is normal market behavior — not actionable.
+ */
+export type DeclaredStockReserveFailureReason =
+  | 'out_of_stock'
+  | 'listing_not_found'
+  | 'listing_inactive'
+  | 'listing_misconfigured'
+  | 'no_auctions'
+  | 'unexpected_error';
+
 export interface DeclaredStockReserveResult {
   success: boolean;
   orderId: string;
+  reason?: DeclaredStockReserveFailureReason;
 }
 
 export interface DeclaredStockProvideDto {
