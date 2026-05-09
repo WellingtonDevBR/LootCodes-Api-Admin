@@ -197,6 +197,14 @@ function sleep(ms: number): Promise<void> {
 export function createBambooManualBuyer(params: {
   readonly secrets: Record<string, string>;
   readonly profile: Record<string, unknown>;
+  /**
+   * Override the catalog HTTP client's rate-limiter window.
+   * Bamboo Catalog v2 allows 1 request/second. For bulk sync operations
+   * pass `{ maxRequests: 1, windowMs: 1_100 }` so the client-side guard
+   * matches Bamboo's server-side limit exactly.
+   * Defaults to 50 req/min (appropriate for single interactive quotes).
+   */
+  readonly catalogRateLimiter?: { maxRequests: number; windowMs: number };
 }): BambooManualBuyer | null {
   const clientId = params.secrets['BAMBOO_CLIENT_ID'];
   const clientSecret = params.secrets['BAMBOO_CLIENT_SECRET'];
@@ -224,7 +232,7 @@ export function createBambooManualBuyer(params: {
     baseUrl: catalogBaseUrl,
     providerCode: 'bamboo',
     timeoutMs: BAMBOO_HTTP_TIMEOUT_MS,
-    rateLimiter: { maxRequests: 50, windowMs: 60_000 },
+    rateLimiter: params.catalogRateLimiter ?? { maxRequests: 50, windowMs: 60_000 },
     headers: async () => ({ Authorization: basicAuth }),
     proxySigner: resolveBambooProxySigner(catalogBaseUrl),
   });

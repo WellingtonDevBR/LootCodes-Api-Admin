@@ -7,7 +7,7 @@
  * back to the DB.
  *
  * Supported providers (auto-detected from `provider_accounts.provider_code`):
- *   - bamboo   — individual GET /catalog?ProductId= per linked offer
+ *   - bamboo   — individual GET /catalog?ProductId= (Catalog v2, 1 req/s limit) per linked offer
  *   - approute — grouped GET /services/{parentId} per parent service (denomination match)
  *
  * Called:
@@ -32,6 +32,20 @@ import {
 import { createLogger } from '../../shared/logger.js';
 
 const logger = createLogger('buyer-offer-snapshot-sync');
+
+/**
+ * Bamboo Catalog v2 API allows 1 request/second.
+ * We wait 1 200 ms between consecutive quote calls (16 % headroom) so we never
+ * trigger a 429, even accounting for clock skew and network jitter.
+ */
+const BAMBOO_INTER_OFFER_DELAY_MS = 1_200;
+
+/** Rate-limiter config to pass to BambooManualBuyer during bulk sync. */
+const BAMBOO_BULK_RATE_LIMITER = { maxRequests: 1, windowMs: 1_100 } as const;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 interface OfferRow {
   readonly id: string;
@@ -144,7 +158,13 @@ export class BuyerOfferSnapshotSyncService implements IBuyerOfferSnapshotSyncSer
         continue;
       }
 
-      const buyer = createBambooManualBuyer({ secrets, profile: asProfile(acc.api_profile) });
+      const buyer = createBambooManualBuyer({
+        secrets,
+        profile: asProfile(acc.api_profile),
+        // Catalog v2 allows 1 req/s — enforce it client-side so we never
+        // trigger a 429 from rapid sequential calls during bulk sync.
+        catalogRateLimiter: BAMBOO_BULK_RATE_LIMITER,
+      });
       if (!buyer) {
         logger.warn('Bamboo buyer could not be created — missing credentials', {
           requestId,
@@ -154,7 +174,11 @@ export class BuyerOfferSnapshotSyncService implements IBuyerOfferSnapshotSyncSer
         continue;
       }
 
-      for (const offer of offers) {
+      for (let i = 0; i < offers.length; i++) {
+        // Respect Bamboo's 1 req/s catalog limit between consecutive calls.
+        if (i > 0) await sleep(BAMBOO_INTER_OFFER_DELAY_MS);
+
+        const offer = offers[i]!;
         const offerId = offer.external_offer_id!.trim();
         try {
           const walletCurrency = normalizeBambooWalletCurrency(offer.currency ?? 'USD');
