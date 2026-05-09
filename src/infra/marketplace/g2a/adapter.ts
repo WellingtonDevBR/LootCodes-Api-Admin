@@ -458,7 +458,7 @@ export class G2AAdapter
 
       const { status, elements } = res.data;
 
-      if (status === 'completed' || status === 'done') {
+      if (status === 'complete' || status === 'completed' || status === 'done') {
         const first = elements?.[0];
         return {
           ok: true,
