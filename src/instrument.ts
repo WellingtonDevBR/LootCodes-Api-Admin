@@ -42,7 +42,7 @@ Sentry.init({
   enableLogs: true,
 
   integrations: [
-    Sentry.consoleLoggingIntegration({ levels: ['log', 'warn', 'error'] }),
+    Sentry.consoleLoggingIntegration({ levels: ['info', 'warn', 'error'] }),
     Sentry.nodeRuntimeMetricsIntegration(),
     nodeProfilingIntegration(),
   ],

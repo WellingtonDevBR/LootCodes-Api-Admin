@@ -8,6 +8,7 @@ import sensible from '@fastify/sensible';
 import crypto from 'node:crypto';
 import { loadEnv } from './config/env.js';
 import { buildCorsOrigins, corsOriginValidator } from './config/cors.js';
+import { requestContextStore } from './shared/logger.js';
 import { errorHandler } from './http/middleware/error-handler.js';
 import { registerIpBlocklistHook } from './http/middleware/ip-blocklist.hook.js';
 import { healthRoutes } from './http/routes/health.routes.js';
@@ -83,13 +84,16 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   await app.register(sensible);
 
-  app.addHook('onRequest', async (request, reply) => {
+  // Callback-style hook (not async) so done() runs inside requestContextStore.run(),
+  // keeping the AsyncLocalStorage context alive for the full async request chain.
+  app.addHook('onRequest', (request, reply, done) => {
     const incomingId = request.headers['x-request-id'];
     const requestId = typeof incomingId === 'string' && incomingId.length > 0
       ? incomingId
       : crypto.randomUUID();
     (request as unknown as Record<string, unknown>).requestId = requestId;
-    void reply.header('X-Request-Id', requestId);
+    reply.header('X-Request-Id', requestId);
+    requestContextStore.run({ requestId }, done);
   });
 
   registerIpBlocklistHook(app);
