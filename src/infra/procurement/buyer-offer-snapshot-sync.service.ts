@@ -6,6 +6,10 @@
  * `available_quantity`, `last_price_cents`, `currency`, and `last_checked_at`
  * back to the DB.
  *
+ * Supported providers (auto-detected from `provider_accounts.provider_code`):
+ *   - bamboo   — individual GET /catalog?ProductId= per linked offer
+ *   - approute — grouped GET /services/{parentId} per parent service (denomination match)
+ *
  * Called:
  *   1. As the `sync-buyer-catalog` phase in `ReconcileSellerListingsUseCase` (before
  *      `declared-stock`), ensuring declared-stock decisions always use current data.
@@ -19,11 +23,12 @@ import type {
   BuyerOfferSnapshotSyncResult,
 } from '../../core/ports/buyer-offer-snapshot-sync.port.js';
 import { resolveProviderSecrets } from '../marketplace/resolve-provider-secrets.js';
-import {
-  createBambooManualBuyer,
-  type BambooOfferQuote,
-} from './bamboo-manual-buyer.js';
+import { createBambooManualBuyer } from './bamboo-manual-buyer.js';
 import { normalizeBambooWalletCurrency } from './bamboo-resolve-checkout-account.js';
+import {
+  refreshAppRouteOfferSnapshotsForVariant,
+  type AppRouteOfferSnapshotRow,
+} from './approute-variant-offer-quote-refresh.js';
 import { createLogger } from '../../shared/logger.js';
 
 const logger = createLogger('buyer-offer-snapshot-sync');
@@ -33,6 +38,11 @@ interface OfferRow {
   readonly provider_account_id: string;
   readonly external_offer_id: string | null;
   readonly currency: string | null;
+  /** Required by AppRoute refresh to resolve the parent service endpoint. */
+  external_parent_product_id: string | null;
+  /** Mutated in place by AppRoute refresh so we can detect successful updates. */
+  last_price_cents: number | null;
+  available_quantity: number | null;
 }
 
 interface ProviderAccountRow {
@@ -60,7 +70,7 @@ export class BuyerOfferSnapshotSyncService implements IBuyerOfferSnapshotSyncSer
     const startedAt = Date.now();
 
     const offerRows = await this.db.queryAll<OfferRow>('provider_variant_offers', {
-      select: 'id, provider_account_id, external_offer_id, currency',
+      select: 'id, provider_account_id, external_offer_id, currency, external_parent_product_id, last_price_cents, available_quantity',
       filter: { is_active: true },
     });
 
@@ -78,30 +88,48 @@ export class BuyerOfferSnapshotSyncService implements IBuyerOfferSnapshotSyncSer
 
     const bambooOffers = offerRows.filter((o) => {
       const acc = accountsById.get(o.provider_account_id);
-      return acc?.provider_code?.toLowerCase() === 'bamboo'
-        && acc.is_enabled
-        && acc.health_status === 'healthy'
-        && o.external_offer_id?.trim();
+      return (
+        acc?.provider_code?.toLowerCase() === 'bamboo' &&
+        acc.is_enabled &&
+        acc.health_status === 'healthy' &&
+        Boolean(o.external_offer_id?.trim())
+      );
     });
+
+    const approuteOffers = offerRows.filter((o) => {
+      const acc = accountsById.get(o.provider_account_id);
+      return (
+        acc?.provider_code?.toLowerCase() === 'approute' &&
+        acc.is_enabled &&
+        acc.health_status === 'healthy' &&
+        Boolean(o.external_offer_id?.trim())
+      );
+    });
+
+    const skipped =
+      offerRows.length - bambooOffers.length - approuteOffers.length;
 
     logger.info('Buyer offer snapshot sync started', {
       requestId,
       totalOffers: offerRows.length,
       bambooOffers: bambooOffers.length,
+      approuteOffers: approuteOffers.length,
+      skippedOffers: skipped,
     });
-
-    const byAccount = new Map<string, OfferRow[]>();
-    for (const offer of bambooOffers) {
-      const existing = byAccount.get(offer.provider_account_id) ?? [];
-      existing.push(offer);
-      byAccount.set(offer.provider_account_id, existing);
-    }
 
     let updated = 0;
     let failed = 0;
-    const skipped = offerRows.length - bambooOffers.length;
 
-    for (const [accountId, offers] of byAccount) {
+    // ── Bamboo ────────────────────────────────────────────────────────────────
+    // Group by account to create one BambooManualBuyer per credential set.
+    const bambooByAccount = new Map<string, OfferRow[]>();
+    for (const offer of bambooOffers) {
+      const existing = bambooByAccount.get(offer.provider_account_id) ?? [];
+      existing.push(offer);
+      bambooByAccount.set(offer.provider_account_id, existing);
+    }
+
+    for (const [accountId, offers] of bambooByAccount) {
       const acc = accountsById.get(accountId)!;
       let secrets: Record<string, string>;
       try {
@@ -130,7 +158,7 @@ export class BuyerOfferSnapshotSyncService implements IBuyerOfferSnapshotSyncSer
         const offerId = offer.external_offer_id!.trim();
         try {
           const walletCurrency = normalizeBambooWalletCurrency(offer.currency ?? 'USD');
-          const quote: BambooOfferQuote = await buyer.quote(offerId, walletCurrency);
+          const quote = await buyer.quote(offerId, walletCurrency);
           const now = new Date().toISOString();
 
           await this.db.update(
@@ -154,6 +182,36 @@ export class BuyerOfferSnapshotSyncService implements IBuyerOfferSnapshotSyncSer
             error: err instanceof Error ? err.message : String(err),
           });
           failed++;
+        }
+      }
+    }
+
+    // ── AppRoute ───────────────────────────────────────────────────────────────
+    // The refresh function groups calls by parent service internally (one GET per
+    // service node), so we pass all AppRoute offers at once and let it batch.
+    if (approuteOffers.length > 0) {
+      // Snapshot last_price_cents before the call to detect which rows were updated.
+      const pricesBefore = new Map(approuteOffers.map((o) => [o.id, o.last_price_cents]));
+
+      try {
+        await refreshAppRouteOfferSnapshotsForVariant(
+          this.db,
+          approuteOffers as AppRouteOfferSnapshotRow[],
+          accountsById,
+        );
+      } catch (err) {
+        // refreshAppRouteOfferSnapshotsForVariant is defensive and logs internally,
+        // so a top-level throw is unexpected — record it and continue.
+        logger.error('AppRoute offer snapshot refresh threw unexpectedly', err as Error, {
+          requestId,
+          approuteOfferCount: approuteOffers.length,
+        });
+      }
+
+      // Count offers whose last_price_cents changed as successfully updated.
+      for (const offer of approuteOffers) {
+        if (offer.last_price_cents !== pricesBefore.get(offer.id)) {
+          updated++;
         }
       }
     }

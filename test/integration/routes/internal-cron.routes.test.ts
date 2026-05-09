@@ -1,13 +1,14 @@
 import 'reflect-metadata';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { container } from 'tsyringe';
-import { UC_TOKENS } from '../../../src/di/tokens.js';
+import { TOKENS, UC_TOKENS } from '../../../src/di/tokens.js';
 import { buildTestApp, type TestApp } from '../../helpers/test-app.js';
 import type {
   ReconcileSellerListingsDto,
   ReconcileSellerListingsResult,
   ReconcilePhase,
 } from '../../../src/core/use-cases/seller/reconcile-seller-listings.types.js';
+import type { IBuyerOfferSnapshotSyncService } from '../../../src/core/ports/buyer-offer-snapshot-sync.port.js';
 
 const VALID_SECRET = 'test-internal-secret';
 const VARIANT_UUID = '11111111-1111-1111-1111-111111111111';
@@ -23,6 +24,7 @@ function makeOrchestratorResult(
     'expire-reservations': { ran: true, duration_ms: 1, result: { expired: 0 } },
     'cost-basis': { ran: true, duration_ms: 1 },
     'pricing': { ran: true, duration_ms: 1 },
+    'sync-buyer-catalog': { ran: true, duration_ms: 1, result: { scanned: 0, updated: 0, failed: 0, skipped: 0, durationMs: 1 } },
     'declared-stock': { ran: true, duration_ms: 1 },
     'remote-stock': { ran: true, duration_ms: 1 },
     'paused-listing-alerts': {
@@ -41,9 +43,14 @@ function makeOrchestratorResult(
   } as ReconcileSellerListingsResult;
 }
 
+interface MockBuyerCatalogSync {
+  syncAll: ReturnType<typeof vi.fn>;
+}
+
 describe('Internal cron routes — POST /internal/cron/reconcile-seller-listings', () => {
   let testApp: TestApp;
   let orchestrator: MockOrchestrator;
+  let buyerCatalogSync: MockBuyerCatalogSync;
 
   beforeAll(async () => {
     process.env.INTERNAL_SERVICE_SECRET = VALID_SECRET;
@@ -51,6 +58,9 @@ describe('Internal cron routes — POST /internal/cron/reconcile-seller-listings
 
     orchestrator = { execute: vi.fn() };
     container.register(UC_TOKENS.ReconcileSellerListings, { useValue: orchestrator });
+
+    buyerCatalogSync = { syncAll: vi.fn().mockResolvedValue({ scanned: 0, updated: 0, failed: 0, skipped: 0, durationMs: 0 }) };
+    container.register(TOKENS.BuyerOfferSnapshotSyncService, { useValue: buyerCatalogSync as IBuyerOfferSnapshotSyncService });
 
     testApp = await buildTestApp();
   });
@@ -216,5 +226,89 @@ describe('Internal cron routes — POST /internal/cron/reconcile-seller-listings
 
       expect(res.statusCode).toBe(404);
     });
+  });
+
+  describe('sync-buyer-catalog phase', () => {
+    it("accepts 'sync-buyer-catalog' as a valid phase name in the phases filter", async () => {
+      const res = await testApp.app.inject({
+        method: 'POST',
+        url: '/internal/cron/reconcile-seller-listings',
+        headers: { 'x-internal-secret': VALID_SECRET },
+        payload: { phases: ['sync-buyer-catalog'] },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const dto = orchestrator.execute.mock.calls[0]![1] as ReconcileSellerListingsDto;
+      expect(dto.phases).toEqual(['sync-buyer-catalog']);
+    });
+  });
+});
+
+describe('Internal cron routes — POST /internal/cron/sync-buyer-catalog', () => {
+  let testApp: TestApp;
+  let syncService: MockBuyerCatalogSync;
+
+  beforeAll(async () => {
+    process.env.INTERNAL_SERVICE_SECRET = VALID_SECRET;
+
+    syncService = {
+      syncAll: vi.fn().mockResolvedValue({
+        scanned: 10,
+        updated: 8,
+        failed: 1,
+        skipped: 1,
+        durationMs: 120,
+      }),
+    };
+    container.register(TOKENS.BuyerOfferSnapshotSyncService, { useValue: syncService as IBuyerOfferSnapshotSyncService });
+
+    testApp = await buildTestApp();
+  });
+
+  afterAll(async () => {
+    await testApp.app.close();
+  });
+
+  beforeEach(() => {
+    syncService.syncAll.mockClear();
+  });
+
+  it('returns 401 without x-internal-secret header', async () => {
+    const res = await testApp.app.inject({
+      method: 'POST',
+      url: '/internal/cron/sync-buyer-catalog',
+    });
+    expect(res.statusCode).toBe(401);
+    expect(syncService.syncAll).not.toHaveBeenCalled();
+  });
+
+  it('returns 200 and the sync result for a valid request', async () => {
+    const res = await testApp.app.inject({
+      method: 'POST',
+      url: '/internal/cron/sync-buyer-catalog',
+      headers: { 'x-internal-secret': VALID_SECRET },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(syncService.syncAll).toHaveBeenCalledOnce();
+    const body = res.json();
+    expect(body.scanned).toBe(10);
+    expect(body.updated).toBe(8);
+    expect(body.failed).toBe(1);
+    expect(body.skipped).toBe(1);
+  });
+
+  it('returns 500 when the sync service throws', async () => {
+    syncService.syncAll.mockRejectedValueOnce(new Error('network timeout'));
+
+    const res = await testApp.app.inject({
+      method: 'POST',
+      url: '/internal/cron/sync-buyer-catalog',
+      headers: { 'x-internal-secret': VALID_SECRET },
+    });
+
+    expect(res.statusCode).toBe(500);
+    expect(res.json().error).toBe('sync_buyer_catalog_failed');
+    expect(res.json().message).toBe('network timeout');
   });
 });
