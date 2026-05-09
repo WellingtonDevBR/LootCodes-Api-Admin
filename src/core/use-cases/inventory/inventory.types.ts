@@ -145,6 +145,8 @@ export interface InventoryCatalogRow {
   face_value: string | null;
   region_name: string | null;
   platform_name: string | null;
+  /** Count of physical keys in `product_keys` with `key_state = available`.
+   *  Declared marketplace stock is intentionally excluded — it is not inventory we own. */
   stock_available: number;
   stock_reserved: number;
   stock_sold: number;
@@ -155,6 +157,13 @@ export interface InventoryCatalogRow {
   purchaser_ids: string[];
   default_cost_cents: number | null;
   default_cost_currency: string | null;
+  /** Cheapest `last_price_cents` across active buy-provider offers (`provider_variant_offers`).
+   *  Null when no offer has a price snapshot yet. */
+  best_provider_cost_cents: number | null;
+  best_provider_cost_currency: string | null;
+  /** Sum of `declared_stock` across all active seller listings for this variant.
+   *  Zero when the variant has no active marketplace listings. */
+  total_declared_stock: number;
 }
 
 export interface ProviderAccountInfo {

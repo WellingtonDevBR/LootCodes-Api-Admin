@@ -50,6 +50,8 @@ import type {
   RecoverSellerListingHealthResult,
   SyncSellerStockDto,
   SyncSellerStockResult,
+  SetSellerListingDeclaredStockDto,
+  SetSellerListingDeclaredStockResult,
   FetchRemoteStockDto,
   FetchRemoteStockResult,
   SellerListingPublishContext,
@@ -675,6 +677,50 @@ export class SupabaseAdminSellerRepository implements IAdminSellerRepository {
     return {
       listing_id: dto.listing_id,
       declared_stock: stockCount,
+      synced_at: now,
+    };
+  }
+
+  async setSellerListingManualDeclaredStock(
+    dto: SetSellerListingDeclaredStockDto,
+  ): Promise<SetSellerListingDeclaredStockResult> {
+    logger.info('Setting manual declared stock', {
+      listingId: dto.listing_id,
+      quantity: dto.quantity,
+    });
+
+    const now = new Date().toISOString();
+    const rows = await this.db.update<Record<string, unknown>>(
+      'seller_listings',
+      { id: dto.listing_id },
+      {
+        manual_declared_stock: dto.quantity,
+        declared_stock: dto.quantity,
+        last_synced_at: now,
+        error_message: null,
+        updated_at: now,
+      },
+    );
+
+    if (rows.length === 0) throw new Error(`Seller listing ${dto.listing_id} not found`);
+
+    await this.recordSellerListingDomainEvent({
+      listing_id: dto.listing_id,
+      event_type: 'seller.listing_updated',
+      payload: {
+        listing_id: dto.listing_id,
+        field: 'manual_declared_stock',
+        value: dto.quantity,
+        admin_id: dto.admin_id,
+        source: 'admin_manual_set_declared_stock',
+      },
+      created_at: now,
+    });
+
+    return {
+      listing_id: dto.listing_id,
+      declared_stock: dto.quantity,
+      manual_declared_stock: dto.quantity,
       synced_at: now,
     };
   }

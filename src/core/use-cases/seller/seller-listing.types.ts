@@ -174,6 +174,29 @@ export interface SyncSellerStockResult {
   synced_at: string;
 }
 
+// --- Set Manual Declared Stock (operator-driven push to marketplace) ---
+
+/**
+ * Operator-driven manual update of a single listing's declared stock.
+ * The use case both pushes to the marketplace via the provider's declared-stock
+ * adapter (which handles vendor-specific quirks like Eneba's `0 → null`) and
+ * persists the operator-pinned value to `manual_declared_stock` plus mirrors it
+ * to `declared_stock` (the last value sent to the marketplace).
+ */
+export interface SetSellerListingDeclaredStockDto {
+  listing_id: string;
+  /** Non-negative integer. 0 means "out of stock" (adapter decides how to translate). */
+  quantity: number;
+  admin_id: string;
+}
+
+export interface SetSellerListingDeclaredStockResult {
+  listing_id: string;
+  declared_stock: number;
+  manual_declared_stock: number;
+  synced_at: string;
+}
+
 // --- Fetch Remote Stock (marketplace interaction) ---
 
 export interface FetchRemoteStockDto {

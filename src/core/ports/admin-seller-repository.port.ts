@@ -38,6 +38,8 @@ import type {
   RecoverSellerListingHealthResult,
   SyncSellerStockDto,
   SyncSellerStockResult,
+  SetSellerListingDeclaredStockDto,
+  SetSellerListingDeclaredStockResult,
   FetchRemoteStockDto,
   FetchRemoteStockResult,
   SellerListingPublishContext,
@@ -76,6 +78,15 @@ export interface IAdminSellerRepository {
   deleteSellerListing(dto: DeleteSellerListingDto): Promise<void>;
   recoverSellerListingHealth(dto: RecoverSellerListingHealthDto): Promise<RecoverSellerListingHealthResult>;
   syncSellerStock(dto: SyncSellerStockDto): Promise<SyncSellerStockResult>;
+  /**
+   * Persist an operator-pinned `manual_declared_stock` value (also mirrored to
+   * `declared_stock` since this row was just pushed to the marketplace).
+   * Caller is responsible for the marketplace round-trip — this method only
+   * commits the local row and emits the `seller.listing_updated` audit event.
+   */
+  setSellerListingManualDeclaredStock(
+    dto: SetSellerListingDeclaredStockDto,
+  ): Promise<SetSellerListingDeclaredStockResult>;
   fetchRemoteStock(dto: FetchRemoteStockDto): Promise<FetchRemoteStockResult>;
 
   /** Loads seller_listings joined with provider_accounts.provider_code for marketplace adapter routing. */

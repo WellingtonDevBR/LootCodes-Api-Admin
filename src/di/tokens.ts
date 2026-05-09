@@ -323,6 +323,7 @@ export const UC_TOKENS = {
   DeleteSellerListing: Symbol.for('DeleteSellerListingUseCase'),
   RecoverSellerListingHealth: Symbol.for('RecoverSellerListingHealthUseCase'),
   SyncSellerStock: Symbol.for('SyncSellerStockUseCase'),
+  SetSellerListingDeclaredStock: Symbol.for('SetSellerListingDeclaredStockUseCase'),
   FetchRemoteStock: Symbol.for('FetchRemoteStockUseCase'),
   PublishSellerListingToMarketplace: Symbol.for('PublishSellerListingToMarketplaceUseCase'),
   ComputeJitPublishPlan: Symbol.for('ComputeJitPublishPlanUseCase'),

@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { container } from '../../di/container.js';
 import { UC_TOKENS } from '../../di/tokens.js';
-import { adminGuard, employeeGuard } from '../middleware/auth.guard.js';
+import { adminGuard, employeeGuard, getAuthenticatedUserId } from '../middleware/auth.guard.js';
 import type { ListProviderAccountsUseCase } from '../../core/use-cases/seller/list-provider-accounts.use-case.js';
 import type { CreateProviderAccountUseCase } from '../../core/use-cases/seller/create-provider-account.use-case.js';
 import type { UpdateProviderAccountUseCase } from '../../core/use-cases/seller/update-provider-account.use-case.js';
@@ -22,6 +22,7 @@ import type { UnlinkSellerListingMarketplaceProductUseCase } from '../../core/us
 import type { DeleteSellerListingUseCase } from '../../core/use-cases/seller/delete-seller-listing.use-case.js';
 import type { RecoverSellerListingHealthUseCase } from '../../core/use-cases/seller/recover-seller-listing-health.use-case.js';
 import type { SyncSellerStockUseCase } from '../../core/use-cases/seller/sync-seller-stock.use-case.js';
+import type { SetSellerListingDeclaredStockUseCase } from '../../core/use-cases/seller/set-seller-listing-declared-stock.use-case.js';
 import type { FetchRemoteStockUseCase } from '../../core/use-cases/seller/fetch-remote-stock.use-case.js';
 import type { PublishSellerListingToMarketplaceUseCase } from '../../core/use-cases/seller/publish-seller-listing-to-marketplace.use-case.js';
 import type { BindSellerListingExternalAuctionUseCase } from '../../core/use-cases/seller/bind-seller-listing-external-auction.use-case.js';
@@ -416,6 +417,36 @@ export async function adminSellerRoutes(app: FastifyInstance) {
     const admin_id = (request as unknown as Record<string, unknown>).adminId as string;
     const result = await uc.execute({ listing_id: id, admin_id });
     return reply.send(result);
+  });
+
+  // Operator-driven manual declared-stock update for a single listing.
+  // Pushes through the marketplace adapter (vendor quirks like Eneba 0→null
+  // are handled inside each adapter) and persists `manual_declared_stock` +
+  // `declared_stock` on success.
+  app.patch('/listings/:id/declared-stock', { preHandler: [adminGuard] }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const quantityRaw = body.quantity;
+    if (typeof quantityRaw !== 'number' || !Number.isFinite(quantityRaw) || !Number.isInteger(quantityRaw) || quantityRaw < 0) {
+      return reply.status(400).send({ error: 'quantity must be a non-negative integer' });
+    }
+
+    const uc = container.resolve<SetSellerListingDeclaredStockUseCase>(
+      UC_TOKENS.SetSellerListingDeclaredStock,
+    );
+    const admin_id = getAuthenticatedUserId(request);
+    try {
+      const result = await uc.execute({ listing_id: id, quantity: quantityRaw, admin_id });
+      return reply.send(result);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Manual declared-stock update failed';
+      logger.error('SetSellerListingDeclaredStock failed', err as Error, {
+        listing_id: id,
+        quantity: quantityRaw,
+        admin_id,
+      });
+      return reply.status(400).send({ error: message });
+    }
   });
 
   app.post('/listings/:id/remote-stock', { preHandler: [employeeGuard] }, async (request, reply) => {

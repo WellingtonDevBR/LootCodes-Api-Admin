@@ -220,7 +220,7 @@ export class SupabaseAdminInventoryRepository implements IAdminInventoryReposito
       ),
       this.batchedQuery<Record<string, unknown>>(
         'provider_variant_offers', 'variant_id', variantIds,
-        { select: 'variant_id, provider_account_id' },
+        { select: 'variant_id, provider_account_id, is_active, last_price_cents, currency' },
       ),
       this.db.queryAll<Record<string, unknown>>('provider_accounts', {
         select: 'id, display_name, supports_seller',
@@ -251,7 +251,7 @@ export class SupabaseAdminInventoryRepository implements IAdminInventoryReposito
       const vid = sl.variant_id as string;
       const ds = typeof sl.declared_stock === 'number' ? sl.declared_stock : 0;
       if (ds > 0) {
-        declaredStockMap.set(vid, Math.max(declaredStockMap.get(vid) ?? 0, ds));
+        declaredStockMap.set(vid, (declaredStockMap.get(vid) ?? 0) + ds);
       }
     }
 
@@ -271,6 +271,8 @@ export class SupabaseAdminInventoryRepository implements IAdminInventoryReposito
     const providerMap = new Map(providerAccounts.map(pa => [pa.id as string, pa]));
     const supplierIdsMap = new Map<string, string[]>();
     const purchaserIdsMap = new Map<string, string[]>();
+    // Best buy-side cost: minimum last_price_cents across active offers that have a price.
+    const bestProviderCostMap = new Map<string, { cents: number; currency: string }>();
     for (const offer of providerOffers) {
       const vid = offer.variant_id as string;
       const provider = providerMap.get(offer.provider_account_id as string);
@@ -284,6 +286,17 @@ export class SupabaseAdminInventoryRepository implements IAdminInventoryReposito
       const arr = supplierIdsMap.get(vid) ?? [];
       if (!arr.includes(provId)) arr.push(provId);
       supplierIdsMap.set(vid, arr);
+
+      // Collect cheapest active offer with a price (buy-provider side only)
+      const isActive = offer.is_active === true;
+      const priceCents = typeof offer.last_price_cents === 'number' ? offer.last_price_cents : null;
+      if (isActive && priceCents !== null && priceCents > 0) {
+        const cur = typeof offer.currency === 'string' ? offer.currency : 'USD';
+        const existing = bestProviderCostMap.get(vid);
+        if (!existing || priceCents < existing.cents) {
+          bestProviderCostMap.set(vid, { cents: priceCents, currency: cur });
+        }
+      }
     }
     // Seller listings also represent purchasers (marketplaces buying from us)
     for (const sl of sellerListings) {
@@ -302,7 +315,7 @@ export class SupabaseAdminInventoryRepository implements IAdminInventoryReposito
       const defaultCostCents = typeof v.default_cost_cents === 'number' ? v.default_cost_cents : null;
       const defaultCostCurrency = typeof v.default_cost_currency === 'string' ? v.default_cost_currency : null;
       const keysAvailable = stockAvailableMap.get(vid) ?? 0;
-      const declared = declaredStockMap.get(vid) ?? 0;
+      const bestCost = bestProviderCostMap.get(vid) ?? null;
       return {
         product_id: (v.product_id as string) ?? '',
         product_name: (product?.name as string) ?? '',
@@ -311,7 +324,7 @@ export class SupabaseAdminInventoryRepository implements IAdminInventoryReposito
         face_value: typeof v.face_value === 'string' ? v.face_value : null,
         region_name: (region?.code as string) ?? (region?.name as string) ?? null,
         platform_name: variantPlatformMap.get(vid) ?? null,
-        stock_available: Math.max(keysAvailable, declared),
+        stock_available: keysAvailable,
         stock_reserved: 0,
         stock_sold: stockSoldMap.get(vid) ?? 0,
         price_usd: (v.price_usd as number) ?? 0,
@@ -321,6 +334,9 @@ export class SupabaseAdminInventoryRepository implements IAdminInventoryReposito
         purchaser_ids: purchaserIdsMap.get(vid) ?? [],
         default_cost_cents: defaultCostCents,
         default_cost_currency: defaultCostCurrency,
+        best_provider_cost_cents: bestCost?.cents ?? null,
+        best_provider_cost_currency: bestCost?.currency ?? null,
+        total_declared_stock: declaredStockMap.get(vid) ?? 0,
       };
     });
 

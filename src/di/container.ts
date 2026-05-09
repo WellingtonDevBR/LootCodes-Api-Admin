@@ -288,6 +288,7 @@ import { UnlinkSellerListingMarketplaceProductUseCase } from '../core/use-cases/
 import { DeleteSellerListingUseCase } from '../core/use-cases/seller/delete-seller-listing.use-case.js';
 import { RecoverSellerListingHealthUseCase } from '../core/use-cases/seller/recover-seller-listing-health.use-case.js';
 import { SyncSellerStockUseCase } from '../core/use-cases/seller/sync-seller-stock.use-case.js';
+import { SetSellerListingDeclaredStockUseCase } from '../core/use-cases/seller/set-seller-listing-declared-stock.use-case.js';
 import { FetchRemoteStockUseCase } from '../core/use-cases/seller/fetch-remote-stock.use-case.js';
 import { PublishSellerListingToMarketplaceUseCase } from '../core/use-cases/seller/publish-seller-listing-to-marketplace.use-case.js';
 import { ComputeJitPublishPlanUseCase } from '../core/use-cases/seller/compute-jit-publish-plan.use-case.js';
@@ -316,7 +317,6 @@ import { SyncSellerListingPausedAlertsUseCase } from '../core/use-cases/seller/s
 import { HandleDeclaredStockReserveUseCase } from '../core/use-cases/seller-webhook/eneba/handle-declared-stock-reserve.use-case.js';
 import { HandleDeclaredStockProvideUseCase } from '../core/use-cases/seller-webhook/eneba/handle-declared-stock-provide.use-case.js';
 import { HandleDeclaredStockCancelUseCase } from '../core/use-cases/seller-webhook/eneba/handle-declared-stock-cancel.use-case.js';
-import { HandleEnebaKeyReplacementReserveUseCase } from '../core/use-cases/seller-webhook/eneba/handle-eneba-key-replacement-reserve.use-case.js';
 import { HandleKeyUploadOrderUseCase } from '../core/use-cases/seller-webhook/handle-key-upload-order.use-case.js';
 import { HandleMarketplaceRefundUseCase } from '../core/use-cases/seller-webhook/handle-marketplace-refund.use-case.js';
 import { HandleListingDeactivationUseCase } from '../core/use-cases/seller-webhook/handle-listing-deactivation.use-case.js';
@@ -667,6 +667,9 @@ container.register(UC_TOKENS.UnlinkSellerListingMarketplaceProduct, { useClass: 
 container.register(UC_TOKENS.DeleteSellerListing, { useClass: DeleteSellerListingUseCase });
 container.register(UC_TOKENS.RecoverSellerListingHealth, { useClass: RecoverSellerListingHealthUseCase });
 container.register(UC_TOKENS.SyncSellerStock, { useClass: SyncSellerStockUseCase });
+container.register(UC_TOKENS.SetSellerListingDeclaredStock, {
+  useClass: SetSellerListingDeclaredStockUseCase,
+});
 container.register(UC_TOKENS.FetchRemoteStock, { useClass: FetchRemoteStockUseCase });
 container.register(UC_TOKENS.ComputeJitPublishPlan, { useClass: ComputeJitPublishPlanUseCase });
 container.register(UC_TOKENS.PublishSellerListingToMarketplace, { useClass: PublishSellerListingToMarketplaceUseCase });
@@ -740,7 +743,6 @@ container.register(TOKENS.PlatformSettingsRepository, { useClass: SupabasePlatfo
 container.register(UC_TOKENS.HandleDeclaredStockReserve, { useClass: HandleDeclaredStockReserveUseCase });
 container.register(UC_TOKENS.HandleDeclaredStockProvide, { useClass: HandleDeclaredStockProvideUseCase });
 container.register(UC_TOKENS.HandleDeclaredStockCancel, { useClass: HandleDeclaredStockCancelUseCase });
-container.register(UC_TOKENS.HandleEnebaKeyReplacementReserve, { useClass: HandleEnebaKeyReplacementReserveUseCase });
 container.register(UC_TOKENS.HandleKeyUploadOrder, { useClass: HandleKeyUploadOrderUseCase });
 container.register(UC_TOKENS.HandleMarketplaceRefund, { useClass: HandleMarketplaceRefundUseCase });
 container.register(UC_TOKENS.HandleListingDeactivation, { useClass: HandleListingDeactivationUseCase });
