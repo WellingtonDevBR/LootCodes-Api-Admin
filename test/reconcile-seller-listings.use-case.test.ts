@@ -28,9 +28,9 @@ import type { SyncSellerListingPausedAlertsResult } from '../src/core/use-cases/
 /** All seven phases in canonical order. */
 const ALL_PHASES: ReconcilePhase[] = [
   'expire-reservations',
+  'sync-buyer-catalog',
   'cost-basis',
   'pricing',
-  'sync-buyer-catalog',
   'declared-stock',
   'remote-stock',
   'paused-listing-alerts',

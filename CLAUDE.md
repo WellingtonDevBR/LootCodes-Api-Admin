@@ -106,10 +106,11 @@ Seller-side maintenance (cost basis, pricing + marketplace push, declared-stock 
 ### Phases (executed in order)
 
 1. `expire-reservations` — release stale `seller_stock_reservations`
-2. `cost-basis` — refresh `seller_listings.cost_basis_cents` from median key cost
-3. `pricing` — recompute prices honouring manual overrides + `pricing_overrides` + per-listing strategy, then push via marketplace adapters
-4. `declared-stock` — reconcile declared-stock target via `computeDeclaredStockTarget` and push to marketplaces
-5. `remote-stock` — pull remote stock for `auto_sync_stock=true` listings
+2. `sync-buyer-catalog` — fetch live quotes from Bamboo/AppRoute, refresh `provider_variant_offers` **before** cost-basis reads it
+3. `cost-basis` — refresh `seller_listings.cost_basis_cents` using up-to-date buyer offer prices
+4. `pricing` — recompute prices honouring manual overrides + `pricing_overrides` + per-listing strategy, then push via marketplace adapters
+5. `declared-stock` — reconcile declared-stock target via `computeDeclaredStockTarget` and push to marketplaces
+6. `remote-stock` — pull remote stock for `auto_sync_stock=true` listings
 
 ### Request body (strict — validated by Zod)
 

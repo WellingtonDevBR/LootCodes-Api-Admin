@@ -6,14 +6,15 @@ import type { FulfillmentMode } from '../../ports/platform-settings.port.js';
 
 export const RECONCILE_PHASES = [
   'expire-reservations',
-  'cost-basis',
-  'pricing',
   /**
    * Fetches live quotes from Bamboo (and future buyer providers) and refreshes
-   * `provider_variant_offers` before the declared-stock phase reads it.
+   * `provider_variant_offers` BEFORE `cost-basis` and `pricing` so that cost
+   * increases are reflected in the listing price within the same cron tick.
    * Replaces the deprecated Supabase `provider-catalog-sync` pg_cron job.
    */
   'sync-buyer-catalog',
+  'cost-basis',
+  'pricing',
   'declared-stock',
   'remote-stock',
   /**

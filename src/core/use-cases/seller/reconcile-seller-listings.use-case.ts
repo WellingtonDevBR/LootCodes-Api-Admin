@@ -3,9 +3,9 @@
  *
  * Runs seven phases per request, in order:
  *   1. expire-reservations    — release stale `seller_stock_reservations`
- *   2. cost-basis             — refresh `seller_listings.cost_basis_cents`
- *   3. pricing                — recompute prices (manual + strategy + smart) and push to marketplaces
- *   4. sync-buyer-catalog     — fetch live quotes from Bamboo, refresh `provider_variant_offers`
+ *   2. sync-buyer-catalog     — fetch live quotes from Bamboo, refresh `provider_variant_offers`
+ *   3. cost-basis             — refresh `seller_listings.cost_basis_cents` using up-to-date offers
+ *   4. pricing                — recompute prices (manual + strategy + smart) and push to marketplaces
  *   5. declared-stock         — reconcile declared-stock target and push to marketplaces
  *   6. remote-stock           — pull remote stock for `auto_sync_stock=true` listings
  *   7. paused-listing-alerts  — sync `admin_alerts` of type `seller_listing_paused` so the CRM
