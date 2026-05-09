@@ -6,6 +6,12 @@
  *      Reservation: log(failed) / log(completed) >= 0.4 → auto-pause
  *      Provision:   log(failed) / log(completed) >= 0.2 → auto-pause
  * 3) Warning at 80% of threshold → admin alert (severity high)
+ *
+ * Alerts are edge-triggered: a warning / breach alert fires only on the event that
+ * pushes the ratio across the band boundary. Subsequent events that stay inside the
+ * same band — including successful operations that mathematically can only improve
+ * the ratio — do NOT emit duplicate alerts. The DB pause action is still idempotent
+ * (only flips active → paused, never re-pauses).
  */
 import { injectable, inject } from 'tsyringe';
 import { TOKENS } from '../../di/tokens.js';
@@ -23,6 +29,16 @@ const THRESHOLDS: Record<CallbackType, number> = {
 const WARNING_BUFFER = 0.8;
 const RESERVATION_CONSECUTIVE_FAILURE_PAUSE_AT = 2;
 const AUTO_PAUSE_PREFIX = 'Auto-paused:';
+
+/**
+ * log(failure)/log(success) with a safe definition for the boundary cases
+ * `success < 2` and `failure < 1` — those rows aren't yet eligible for the
+ * threshold check, so we treat the ratio as 0 (healthy).
+ */
+function computeLogRatio(successCount: number, failureCount: number): number {
+  if (successCount < 2 || failureCount < 1) return 0;
+  return Math.log(failureCount) / Math.log(successCount);
+}
 
 interface ListingHealthRow {
   id: string;
@@ -93,12 +109,6 @@ export class ListingHealthService implements IListingHealthPort {
         !success &&
         newReservationConsecutive >= RESERVATION_CONSECUTIVE_FAILURE_PAUSE_AT
       ) {
-        logger.error('Reservation circuit breaker — consecutive failures threshold', {
-          listingId: listing.id,
-          externalListingId,
-          consecutiveFailures: newReservationConsecutive,
-        });
-
         if (listing.status === 'active') {
           await this.db.update('seller_listings', { id: listing.id }, {
             status: 'paused',
@@ -107,6 +117,12 @@ export class ListingHealthService implements IListingHealthPort {
         }
 
         if (newReservationConsecutive === RESERVATION_CONSECUTIVE_FAILURE_PAUSE_AT) {
+          logger.error('Reservation circuit breaker — consecutive failures threshold', {
+            listingId: listing.id,
+            externalListingId,
+            consecutiveFailures: newReservationConsecutive,
+          });
+
           await this.createAdminAlert({
             alertType: 'seller_reservation_circuit_tripped',
             severity: 'critical',
@@ -128,20 +144,15 @@ export class ListingHealthService implements IListingHealthPort {
       // ─── Log-ratio thresholds ───
       if (newSuccess < 2 || newFailure < 1) return;
 
-      const ratio = Math.log(newFailure) / Math.log(newSuccess);
       const threshold = THRESHOLDS[callbackType];
+      const warningLine = threshold * WARNING_BUFFER;
+      const ratio = computeLogRatio(newSuccess, newFailure);
+      const prevRatio = computeLogRatio(currentSuccess, currentFailure);
+      const justBreached = ratio >= threshold && prevRatio < threshold;
+      const justWarned =
+        ratio >= warningLine && ratio < threshold && prevRatio < warningLine;
 
       if (ratio >= threshold) {
-        logger.error('Health threshold BREACHED — auto-pausing listing', {
-          listingId: listing.id,
-          externalListingId,
-          callbackType,
-          ratio: ratio.toFixed(3),
-          threshold,
-          successCount: newSuccess,
-          failureCount: newFailure,
-        });
-
         if (listing.status === 'active') {
           await this.db.update('seller_listings', { id: listing.id }, {
             status: 'paused',
@@ -149,12 +160,8 @@ export class ListingHealthService implements IListingHealthPort {
           });
         }
 
-        await this.createAdminAlert({
-          alertType: 'seller_health_threshold_breached',
-          severity: 'critical',
-          title: `Seller listing auto-paused: ${callbackType} threshold breached`,
-          message: `Listing ${externalListingId} auto-paused. ${callbackType} failure ratio ${ratio.toFixed(3)} >= ${threshold}. Success: ${newSuccess}, Failure: ${newFailure}.`,
-          metadata: {
+        if (justBreached) {
+          logger.error('Health threshold BREACHED — auto-pausing listing', {
             listingId: listing.id,
             externalListingId,
             callbackType,
@@ -162,16 +169,32 @@ export class ListingHealthService implements IListingHealthPort {
             threshold,
             successCount: newSuccess,
             failureCount: newFailure,
-          },
-        });
-      } else if (ratio >= threshold * WARNING_BUFFER) {
+          });
+
+          await this.createAdminAlert({
+            alertType: 'seller_health_threshold_breached',
+            severity: 'critical',
+            title: `Seller listing auto-paused: ${callbackType} threshold breached`,
+            message: `Listing ${externalListingId} auto-paused. ${callbackType} failure ratio ${ratio.toFixed(3)} >= ${threshold}. Success: ${newSuccess}, Failure: ${newFailure}.`,
+            metadata: {
+              listingId: listing.id,
+              externalListingId,
+              callbackType,
+              ratio: ratio.toFixed(3),
+              threshold,
+              successCount: newSuccess,
+              failureCount: newFailure,
+            },
+          });
+        }
+      } else if (justWarned) {
         logger.warn('Health threshold approaching', {
           listingId: listing.id,
           externalListingId,
           callbackType,
           ratio: ratio.toFixed(3),
           threshold,
-          warningAt: (threshold * WARNING_BUFFER).toFixed(3),
+          warningAt: warningLine.toFixed(3),
         });
 
         await this.createAdminAlert({
