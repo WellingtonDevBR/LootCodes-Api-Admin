@@ -9,8 +9,13 @@ interface SellerListingRow {
   status: string;
   error_message: string | null;
   reservation_consecutive_failures: number;
-  provider_code: string | null;
+  provider_account_id: string;
   variant_id: string;
+}
+
+interface ProviderAccountRow {
+  id: string;
+  provider_code: string;
 }
 
 interface AdminAlertRow {
@@ -32,11 +37,17 @@ interface AdminAlertRow {
  */
 class FakeDb implements Partial<IDatabase> {
   readonly listings: SellerListingRow[];
+  readonly providerAccounts: ProviderAccountRow[];
   readonly alerts: AdminAlertRow[];
   private nextId = 1;
 
-  constructor(opts: { readonly listings?: SellerListingRow[]; readonly alerts?: AdminAlertRow[] } = {}) {
+  constructor(opts: {
+    readonly listings?: SellerListingRow[];
+    readonly providerAccounts?: ProviderAccountRow[];
+    readonly alerts?: AdminAlertRow[];
+  } = {}) {
     this.listings = (opts.listings ?? []).map((row) => ({ ...row }));
+    this.providerAccounts = (opts.providerAccounts ?? []).map((row) => ({ ...row }));
     this.alerts = (opts.alerts ?? []).map((row) => ({ ...row }));
   }
 
@@ -46,6 +57,12 @@ class FakeDb implements Partial<IDatabase> {
       if (!inFilter) throw new Error('expected in:[status,...] filter on seller_listings');
       const states = new Set(inFilter[1] as string[]);
       return this.listings.filter((row) => states.has(row.status)) as unknown as T[];
+    }
+    if (table === 'provider_accounts') {
+      const inFilter = options?.in?.find(([col]) => col === 'id');
+      if (!inFilter) return [] as unknown as T[];
+      const ids = new Set(inFilter[1] as string[]);
+      return this.providerAccounts.filter((a) => ids.has(a.id)) as unknown as T[];
     }
     if (table === 'admin_alerts') {
       const eq = options?.eq ?? [];
@@ -88,6 +105,10 @@ class FakeDb implements Partial<IDatabase> {
   }
 }
 
+/** Default provider account wired to all listings unless overridden. */
+const DEFAULT_PROVIDER_ACCOUNT: ProviderAccountRow = { id: 'pa-eneba', provider_code: 'eneba' };
+const KINGUIN_PROVIDER_ACCOUNT: ProviderAccountRow = { id: 'pa-kinguin', provider_code: 'kinguin' };
+
 function listing(overrides: Partial<SellerListingRow>): SellerListingRow {
   return {
     id: 'listing-1',
@@ -95,7 +116,7 @@ function listing(overrides: Partial<SellerListingRow>): SellerListingRow {
     status: 'paused',
     error_message: 'Stock sync failed: Rate limit exceeded for eneba',
     reservation_consecutive_failures: 0,
-    provider_code: 'eneba',
+    provider_account_id: DEFAULT_PROVIDER_ACCOUNT.id,
     variant_id: 'variant-1',
     ...overrides,
   };
@@ -123,8 +144,9 @@ describe('SupabaseAdminAlertsRepository.syncSellerListingPausedAlerts', () => {
     const db = new FakeDb({
       listings: [
         listing({ id: 'l1', external_listing_id: 'ext-1', status: 'paused' }),
-        listing({ id: 'l2', external_listing_id: 'ext-2', status: 'failed', provider_code: 'kinguin' }),
+        listing({ id: 'l2', external_listing_id: 'ext-2', status: 'failed', provider_account_id: KINGUIN_PROVIDER_ACCOUNT.id }),
       ],
+      providerAccounts: [DEFAULT_PROVIDER_ACCOUNT, KINGUIN_PROVIDER_ACCOUNT],
     });
 
     const repo = new SupabaseAdminAlertsRepository(db as unknown as IDatabase);
@@ -142,9 +164,8 @@ describe('SupabaseAdminAlertsRepository.syncSellerListingPausedAlerts', () => {
 
   it('upgrades severity to critical when reservation_consecutive_failures >= 2 (circuit breaker tripped)', async () => {
     const db = new FakeDb({
-      listings: [
-        listing({ id: 'l1', reservation_consecutive_failures: 2 }),
-      ],
+      listings: [listing({ id: 'l1', reservation_consecutive_failures: 2 })],
+      providerAccounts: [DEFAULT_PROVIDER_ACCOUNT],
     });
 
     const repo = new SupabaseAdminAlertsRepository(db as unknown as IDatabase);
@@ -157,6 +178,7 @@ describe('SupabaseAdminAlertsRepository.syncSellerListingPausedAlerts', () => {
   it('does NOT create a duplicate alert when an open alert already exists for the same listing', async () => {
     const db = new FakeDb({
       listings: [listing({ id: 'l1' })],
+      providerAccounts: [DEFAULT_PROVIDER_ACCOUNT],
       alerts: [openAlert({ listingId: 'l1' })],
     });
 
@@ -171,6 +193,7 @@ describe('SupabaseAdminAlertsRepository.syncSellerListingPausedAlerts', () => {
     const stale = openAlert({ id: 'a-stale', listingId: 'l-now-active' });
     const db = new FakeDb({
       listings: [listing({ id: 'l1' })],
+      providerAccounts: [DEFAULT_PROVIDER_ACCOUNT],
       alerts: [stale],
     });
 
@@ -189,11 +212,12 @@ describe('SupabaseAdminAlertsRepository.syncSellerListingPausedAlerts', () => {
         listing({
           id: 'l1',
           external_listing_id: 'b1259882-4af3-11f1-8bc7-0e96fa65f949',
-          provider_code: 'eneba',
+          provider_account_id: DEFAULT_PROVIDER_ACCOUNT.id,
           variant_id: '9b9d95e9-292c-4854-8edb-813e69c406cf',
           error_message: 'Stock sync failed: Rate limit exceeded for eneba',
         }),
       ],
+      providerAccounts: [DEFAULT_PROVIDER_ACCOUNT],
     });
 
     const repo = new SupabaseAdminAlertsRepository(db as unknown as IDatabase);
@@ -208,7 +232,7 @@ describe('SupabaseAdminAlertsRepository.syncSellerListingPausedAlerts', () => {
   });
 
   it('marks the alert requires_action so the CRM Restore button can drive resolution', async () => {
-    const db = new FakeDb({ listings: [listing({ id: 'l1' })] });
+    const db = new FakeDb({ listings: [listing({ id: 'l1' })], providerAccounts: [DEFAULT_PROVIDER_ACCOUNT] });
 
     const repo = new SupabaseAdminAlertsRepository(db as unknown as IDatabase);
     await repo.syncSellerListingPausedAlerts();
