@@ -161,7 +161,7 @@ export class SupabaseAdminAlertsRepository implements IAdminAlertsRepository {
 }
 
 const SELLER_LISTING_PAUSED_ALERT_TYPE = 'seller_listing_paused';
-const PAUSED_STATES = ['paused', 'failed', 'error'] as const;
+const PAUSED_STATES: string[] = ['paused', 'failed', 'error'];
 /** Reservation circuit-breaker tripped at this consecutive-failure count → escalate severity. */
 const CRITICAL_RESERVATION_FAILURE_FLOOR = 2;
 
