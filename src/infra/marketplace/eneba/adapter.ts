@@ -91,6 +91,14 @@ export class EnebaAdapter
     ISellerBatchDeclaredStockAdapter,
     ISellerGlobalStockAdapter
 {
+  /**
+   * Eneba pricing model: the auto-pricing cron computes prices in NET terms
+   * (what the seller receives after commission and fixed fee) and submits them
+   * via `priceIWantToGet`. Eneba then calculates the gross buyer-facing price.
+   * This prevents us from having to manually mirror Eneba's fee structure in
+   * our floor calculation — the Eneba API is the source of truth for fees.
+   */
+  readonly pricingModel = 'seller_price' as const;
   readonly isSandbox: boolean;
 
   constructor(
@@ -179,6 +187,8 @@ export class EnebaAdapter
 
     // Eneba deprecated listing prices on S_updateAuction; production often returns HTTP 400 if
     // price is sent there. Mirror Edge: P_updateAuctionPrice for money, then stock mutations.
+    // Use priceIWantToGet (NET) so Eneba computes the gross buyer price using its own fee
+    // schedule — consistent with batchUpdatePrices and the pricingModel='seller_price' contract.
     if (hasPrice) {
       const data = await this.gqlClient.execute<EnebaUpdateAuctionPriceData>(
         UPDATE_AUCTION_PRICE_MUTATION,
@@ -186,7 +196,7 @@ export class EnebaAdapter
           items: [
             {
               auctionId: params.externalListingId,
-              price: { amount: params.priceCents as number, currency },
+              priceIWantToGet: { amount: params.priceCents as number, currency },
             },
           ],
         },
@@ -496,10 +506,16 @@ export class EnebaAdapter
     // (e.g. after a no-credit/uneconomic cycle) are re-activated when a new
     // price is pushed. P_updateAuctionPrice accepts the enabled field per the
     // Eneba API docs.
+    //
+    // `priceIWantToGet` is the NET amount the seller wants to receive after
+    // Eneba deducts commission and fixed fees. Eneba calculates the gross
+    // buyer-facing price from this value using its own fee schedule, which
+    // means we don't need to mirror Eneba's exact fee structure on our side.
+    // The auto-pricing cron passes NET prices when pricingModel='seller_price'.
     const items = updates.map((u) => ({
       auctionId: u.externalListingId,
       enabled: true,
-      price: { amount: u.priceCents, currency: u.currency ?? 'EUR' },
+      priceIWantToGet: { amount: u.priceCents, currency: u.currency ?? 'EUR' },
     }));
 
     const data = await this.gqlClient.execute<EnebaUpdateAuctionPriceData>(
