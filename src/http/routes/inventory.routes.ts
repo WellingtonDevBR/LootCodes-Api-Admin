@@ -13,7 +13,9 @@ const logger = createLogger('admin-inventory-routes');
 
 function mapKeyState(keyState: string | null, isUsed: boolean): 'available' | 'reserved' | 'sold' {
   if (isUsed || keyState === 'used' || keyState === 'seller_provisioned') return 'sold';
-  if (keyState === 'assigned' || keyState === 'seller_reserved') return 'reserved';
+  // faulty and burnt keys are no longer available for sale — count as sold (consumed).
+  if (keyState === 'faulty' || keyState === 'burnt') return 'sold';
+  if (keyState === 'assigned' || keyState === 'revealed' || keyState === 'seller_reserved' || keyState === 'seller_uploaded') return 'reserved';
   return 'available';
 }
 
