@@ -12,6 +12,11 @@
  *        - Kinguin → `ISellerListingAdapter.deactivateListing`
  *        - Eneba / G2A / Gamivo / Digiseller → `ISellerDeclaredStockAdapter.declareStock(id, 0)`
  *
+ *   4. When the selector returns 'uneconomic' but a credited offer exists, the service
+ *      auto-corrects the listing price to `ceil(offerCost × (1 + margin%))` (floor) and
+ *      DECLARES stock (never disables). Stock is always declared when credit exists —
+ *      the price is fixed first so we never sell at a loss.
+ *
  *   3. When a listing has a credited buyer, `declareStock(id, qty)` is called
  *      on the marketplace adapter (not the disable path).
  */
@@ -526,9 +531,21 @@ describe('ProcurementDeclaredStockReconcileService — credit-gated flow', () =>
       externalProductId: '78086f2a-d485-11ee-aead-b2de3de418b4',
     });
 
-    // Buyer at $17 breaks the authoritative ceiling 1_649*0.99=1_632 →
-    // selector returns 'uneconomic' → reconcile dispatches declareStock(id, 0).
-    expect(enebaDeclared.calls).toEqual([{ externalListingId: 'eneba-mc', quantity: 0 }]);
+    // Buyer at $17 breaks the authoritative ceiling 1_649*0.99=1_632 → selector
+    // returns 'uneconomic'. New behaviour: instead of disabling, the service
+    // auto-corrects the price to (offer_cost × (1 + margin%)) = ceil(1700*1.01)
+    // = 1_717 cents and THEN declares stock at the available quantity.
+    // Never block stock declaration because of a stale/low price — fix the price and sell.
+    expect(enebaDeclared.calls).toEqual([{ externalListingId: 'eneba-mc', quantity: 10 }]);
+
+    // A price-correction DB update should have been recorded before the declare.
+    const priceCorrections = db.updates.filter(
+      (u) => u.table === 'seller_listings'
+        && (u.filter as Record<string, unknown>).id === 'l-mc'
+        && typeof (u.data as Record<string, unknown>).price_cents === 'number',
+    );
+    expect(priceCorrections).toHaveLength(1);
+    expect((priceCorrections[0].data as Record<string, unknown>).price_cents).toBe(1_717);
   });
 
   it('falls back to manual config math when no pricing adapter is registered (e.g. Digiseller)', async () => {
