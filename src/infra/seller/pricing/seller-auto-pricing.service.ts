@@ -457,6 +457,35 @@ export class SellerAutoPricingService implements ISellerAutoPricingService {
               profitabilityFloorCents,
             );
 
+          // Floor-correction guard: if the current price is below the cost floor, push
+          // the floor immediately — bypassing dampening, competitors, and budget checks.
+          // A below-cost listing price is a system invariant violation; it must be
+          // corrected on every cron tick regardless of competitive strategy.
+          if (effectiveMin > 0 && listing.price_cents > 0 && listing.price_cents < effectiveMin && listing.external_listing_id) {
+            batchUpdates.push({
+              listingId: listing.id,
+              externalListingId: listing.external_listing_id,
+              externalProductId: listing.external_product_id,
+              newPriceCents: effectiveMin,
+              currency: listing.currency,
+              feeCents: 0,
+              pendingDecision: {
+                seller_listing_id: listing.id, action: 'pushed',
+                reason_code: 'floor_correction',
+                reason_detail: `Price ${listing.price_cents} is below cost floor ${effectiveMin}; correcting immediately`,
+                price_before_cents: listing.price_cents, target_price_cents: effectiveMin,
+                price_after_cents: effectiveMin, effective_floor_cents: effectiveMin,
+                competitor_count: 0, lowest_competitor_cents: null,
+                second_lowest_competitor_cents: null,
+                our_position_before: null, our_position_after: null,
+                estimated_fee_cents: 0, estimated_payout_cents: null,
+                config_snapshot: configSnapshot, proposed_price_cents: effectiveMin,
+                decision_context: { block_stage: 'floor_correction' },
+              },
+            });
+            continue;
+          }
+
           // Fetch competitors — use pre-fetched cache when available.
           // Falls back to a live API call only when the batch pre-fetch was skipped
           // (e.g. adapter does not implement batchGetCompetitorPrices).
