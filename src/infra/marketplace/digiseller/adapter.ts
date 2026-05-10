@@ -287,7 +287,7 @@ export class DigisellerMarketplaceAdapter
     try {
       let totalPages = maxPages;
       for (let page = 1; page <= totalPages && collected.length < limit; page++) {
-        const resp = await this.httpClient.post<DigisellerSellerGoodsResponse>('seller-goods', {
+        const resp = await this.httpClient.post<DigisellerSellerGoodsResponse>('/api/seller-goods', {
           id_seller: this.sellerNumericId,
           page,
           rows: rowsPerPage,
