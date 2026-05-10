@@ -39,6 +39,7 @@ import {
 import { parseSellerConfig, type SellerProviderConfig } from '../../core/use-cases/seller/seller.types.js';
 import { mergeSellerListingPricingOverrides } from '../../core/use-cases/seller/listing-pricing-overrides-merge.js';
 import { MAX_PROCUREMENT_DECLARED_STOCK } from '../../core/shared/procurement-declared-stock.js';
+import { computeStrategyAwareCorrectedPrice } from './compute-strategy-aware-correction.js';
 import { loadBuyerCapableOffersByVariant } from './load-procurement-offer-supply.js';
 import { dispatchListingDisable } from './dispatch-listing-disable.js';
 import { isTransientMarketplaceError } from './recognize-transient-marketplace-error.js';
@@ -175,15 +176,25 @@ export class ProcurementDeclaredStockReconcileService implements IProcurementDec
       } else if (decision.reason === 'uneconomic') {
         // The listing price is currently below the procurement cost floor.
         // Rule: never block stock declaration due to price — instead raise the
-        // price to (cheapest_offer_cost × (1 + margin%)) and declare stock.
+        // price to floor AND apply the configured pricing strategy on top
+        // (e.g. match_lowest competitor). Then declare stock.
         const mergedConfig = mergeSellerListingPricingOverrides(account.seller_config, listing.pricing_overrides);
         const cheapest = await this.findCheapestCreditedOffer(offers, walletSnapshot);
         if (cheapest) {
-          const correctedPriceCents = await this.computeFloorInListingCurrency(
-            cheapest.unitCostUsdCents,
-            listing.currency,
-            mergedConfig.min_profit_margin_pct,
-          );
+          const pricingModel = this.registry.getPricingAdapter(account.provider_code)?.pricingModel;
+          const correctedPriceCents = await computeStrategyAwareCorrectedPrice({
+            db: this.db,
+            fx: this.fx,
+            listingId: listing.id,
+            listingCurrency: listing.currency,
+            offerCostUsdCents: cheapest.unitCostUsdCents,
+            marginPct: mergedConfig.min_profit_margin_pct,
+            commissionPct: mergedConfig.commission_rate_percent,
+            fixedFeeCents: mergedConfig.fixed_fee_cents,
+            priceStrategy: mergedConfig.price_strategy,
+            priceStrategyValue: mergedConfig.price_strategy_value,
+            pricingModel,
+          });
           const declaredQty = Math.min(
             Math.max(1, Math.trunc(cheapest.offer.available_quantity ?? 1)),
             MAX_PROCUREMENT_DECLARED_STOCK,
@@ -523,28 +534,6 @@ export class ProcurementDeclaredStockReconcileService implements IProcurementDec
       }
     }
     return null;
-  }
-
-  /**
-   * Converts a USD cost to the listing currency and adds the margin percentage,
-   * yielding the minimum price (priceIWantToGet for Eneba) that keeps us profitable.
-   *
-   * Formula: ceil(costInListingCurrency × (1 + marginPct/100))
-   */
-  private async computeFloorInListingCurrency(
-    costUsdCents: number,
-    listingCurrency: string,
-    marginPct: number,
-  ): Promise<number> {
-    // Convert USD→listingCurrency via the FX converter's reverse rate.
-    // toUsdCents(100 units of listingCurrency) gives USD per 100 units,
-    // so costUsdCents / (usdPer100 / 100) = listing cents.
-    const usdPer100 = await this.fx.toUsdCents(100, listingCurrency);
-    const costInListing = usdPer100 != null && usdPer100 > 0
-      ? (costUsdCents / usdPer100) * 100
-      : costUsdCents; // fallback: treat as same currency (should not happen in practice)
-    const safeMargin = Math.max(0, marginPct ?? 0);
-    return Math.ceil(costInListing * (1 + safeMargin / 100));
   }
 
   private async runSelector(

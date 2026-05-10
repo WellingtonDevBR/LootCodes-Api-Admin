@@ -25,6 +25,7 @@ import type { IBuyerWalletSnapshotter } from '../../../core/ports/buyer-wallet-s
 import { getSpendableCentsFromSnapshot } from '../../../core/ports/buyer-wallet-snapshot.port.js';
 import type { IProcurementFxConverter } from '../../../core/ports/procurement-fx-converter.port.js';
 import { MAX_PROCUREMENT_DECLARED_STOCK } from '../../../core/shared/procurement-declared-stock.js';
+import { computeStrategyAwareCorrectedPrice } from '../compute-strategy-aware-correction.js';
 import {
   CreditAwareDeclaredStockSelectorUseCase,
   type DeclaredStockOfferRow,
@@ -431,18 +432,6 @@ export class SellerStockSyncService implements ISellerStockSyncService {
     return null;
   }
 
-  private async computeFloorInListingCurrency(
-    costUsdCents: number,
-    listingCurrency: string,
-    marginPct: number,
-  ): Promise<number> {
-    const usdPer100 = await this.fx.toUsdCents(100, listingCurrency);
-    const costInListing = usdPer100 != null && usdPer100 > 0
-      ? (costUsdCents / usdPer100) * 100
-      : costUsdCents;
-    const safeMargin = Math.max(0, marginPct ?? 0);
-    return Math.ceil(costInListing * (1 + safeMargin / 100));
-  }
 
   // ─── Declared-stock branch (credit-aware, decision-only) ────────────────
 
@@ -513,15 +502,24 @@ export class SellerStockSyncService implements ISellerStockSyncService {
 
     if (decision.reason === 'uneconomic') {
       // Price below procurement cost floor — find cheapest credited offer,
-      // correct the price to floor, and declare stock. Never block declaration
-      // due to stale/wrong price; fix the price and sell.
+      // correct the price to floor + strategy, and declare stock. Never block
+      // declaration due to stale/wrong price; fix the price and sell.
       const cheapest = await this.findCheapestCreditedOffer(offers, walletSnapshot);
       if (cheapest) {
-        const correctedPriceCents = await this.computeFloorInListingCurrency(
-          cheapest.unitCostUsdCents,
-          listing.currency,
-          merged.min_profit_margin_pct,
-        );
+        const pricingModel = this.registry.getPricingAdapter(listing.provider_code)?.pricingModel;
+        const correctedPriceCents = await computeStrategyAwareCorrectedPrice({
+          db: this.db,
+          fx: this.fx,
+          listingId: listing.id,
+          listingCurrency: listing.currency,
+          offerCostUsdCents: cheapest.unitCostUsdCents,
+          marginPct: merged.min_profit_margin_pct,
+          commissionPct: merged.commission_rate_percent,
+          fixedFeeCents: merged.fixed_fee_cents,
+          priceStrategy: merged.price_strategy,
+          priceStrategyValue: merged.price_strategy_value,
+          pricingModel,
+        });
         const declaredQty = Math.min(
           Math.max(1, Math.trunc(cheapest.offer.available_quantity ?? 1)),
           MAX_PROCUREMENT_DECLARED_STOCK,
