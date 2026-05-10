@@ -85,14 +85,43 @@ function pruneOldTimestamps(timestamps: string[], windowHours: number): string[]
   return timestamps.filter((t) => new Date(t).getTime() > cutoff);
 }
 
+/**
+ * @param realQuotaRemaining  Live priceUpdateQuota.quota from Eneba S_stock — when
+ *   present, used as the authoritative free-slot count instead of our local
+ *   price_change_timestamps counter (which drifts on server restarts).
+ */
 function evaluatePriceChangeBudget(
   listing: SellerListingRow,
   config: SellerProviderConfig,
+  realQuotaRemaining?: number | null,
 ): BudgetResult {
   if (config.price_change_fee_cents === 0 || config.price_change_free_quota === -1) {
     return { allowed: true, isFree: true, feeCents: 0 };
   }
 
+  // If Eneba told us exactly how many free slots are left, trust that over
+  // our local timestamp counter (which can drift on restarts).
+  if (realQuotaRemaining != null) {
+    if (realQuotaRemaining > 0) {
+      return { allowed: true, isFree: true, feeCents: 0 };
+    }
+    // Free quota exhausted per Eneba's own record.
+    if (config.auto_price_free_only) {
+      return { allowed: false, isFree: false, feeCents: 0 };
+    }
+    // Fall through to paid-slot check using local timestamps.
+    const timestamps = getPriceChangeTimestamps(listing.provider_metadata);
+    const paidSoFar = Math.max(
+      0,
+      countRecentChanges(timestamps, config.price_change_window_hours) - config.price_change_free_quota,
+    );
+    if (config.price_change_max_paid_per_window > 0 && paidSoFar < config.price_change_max_paid_per_window) {
+      return { allowed: true, isFree: false, feeCents: config.price_change_fee_cents };
+    }
+    return { allowed: false, isFree: false, feeCents: 0 };
+  }
+
+  // Fallback: timestamp-based counting (providers without live quota API).
   const timestamps = getPriceChangeTimestamps(listing.provider_metadata);
   const recentChanges = countRecentChanges(timestamps, config.price_change_window_hours);
 
@@ -314,6 +343,28 @@ export class SellerAutoPricingService implements ISellerAutoPricingService {
       const providerAccountId = providerListings[0].provider_account_id;
       const baseConfig = await this.pricingService.getProviderConfig(providerAccountId);
 
+      // For Eneba, pull real priceUpdateQuota.quota per auction from S_stock.
+      // This gives us the authoritative free-slot count — more reliable than our
+      // local price_change_timestamps counter which resets on server restarts.
+      // Map: externalListingId → free changes remaining this window.
+      const realQuotaByListing = new Map<string, number>();
+      if (typeof (listingAdapter as Record<string, unknown>)?.fetchAllStock === 'function') {
+        try {
+          const stockNodes = await (listingAdapter as unknown as { fetchAllStock(): Promise<Array<{ id: string; priceUpdateQuota?: { quota: number } | null }>> }).fetchAllStock();
+          for (const node of stockNodes) {
+            const quota = node.priceUpdateQuota?.quota;
+            if (quota != null) realQuotaByListing.set(node.id, quota);
+          }
+          logger.info('Synced real price quota from S_stock', {
+            requestId, providerCode, listingCount: realQuotaByListing.size,
+          });
+        } catch (err) {
+          logger.warn('Failed to fetch S_stock for quota sync; falling back to timestamp counter', {
+            requestId, providerCode, error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+
       const batchUpdates: Array<{
         listingId: string;
         externalListingId: string;
@@ -433,7 +484,10 @@ export class SellerAutoPricingService implements ISellerAutoPricingService {
           });
 
           // Budget check
-          const budget = evaluatePriceChangeBudget(listing, config);
+          const realQuota = listing.external_listing_id
+            ? (realQuotaByListing.get(listing.external_listing_id) ?? null)
+            : null;
+          const budget = evaluatePriceChangeBudget(listing, config, realQuota);
           if (!budget.allowed) {
             result.pricesSkippedRateLimit++;
             await this.recordDecision({

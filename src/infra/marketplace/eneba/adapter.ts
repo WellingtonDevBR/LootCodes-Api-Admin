@@ -51,6 +51,7 @@ import type {
   EnebaCreateAuctionData,
   EnebaRemoveAuctionData,
   EnebaGetStockData,
+  EnebaStockNode,
   EnebaRegisterCallbackData,
   EnebaGetCallbacksData,
   EnebaEnableDeclaredStockData,
@@ -744,5 +745,44 @@ export class EnebaAdapter
       GET_STOCK_QUERY,
       variables,
     );
+  }
+
+  /**
+   * Fetch all our auctions from Eneba via S_stock with cursor pagination.
+   *
+   * Returns the raw EnebaStockNode array including priceUpdateQuota per auction,
+   * onHand, declaredStock, status, and position. Used by the pricing phase to
+   * read the authoritative free-change quota remaining from Eneba instead of
+   * relying on our local price_change_timestamps counter.
+   *
+   * Handles pagination automatically (100 per page) up to 10k auctions.
+   * For >10k auctions, S_stockBulkSearch would be needed — not expected here.
+   */
+  async fetchAllStock(): Promise<EnebaStockNode[]> {
+    if (this.isSandbox) return [];
+
+    const nodes: EnebaStockNode[] = [];
+    let after: string | null = null;
+
+    do {
+      const variables: Record<string, unknown> = { first: 100 };
+      if (after) variables.after = after;
+
+      const data = await this.gqlClient.execute<EnebaGetStockData>(
+        GET_STOCK_QUERY,
+        variables,
+      );
+
+      const connection = data.S_stock;
+      for (const edge of connection.edges) {
+        nodes.push(edge.node);
+      }
+
+      after = connection.pageInfo?.hasNextPage
+        ? (connection.pageInfo.endCursor ?? null)
+        : null;
+    } while (after !== null);
+
+    return nodes;
   }
 }
