@@ -49,7 +49,6 @@ import type {
   EnebaGetProductData,
   EnebaCompetitionData,
   EnebaCreateAuctionData,
-  EnebaUpdateAuctionData,
   EnebaRemoveAuctionData,
   EnebaGetStockData,
   EnebaRegisterCallbackData,
@@ -66,7 +65,6 @@ import {
   GET_STOCK_QUERY,
   CALCULATE_PRICE_QUERY,
   buildCreateAuctionMutation,
-  UPDATE_AUCTION_MUTATION,
   REMOVE_AUCTION_MUTATION,
   buildRegisterCallbackMutation,
   buildRemoveCallbackMutation,
@@ -203,29 +201,24 @@ export class EnebaAdapter
     }
 
     if (hasQuantity) {
-      if (params.quantity === 0) {
-        const data = await this.gqlClient.execute<EnebaUpdateAuctionData>(
-          UPDATE_AUCTION_MUTATION,
-          { auctionId: params.externalListingId, declaredStock: null },
+      const declaredStock = (params.quantity ?? 0) > 0 ? params.quantity : null;
+      const stockData = await this.gqlClient.execute<EnebaUpdateDeclaredStockData>(
+        UPDATE_DECLARED_STOCK_MUTATION,
+        { statuses: [{ auctionId: params.externalListingId, declaredStock }] },
+      );
+      if (!stockData.P_updateDeclaredStock.success) {
+        return { success: false, error: 'P_updateDeclaredStock returned success: false' };
+      }
+
+      // When clearing stock also disable the listing so it stops showing on Eneba.
+      if (declaredStock === null) {
+        const disableData = await this.gqlClient.execute<EnebaUpdateAuctionPriceData>(
+          UPDATE_AUCTION_PRICE_MUTATION,
+          { items: [{ auctionId: params.externalListingId, enabled: false }] },
         );
-        if (!data.S_updateAuction.success) {
-          return {
-            success: false,
-            error: 'S_updateAuction (clear declared stock) returned success: false',
-          };
-        }
-      } else {
-        const data = await this.gqlClient.execute<EnebaUpdateDeclaredStockData>(
-          UPDATE_DECLARED_STOCK_MUTATION,
-          {
-            statuses: [{ auctionId: params.externalListingId, declaredStock: params.quantity }],
-          },
-        );
-        if (!data.P_updateDeclaredStock.success) {
-          return {
-            success: false,
-            error: 'P_updateDeclaredStock returned success: false',
-          };
+        const item = disableData.P_updateAuctionPrice.items[0];
+        if (!item?.success) {
+          return { success: false, error: item?.error ?? 'P_updateAuctionPrice disable failed' };
         }
       }
     }
@@ -308,28 +301,29 @@ export class EnebaAdapter
     externalListingId: string,
     quantity: number,
   ): Promise<DeclareStockResult> {
-    if (quantity === 0) {
-      // Clear declared stock — sets declaredStock: null, effectively disabling the listing.
-      const data = await this.gqlClient.execute<EnebaUpdateAuctionData>(
-        UPDATE_AUCTION_MUTATION,
-        { auctionId: externalListingId, declaredStock: null },
-      );
-      return {
-        success: data.S_updateAuction.success,
-        declaredQuantity: 0,
-      };
-    }
+    const enabled = quantity > 0;
+    const declaredStock = enabled ? quantity : null;
 
-    // Use S_updateAuction with BOTH declaredStock AND enabled: true so that
-    // listings previously disabled (declaredStock: null) are re-activated in
-    // the same round-trip. P_updateDeclaredStock alone does not re-enable.
-    const data = await this.gqlClient.execute<EnebaUpdateAuctionData>(
-      UPDATE_AUCTION_MUTATION,
-      { auctionId: externalListingId, declaredStock: quantity, enabled: true },
+    // P_updateDeclaredStock to set/clear quantity; P_updateAuctionPrice to
+    // toggle enabled state. Two calls per listing, but S_updateAuction is
+    // deprecated for both price and stock operations.
+    const stockData = await this.gqlClient.execute<EnebaUpdateDeclaredStockData>(
+      UPDATE_DECLARED_STOCK_MUTATION,
+      { statuses: [{ auctionId: externalListingId, declaredStock }] },
     );
 
+    if (!stockData.P_updateDeclaredStock.success) {
+      return { success: false, declaredQuantity: quantity };
+    }
+
+    const priceData = await this.gqlClient.execute<EnebaUpdateAuctionPriceData>(
+      UPDATE_AUCTION_PRICE_MUTATION,
+      { items: [{ auctionId: externalListingId, enabled }] },
+    );
+
+    const item = priceData.P_updateAuctionPrice.items[0];
     return {
-      success: data.S_updateAuction.success,
+      success: item?.success ?? false,
       declaredQuantity: quantity,
     };
   }
@@ -567,20 +561,45 @@ export class EnebaAdapter
       }
     }
 
-    for (const u of nullUpdates) {
+    // Batch-clear: P_updateDeclaredStock(null) then P_updateAuctionPrice(enabled:false).
+    if (nullUpdates.length > 0) {
+      const clearStatuses = nullUpdates.map((u) => ({
+        auctionId: u.externalListingId,
+        declaredStock: null,
+      }));
       try {
-        const data = await this.gqlClient.execute<EnebaUpdateAuctionData>(
-          UPDATE_AUCTION_MUTATION,
-          { auctionId: u.externalListingId, declaredStock: null },
+        const data = await this.gqlClient.execute<EnebaUpdateDeclaredStockData>(
+          UPDATE_DECLARED_STOCK_MUTATION,
+          { statuses: clearStatuses },
         );
-        if (data.S_updateAuction.success) updated++;
-        else failed++;
+        if (data.P_updateDeclaredStock.success) {
+          updated += nullUpdates.length;
+        } else {
+          failed += nullUpdates.length;
+        }
       } catch (err) {
-        logger.warn('Failed to clear declared stock', {
-          auctionId: u.externalListingId,
+        logger.warn('Batch P_updateDeclaredStock(null) failed', {
+          count: nullUpdates.length,
           error: err instanceof Error ? err.message : String(err),
         });
-        failed++;
+        failed += nullUpdates.length;
+      }
+
+      // Disable the auctions so they stop showing on Eneba.
+      try {
+        const disableItems = nullUpdates.map((u) => ({
+          auctionId: u.externalListingId,
+          enabled: false,
+        }));
+        await this.gqlClient.execute<EnebaUpdateAuctionPriceData>(
+          UPDATE_AUCTION_PRICE_MUTATION,
+          { items: disableItems },
+        );
+      } catch (err) {
+        logger.warn('Batch P_updateAuctionPrice(enabled:false) failed for cleared listings', {
+          count: nullUpdates.length,
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
     }
 
