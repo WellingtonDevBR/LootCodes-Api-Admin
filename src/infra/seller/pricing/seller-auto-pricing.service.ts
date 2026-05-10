@@ -348,9 +348,10 @@ export class SellerAutoPricingService implements ISellerAutoPricingService {
       // local price_change_timestamps counter which resets on server restarts.
       // Map: externalListingId → free changes remaining this window.
       const realQuotaByListing = new Map<string, number>();
-      if (typeof (listingAdapter as Record<string, unknown>)?.fetchAllStock === 'function') {
+      const adapterAsUnknown = listingAdapter as unknown as Record<string, unknown>;
+      if (typeof adapterAsUnknown?.fetchAllStock === 'function') {
         try {
-          const stockNodes = await (listingAdapter as unknown as { fetchAllStock(): Promise<Array<{ id: string; priceUpdateQuota?: { quota: number } | null }>> }).fetchAllStock();
+          const stockNodes = await (adapterAsUnknown as unknown as { fetchAllStock(): Promise<Array<{ id: string; priceUpdateQuota?: { quota: number } | null }>> }).fetchAllStock();
           for (const node of stockNodes) {
             const quota = node.priceUpdateQuota?.quota;
             if (quota != null) realQuotaByListing.set(node.id, quota);
