@@ -94,9 +94,17 @@ export interface MarkKeysFaultyDto {
   reason: string;
 }
 
+export interface MarkKeysFaultyKeyResult {
+  key_id: string;
+  /** 'marked_faulty' | 'state_locked:<state>' | 'not_found' */
+  outcome: string;
+  write_off_cents: number;
+}
+
 export interface MarkKeysFaultyResult {
   success: boolean;
   keys_marked: number;
+  results: MarkKeysFaultyKeyResult[];
 }
 
 export interface LinkReplacementKeyDto {

@@ -738,8 +738,52 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
     return reply.send({ message: 'Not implemented yet' });
   });
 
-  app.post('/keys/mark-faulty', { preHandler: [adminGuard] }, async (_request, reply) => {
-    return reply.send({ message: 'Not implemented yet' });
+  app.post('/keys/mark-faulty', {
+    preHandler: [adminGuard],
+    config: { rateLimit: { max: 20, timeWindow: '1 minute' } },
+  }, async (request, reply) => {
+    const body = request.body as {
+      key_ids?: unknown;
+      reason?: unknown;
+    };
+
+    if (!Array.isArray(body.key_ids) || body.key_ids.length === 0) {
+      return reply.code(400).send({ error: 'key_ids array is required' });
+    }
+    if (body.key_ids.length > DECRYPT_MAX_BATCH) {
+      return reply.code(400).send({ error: `Maximum ${DECRYPT_MAX_BATCH} keys per request` });
+    }
+    const keyIds = body.key_ids as unknown[];
+    for (const id of keyIds) {
+      if (typeof id !== 'string' || !UUID_RE.test(id)) {
+        return reply.code(400).send({ error: `Invalid key_id format: ${String(id).slice(0, 40)}` });
+      }
+    }
+    if (typeof body.reason !== 'string' || body.reason.trim().length === 0) {
+      return reply.code(400).send({ error: 'reason is required' });
+    }
+    if (body.reason.trim().length > 500) {
+      return reply.code(400).send({ error: 'reason must be 500 characters or fewer' });
+    }
+
+    const authUser = (request as unknown as Record<string, unknown>).authUser as
+      { id: string } | undefined;
+    const adminId = authUser?.id ?? 'unknown';
+
+    try {
+      const uc = container.resolve<import('../../core/use-cases/inventory/mark-keys-faulty.use-case.js').MarkKeysFaultyUseCase>(
+        UC_TOKENS.MarkKeysFaulty,
+      );
+      const result = await uc.execute({
+        key_ids: keyIds as string[],
+        reason: body.reason.trim(),
+        admin_id: adminId,
+      });
+      return reply.send(result);
+    } catch (err) {
+      logger.error('mark-keys-faulty failed', err as Error, { key_count: keyIds.length });
+      return reply.code(500).send({ error: 'Failed to mark keys as faulty' });
+    }
   });
 
   app.post('/keys/link-replacement', { preHandler: [adminGuard] }, async (_request, reply) => {

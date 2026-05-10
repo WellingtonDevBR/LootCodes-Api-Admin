@@ -127,16 +127,13 @@ export class SupabaseAdminInventoryRepository implements IAdminInventoryReposito
   }
 
   async markKeysFaulty(dto: MarkKeysFaultyDto): Promise<MarkKeysFaultyResult> {
-    let keysMarked = 0;
-    for (const keyId of dto.key_ids) {
-      const result = await this.db.update('product_keys', { id: keyId }, {
-        status: 'faulty',
-        faulty_reason: dto.reason,
-        updated_at: new Date().toISOString(),
-      });
-      keysMarked += result.length;
-    }
-    return { success: true, keys_marked: keysMarked };
+    const rows = await this.db.rpc<Array<{ key_id: string; outcome: string; write_off_cents: number }>>(
+      'admin_mark_keys_faulty',
+      { p_key_ids: dto.key_ids, p_reason: dto.reason, p_actor: dto.admin_id },
+    );
+    const results = Array.isArray(rows) ? rows : [];
+    const keysMarked = results.filter((r) => r.outcome === 'marked_faulty').length;
+    return { success: true, keys_marked: keysMarked, results };
   }
 
   async linkReplacementKey(dto: LinkReplacementKeyDto): Promise<LinkReplacementKeyResult> {
