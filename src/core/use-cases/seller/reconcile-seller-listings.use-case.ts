@@ -1,29 +1,40 @@
 /**
- * Single orchestrated cron entry point for seller-side maintenance.
+ * Single orchestrated cron entry point for seller-side marketplace maintenance.
  *
- * Runs seven phases per request, in order:
+ * Runs the following phases per request, in order:
  *   1. expire-reservations    — release stale `seller_stock_reservations`
- *   2. sync-buyer-catalog     — fetch live quotes from Bamboo, refresh `provider_variant_offers`
- *   3. cost-basis             — refresh `seller_listings.cost_basis_cents` using up-to-date offers
- *   4. pricing                — recompute prices (manual + strategy + smart) and push to marketplaces
- *   5. declared-stock         — reconcile declared-stock target and push to marketplaces
- *   6. remote-stock           — pull remote stock for `auto_sync_stock=true` listings
- *   7. paused-listing-alerts  — sync `admin_alerts` of type `seller_listing_paused` so the CRM
- *                               surfaces every paused/failed listing as an actionable alert
+ *   2. cost-basis             — refresh `seller_listings.cost_basis_cents` from
+ *                               the AVERAGE real cost of available keys (or
+ *                               cheapest active buyer offer for declared-stock
+ *                               listings with no physical inventory)
+ *   3. pricing                — recompute prices (manual + strategy + smart) and
+ *                               push to marketplaces
+ *   4. declared-stock         — reconcile declared-stock target and push to
+ *                               marketplaces
+ *   5. remote-stock           — pull remote stock for `auto_sync_stock=true`
+ *                               listings
+ *   6. paused-listing-alerts  — sync `admin_alerts` of type `seller_listing_paused`
+ *                               so the CRM surfaces every paused/failed listing
+ *                               as an actionable alert
  *
- * Pauses entirely when `platform_settings.fulfillment_mode = 'hold_all'`.
+ * NOT gated by `platform_settings.fulfillment_mode` — that flag controls
+ * user-facing checkout/key delivery, not admin-owned marketplace listings.
+ *
+ * Live buyer-catalog quote refresh is owned by the standalone
+ * `POST /internal/cron/sync-buyer-catalog` endpoint and is intentionally
+ * NOT a phase here — schedule that endpoint independently (recommended
+ * cadence: every 5 minutes, immediately before this cron).
+ *
  * Per-phase failures are isolated: one phase's exception is logged and
  * recorded in the result's PhaseOutcome.error, but does not abort later phases.
  */
 import { injectable, inject } from 'tsyringe';
-import { TOKENS, UC_TOKENS } from '../../../di/tokens.js';
-import type { IPlatformSettingsPort } from '../../ports/platform-settings.port.js';
+import { UC_TOKENS, TOKENS } from '../../../di/tokens.js';
 import type {
   ISellerAutoPricingService,
   ISellerStockSyncService,
 } from '../../ports/seller-pricing.port.js';
 import type { IProcurementDeclaredStockReconcileService } from '../../ports/procurement-declared-stock-reconcile.port.js';
-import type { IBuyerOfferSnapshotSyncService } from '../../ports/buyer-offer-snapshot-sync.port.js';
 import { ExpireReservationsUseCase } from './expire-reservations.use-case.js';
 import { SyncSellerListingPausedAlertsUseCase } from './sync-seller-listing-paused-alerts.use-case.js';
 import {
@@ -40,16 +51,12 @@ const logger = createLogger('reconcile-seller-listings');
 @injectable()
 export class ReconcileSellerListingsUseCase {
   constructor(
-    @inject(TOKENS.PlatformSettingsRepository)
-    private readonly platformSettings: IPlatformSettingsPort,
     @inject(TOKENS.SellerAutoPricingService)
     private readonly autoPricing: ISellerAutoPricingService,
     @inject(TOKENS.ProcurementDeclaredStockReconcileService)
     private readonly declaredStock: IProcurementDeclaredStockReconcileService,
     @inject(TOKENS.SellerStockSyncService)
     private readonly stockSync: ISellerStockSyncService,
-    @inject(TOKENS.BuyerOfferSnapshotSyncService)
-    private readonly buyerCatalogSync: IBuyerOfferSnapshotSyncService,
     @inject(UC_TOKENS.ExpireReservations)
     private readonly expireReservations: ExpireReservationsUseCase,
     @inject(UC_TOKENS.SyncSellerListingPausedAlerts)
@@ -61,27 +68,11 @@ export class ReconcileSellerListingsUseCase {
     dto: ReconcileSellerListingsDto,
   ): Promise<ReconcileSellerListingsResult> {
     const startedAt = Date.now();
-    const fulfillmentMode = await this.platformSettings.getFulfillmentMode();
     const phases = makeEmptyPhases();
-
-    if (fulfillmentMode === 'hold_all') {
-      logger.warn('Skipping all reconcile phases — fulfillment_mode is hold_all', {
-        requestId,
-      });
-      for (const phase of RECONCILE_PHASES) {
-        phases[phase] = {
-          ran: false,
-          skipped_reason: 'global_hold',
-          duration_ms: 0,
-        };
-      }
-      return finalize(requestId, fulfillmentMode, phases, startedAt);
-    }
 
     const allowed = resolveAllowedPhases(dto.phases);
     logger.info('Starting reconcile-seller-listings run', {
       requestId,
-      fulfillmentMode,
       phases: [...allowed],
       dryRun: dto.dry_run === true,
       variantFilterCount: dto.variant_ids?.length ?? 0,
@@ -95,7 +86,7 @@ export class ReconcileSellerListingsUseCase {
       phases[phase] = await this.runPhase(phase, requestId, dto);
     }
 
-    return finalize(requestId, fulfillmentMode, phases, startedAt);
+    return finalize(requestId, phases, startedAt);
   }
 
   private async runPhase(
@@ -129,8 +120,6 @@ export class ReconcileSellerListingsUseCase {
         return this.autoPricing.refreshAllCostBases(requestId);
       case 'pricing':
         return this.autoPricing.refreshAllPrices(requestId);
-      case 'sync-buyer-catalog':
-        return this.buyerCatalogSync.syncAll(requestId);
       case 'declared-stock':
         return this.declaredStock.execute(requestId, {
           variant_ids: dto.variant_ids,
@@ -166,13 +155,11 @@ function resolveAllowedPhases(
 
 function finalize(
   requestId: string,
-  fulfillmentMode: ReconcileSellerListingsResult['fulfillment_mode'],
   phases: Record<ReconcilePhase, PhaseOutcome>,
   startedAt: number,
 ): ReconcileSellerListingsResult {
   return {
     request_id: requestId,
-    fulfillment_mode: fulfillmentMode,
     total_duration_ms: Date.now() - startedAt,
     phases,
   };

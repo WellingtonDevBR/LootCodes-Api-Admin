@@ -1,18 +1,20 @@
 /**
  * Input/output shapes for ReconcileSellerListingsUseCase — the single
- * orchestrated cron entry point for seller-side maintenance.
+ * orchestrated cron entry point for seller-side marketplace maintenance.
+ *
+ * This cron operates exclusively on admin-owned marketplace listings
+ * (Eneba, Kinguin, …). It is NOT gated by `platform_settings.fulfillment_mode`
+ * — that flag governs user-facing checkout/key delivery and has no bearing
+ * on whether seller listings should keep mirroring our cost basis, prices,
+ * and stock declarations.
+ *
+ * Live buyer-catalog quote refresh runs out-of-band on
+ * `POST /internal/cron/sync-buyer-catalog` and is intentionally NOT a phase
+ * here, to keep the orchestrator focused on seller-listing reconciliation.
  */
-import type { FulfillmentMode } from '../../ports/platform-settings.port.js';
 
 export const RECONCILE_PHASES = [
   'expire-reservations',
-  /**
-   * Fetches live quotes from Bamboo (and future buyer providers) and refreshes
-   * `provider_variant_offers` BEFORE `cost-basis` and `pricing` so that cost
-   * increases are reflected in the listing price within the same cron tick.
-   * Replaces the deprecated Supabase `provider-catalog-sync` pg_cron job.
-   */
-  'sync-buyer-catalog',
   'cost-basis',
   'pricing',
   'declared-stock',
@@ -34,11 +36,11 @@ export interface ReconcileSellerListingsDto {
   readonly batch_limit?: number;
   /** When true, `declared-stock` simulates without pushing to marketplaces. Other phases ignore this flag. */
   readonly dry_run?: boolean;
-  /** Optional whitelist; if omitted all five phases run in canonical order. */
+  /** Optional whitelist; if omitted all phases run in canonical order. */
   readonly phases?: readonly ReconcilePhase[];
 }
 
-export type SkipReason = 'global_hold' | 'phase_filter';
+export type SkipReason = 'phase_filter';
 
 export interface PhaseOutcome<T = unknown> {
   readonly ran: boolean;
@@ -50,7 +52,6 @@ export interface PhaseOutcome<T = unknown> {
 
 export interface ReconcileSellerListingsResult {
   readonly request_id: string;
-  readonly fulfillment_mode: FulfillmentMode;
   readonly total_duration_ms: number;
   readonly phases: Record<ReconcilePhase, PhaseOutcome>;
 }

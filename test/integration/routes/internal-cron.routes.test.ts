@@ -24,7 +24,6 @@ function makeOrchestratorResult(
     'expire-reservations': { ran: true, duration_ms: 1, result: { expired: 0 } },
     'cost-basis': { ran: true, duration_ms: 1 },
     'pricing': { ran: true, duration_ms: 1 },
-    'sync-buyer-catalog': { ran: true, duration_ms: 1, result: { scanned: 0, updated: 0, failed: 0, skipped: 0, durationMs: 1 } },
     'declared-stock': { ran: true, duration_ms: 1 },
     'remote-stock': { ran: true, duration_ms: 1 },
     'paused-listing-alerts': {
@@ -36,7 +35,6 @@ function makeOrchestratorResult(
 
   return {
     request_id: 'cron-req',
-    fulfillment_mode: 'auto',
     total_duration_ms: 5,
     phases,
     ...overrides,
@@ -229,8 +227,8 @@ describe('Internal cron routes — POST /internal/cron/reconcile-seller-listings
     });
   });
 
-  describe('sync-buyer-catalog phase', () => {
-    it("accepts 'sync-buyer-catalog' as a valid phase name in the phases filter", async () => {
+  describe('sync-buyer-catalog is no longer a phase', () => {
+    it("returns 400 when 'sync-buyer-catalog' is requested as a phase (it lives on its own cron route)", async () => {
       const res = await testApp.app.inject({
         method: 'POST',
         url: '/internal/cron/reconcile-seller-listings',
@@ -238,9 +236,9 @@ describe('Internal cron routes — POST /internal/cron/reconcile-seller-listings
         payload: { phases: ['sync-buyer-catalog'] },
       });
 
-      expect(res.statusCode).toBe(202);
-      const dto = orchestrator.execute.mock.calls[0]![1] as ReconcileSellerListingsDto;
-      expect(dto.phases).toEqual(['sync-buyer-catalog']);
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error).toBe('invalid_request_body');
+      expect(orchestrator.execute).not.toHaveBeenCalled();
     });
   });
 });

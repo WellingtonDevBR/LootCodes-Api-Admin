@@ -1,9 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
 import type {
-  FulfillmentMode,
-  IPlatformSettingsPort,
-} from '../src/core/ports/platform-settings.port.js';
-import type {
   ISellerAutoPricingService,
   ISellerStockSyncService,
   RefreshCostBasesResult,
@@ -15,20 +11,16 @@ import type {
   ProcurementDeclaredStockReconcileDto,
   ProcurementDeclaredStockReconcileResult,
 } from '../src/core/ports/procurement-declared-stock-reconcile.port.js';
-import type {
-  IBuyerOfferSnapshotSyncService,
-  BuyerOfferSnapshotSyncResult,
-} from '../src/core/ports/buyer-offer-snapshot-sync.port.js';
 import type { ExpireReservationsUseCase } from '../src/core/use-cases/seller/expire-reservations.use-case.js';
 import { ReconcileSellerListingsUseCase } from '../src/core/use-cases/seller/reconcile-seller-listings.use-case.js';
 import type { ReconcilePhase } from '../src/core/use-cases/seller/reconcile-seller-listings.types.js';
 import type { SyncSellerListingPausedAlertsUseCase } from '../src/core/use-cases/seller/sync-seller-listing-paused-alerts.use-case.js';
 import type { SyncSellerListingPausedAlertsResult } from '../src/core/use-cases/alerts/alerts.types.js';
 
-/** All seven phases in canonical order. */
+/** All phases in canonical order. `sync-buyer-catalog` is owned by its own
+ *  standalone cron route and is intentionally NOT a phase here. */
 const ALL_PHASES: ReconcilePhase[] = [
   'expire-reservations',
-  'sync-buyer-catalog',
   'cost-basis',
   'pricing',
   'declared-stock',
@@ -38,10 +30,6 @@ const ALL_PHASES: ReconcilePhase[] = [
 
 interface CallTracker {
   readonly calls: ReconcilePhase[];
-}
-
-function buildPlatformSettings(mode: FulfillmentMode): IPlatformSettingsPort {
-  return { getFulfillmentMode: vi.fn().mockResolvedValue(mode) };
 }
 
 function emptyExpireResult() {
@@ -80,30 +68,22 @@ function emptyPausedAlertsResult(): SyncSellerListingPausedAlertsResult {
   return { alertsCreated: 0, alertsResolved: 0, pausedListingCount: 0 };
 }
 
-function emptyBuyerCatalogSyncResult(): BuyerOfferSnapshotSyncResult {
-  return { scanned: 0, updated: 0, failed: 0, skipped: 0, durationMs: 0 };
-}
-
 interface FakeSetup {
   readonly tracker: CallTracker;
-  readonly platformSettings: IPlatformSettingsPort;
   readonly autoPricing: ISellerAutoPricingService;
   readonly declaredStock: IProcurementDeclaredStockReconcileService;
   readonly stockSync: ISellerStockSyncService;
-  readonly buyerCatalogSync: IBuyerOfferSnapshotSyncService;
   readonly expireReservations: Pick<ExpireReservationsUseCase, 'execute'>;
   readonly syncPausedAlerts: Pick<SyncSellerListingPausedAlertsUseCase, 'execute'>;
 }
 
 interface SetupOptions {
-  readonly mode?: FulfillmentMode;
   readonly throwOnPhase?: ReconcilePhase;
   readonly captureDeclaredStockDto?: { dto?: ProcurementDeclaredStockReconcileDto };
 }
 
 function setup(options: SetupOptions = {}): FakeSetup {
   const tracker: CallTracker = { calls: [] };
-  const mode = options.mode ?? 'auto';
 
   const record = <T>(phase: ReconcilePhase, result: T): T => {
     tracker.calls.push(phase);
@@ -115,7 +95,6 @@ function setup(options: SetupOptions = {}): FakeSetup {
 
   return {
     tracker,
-    platformSettings: buildPlatformSettings(mode),
     autoPricing: {
       refreshAllCostBases: vi.fn().mockImplementation(async () => record('cost-basis', emptyCostBasisResult())),
       refreshAllPrices: vi.fn().mockImplementation(async () => record('pricing', emptyPricesResult())),
@@ -129,9 +108,6 @@ function setup(options: SetupOptions = {}): FakeSetup {
     stockSync: {
       refreshAllStock: vi.fn().mockImplementation(async () => record('remote-stock', emptyStockResult())),
     },
-    buyerCatalogSync: {
-      syncAll: vi.fn().mockImplementation(async () => record('sync-buyer-catalog', emptyBuyerCatalogSyncResult())),
-    },
     expireReservations: {
       execute: vi.fn().mockImplementation(async () => record('expire-reservations', emptyExpireResult())),
     },
@@ -143,25 +119,22 @@ function setup(options: SetupOptions = {}): FakeSetup {
 
 function build(s: FakeSetup): ReconcileSellerListingsUseCase {
   return new ReconcileSellerListingsUseCase(
-    s.platformSettings,
     s.autoPricing,
     s.declaredStock,
     s.stockSync,
-    s.buyerCatalogSync,
     s.expireReservations as unknown as ExpireReservationsUseCase,
     s.syncPausedAlerts as unknown as SyncSellerListingPausedAlertsUseCase,
   );
 }
 
 describe('ReconcileSellerListingsUseCase', () => {
-  it("runs all seven phases in canonical order when fulfillment_mode is 'auto'", async () => {
+  it('runs every phase in canonical order on a default invocation', async () => {
     const s = setup();
     const uc = build(s);
 
     const result = await uc.execute('req-1', {});
 
     expect(s.tracker.calls).toEqual(ALL_PHASES);
-    expect(result.fulfillment_mode).toBe('auto');
     expect(result.request_id).toBe('req-1');
     for (const phase of s.tracker.calls) {
       expect(result.phases[phase].ran).toBe(true);
@@ -169,40 +142,27 @@ describe('ReconcileSellerListingsUseCase', () => {
     }
   });
 
-  it("sync-buyer-catalog runs before declared-stock in the canonical order", async () => {
+  it('does NOT consult fulfillment_mode — admin-marketplace maintenance is independent of user-facing fulfillment', async () => {
+    // ReconcileSellerListingsUseCase no longer accepts an IPlatformSettingsPort. This
+    // test guards against a regression that re-introduces the gate by asserting the
+    // class still constructs (and runs) without one in the dependency graph.
     const s = setup();
     const uc = build(s);
 
-    await uc.execute('req-order', {});
+    const result = await uc.execute('req-no-fulfillment-gate', {});
 
-    const syncIdx = s.tracker.calls.indexOf('sync-buyer-catalog');
-    const declaredIdx = s.tracker.calls.indexOf('declared-stock');
-    expect(syncIdx).toBeGreaterThanOrEqual(0);
-    expect(syncIdx).toBeLessThan(declaredIdx);
+    expect(s.tracker.calls).toEqual(ALL_PHASES);
+    expect(result).not.toHaveProperty('fulfillment_mode');
   });
 
-  it("does not pause seller maintenance when fulfillment_mode is 'hold_new_cards'", async () => {
-    const s = setup({ mode: 'hold_new_cards' });
+  it("does NOT include 'sync-buyer-catalog' as a phase — it lives on its own cron route", async () => {
+    const s = setup();
     const uc = build(s);
 
-    const result = await uc.execute('req-2', {});
+    const result = await uc.execute('req-no-sync', {});
 
-    expect(s.tracker.calls).toHaveLength(ALL_PHASES.length);
-    expect(result.fulfillment_mode).toBe('hold_new_cards');
-  });
-
-  it("skips every phase with skipped_reason='global_hold' when fulfillment_mode is 'hold_all'", async () => {
-    const s = setup({ mode: 'hold_all' });
-    const uc = build(s);
-
-    const result = await uc.execute('req-3', {});
-
-    expect(s.tracker.calls).toEqual([]);
-    expect(result.fulfillment_mode).toBe('hold_all');
-    for (const phase of ALL_PHASES) {
-      expect(result.phases[phase].ran).toBe(false);
-      expect(result.phases[phase].skipped_reason).toBe('global_hold');
-    }
+    expect(s.tracker.calls).not.toContain('sync-buyer-catalog' as ReconcilePhase);
+    expect(result.phases).not.toHaveProperty('sync-buyer-catalog');
   });
 
   it("runs no phases when 'phases' filter is an explicit empty array (no fallback to all)", async () => {
@@ -229,21 +189,8 @@ describe('ReconcileSellerListingsUseCase', () => {
     expect(result.phases['pricing'].ran).toBe(true);
     expect(result.phases['expire-reservations'].ran).toBe(false);
     expect(result.phases['expire-reservations'].skipped_reason).toBe('phase_filter');
-    expect(result.phases['sync-buyer-catalog'].skipped_reason).toBe('phase_filter');
     expect(result.phases['declared-stock'].skipped_reason).toBe('phase_filter');
     expect(result.phases['remote-stock'].skipped_reason).toBe('phase_filter');
-  });
-
-  it('sync-buyer-catalog can be run in isolation via phases filter', async () => {
-    const s = setup();
-    const uc = build(s);
-
-    const result = await uc.execute('req-sync-only', { phases: ['sync-buyer-catalog'] });
-
-    expect(s.tracker.calls).toEqual(['sync-buyer-catalog']);
-    expect(result.phases['sync-buyer-catalog'].ran).toBe(true);
-    expect(result.phases['sync-buyer-catalog'].error).toBeUndefined();
-    expect(s.buyerCatalogSync.syncAll).toHaveBeenCalledWith('req-sync-only');
   });
 
   it('propagates dry_run, variant_ids, and batch_limit to the declared-stock phase', async () => {
@@ -272,23 +219,9 @@ describe('ReconcileSellerListingsUseCase', () => {
     expect(s.tracker.calls).toEqual(ALL_PHASES);
     expect(result.phases['pricing'].ran).toBe(true);
     expect(result.phases['pricing'].error).toMatch(/fake failure on pricing/);
-    expect(result.phases['sync-buyer-catalog'].ran).toBe(true);
-    expect(result.phases['sync-buyer-catalog'].error).toBeUndefined();
     expect(result.phases['declared-stock'].ran).toBe(true);
     expect(result.phases['declared-stock'].error).toBeUndefined();
     expect(result.phases['paused-listing-alerts'].ran).toBe(true);
-  });
-
-  it('sync-buyer-catalog failure is isolated — declared-stock still runs', async () => {
-    const s = setup({ throwOnPhase: 'sync-buyer-catalog' });
-    const uc = build(s);
-
-    const result = await uc.execute('req-sync-fail', {});
-
-    expect(result.phases['sync-buyer-catalog'].ran).toBe(true);
-    expect(result.phases['sync-buyer-catalog'].error).toMatch(/fake failure on sync-buyer-catalog/);
-    expect(result.phases['declared-stock'].ran).toBe(true);
-    expect(result.phases['declared-stock'].error).toBeUndefined();
   });
 
   it('records duration_ms for every phase outcome and a total_duration_ms on the result', async () => {

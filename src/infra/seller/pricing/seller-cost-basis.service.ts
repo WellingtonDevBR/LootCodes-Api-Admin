@@ -1,9 +1,13 @@
 /**
  * Seller cost-basis service — key acquisition cost computation.
  *
- * Computes median purchase_cost from available product_keys via RPCs,
- * loads FX rates from currency_rates, and resolves effective min price
- * floors per listing.
+ * Computes the AVG purchase_cost across all available product_keys for a
+ * variant via RPCs, loads FX rates from currency_rates, and resolves the
+ * effective min price floor per listing.
+ *
+ * The arithmetic mean (not median) is used so cost basis reflects every key
+ * in inventory: a single expensive key in a batch shifts the floor instead
+ * of being silently dismissed by a 50th-percentile statistic.
  *
  * Ported from supabase/functions/provider-procurement/services/seller-cost-basis.service.ts
  */
@@ -18,7 +22,7 @@ const logger = createLogger('seller-cost-basis');
 
 export interface VariantCostEntry {
   variant_id: string;
-  median_cost_cents: number;
+  avg_cost_cents: number;
   key_count: number;
 }
 
@@ -30,12 +34,12 @@ export class SellerCostBasisService {
 
   async computeCostBasis(variantId: string): Promise<number> {
     try {
-      const data = await this.db.rpc<number>('get_variant_median_key_cost', {
+      const data = await this.db.rpc<number>('get_variant_avg_key_cost', {
         p_variant_id: variantId,
       });
       return typeof data === 'number' ? data : 0;
     } catch (err) {
-      logger.error('Failed to compute median key cost', {
+      logger.error('Failed to compute avg key cost', {
         variantId,
         error: err instanceof Error ? err.message : String(err),
       });
@@ -47,7 +51,7 @@ export class SellerCostBasisService {
    * Returns the cheapest active buyer-offer price per variant (in USD cents)
    * from `provider_variant_offers`. Used as a cost-basis fallback for
    * declared-stock / JIT listings where no physical `product_keys` exist
-   * (so `get_batch_variant_median_key_costs` would return 0).
+   * (so `get_batch_variant_avg_key_costs` would return 0).
    *
    * Only includes rows whose `currency` is `'USD'`. Offers priced in other
    * currencies are skipped to avoid needing live FX conversion here.
@@ -95,7 +99,7 @@ export class SellerCostBasisService {
     if (variantIds.length === 0) return new Map();
 
     try {
-      const data = await this.db.rpc<VariantCostEntry[]>('get_batch_variant_median_key_costs', {
+      const data = await this.db.rpc<VariantCostEntry[]>('get_batch_variant_avg_key_costs', {
         p_variant_ids: variantIds,
       });
 
@@ -105,7 +109,7 @@ export class SellerCostBasisService {
       }
       return result;
     } catch (err) {
-      logger.error('Failed to compute batch median key costs', {
+      logger.error('Failed to compute batch avg key costs', {
         variantCount: variantIds.length,
         error: err instanceof Error ? err.message : String(err),
       });

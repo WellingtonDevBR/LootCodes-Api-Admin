@@ -230,7 +230,7 @@ export class SellerAutoPricingService implements ISellerAutoPricingService {
           .filter(
             (l) =>
               l.listing_type === 'declared_stock'
-              && (costBasisMap.get(l.variant_id)?.median_cost_cents ?? 0) === 0,
+              && (costBasisMap.get(l.variant_id)?.avg_cost_cents ?? 0) === 0,
           )
           .map((l) => l.variant_id),
       ),
@@ -253,15 +253,15 @@ export class SellerAutoPricingService implements ISellerAutoPricingService {
       result.listingsProcessed++;
       try {
         const costEntry = costBasisMap.get(listing.variant_id);
-        let medianUsdCents = costEntry?.median_cost_cents ?? 0;
+        let avgUsdCents = costEntry?.avg_cost_cents ?? 0;
 
         // JIT / declared_stock fallback: no physical keys → use buyer offer price
-        if (medianUsdCents === 0 && listing.listing_type === 'declared_stock') {
-          medianUsdCents = offerCostMap.get(listing.variant_id) ?? 0;
+        if (avgUsdCents === 0 && listing.listing_type === 'declared_stock') {
+          avgUsdCents = offerCostMap.get(listing.variant_id) ?? 0;
         }
 
         const rate = rateMap.get(listing.currency.toUpperCase()) ?? 1;
-        const costInListingCurrency = this.costBasisService.convertWithRate(medianUsdCents, rate);
+        const costInListingCurrency = this.costBasisService.convertWithRate(avgUsdCents, rate);
 
         if (costInListingCurrency !== listing.cost_basis_cents) {
           await this.db.update('seller_listings', { id: listing.id }, {
@@ -307,7 +307,7 @@ export class SellerAutoPricingService implements ISellerAutoPricingService {
           .filter(
             (l) =>
               l.listing_type === 'declared_stock'
-              && (costBasisMap.get(l.variant_id)?.median_cost_cents ?? 0) === 0,
+              && (costBasisMap.get(l.variant_id)?.avg_cost_cents ?? 0) === 0,
           )
           .map((l) => l.variant_id),
       ),
@@ -423,15 +423,15 @@ export class SellerAutoPricingService implements ISellerAutoPricingService {
 
         try {
           const costEntry = costBasisMap.get(listing.variant_id);
-          let medianUsdCents = costEntry?.median_cost_cents ?? 0;
+          let avgUsdCents = costEntry?.avg_cost_cents ?? 0;
 
           // JIT / declared_stock fallback: no physical keys → use buyer offer price
-          if (medianUsdCents === 0 && listing.listing_type === 'declared_stock') {
-            medianUsdCents = offerCostMap.get(listing.variant_id) ?? 0;
+          if (avgUsdCents === 0 && listing.listing_type === 'declared_stock') {
+            avgUsdCents = offerCostMap.get(listing.variant_id) ?? 0;
           }
 
           const rate = rateMap.get(listing.currency.toUpperCase()) ?? 1;
-          const costInListingCurrency = this.costBasisService.convertWithRate(medianUsdCents, rate);
+          const costInListingCurrency = this.costBasisService.convertWithRate(avgUsdCents, rate);
 
           if (costInListingCurrency !== listing.cost_basis_cents) {
             await this.db.update('seller_listings', { id: listing.id }, {
