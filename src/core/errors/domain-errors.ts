@@ -69,3 +69,16 @@ export class ServiceUnavailableError extends DomainError {
     this.retryAfterSeconds = retryAfterSeconds;
   }
 }
+
+/**
+ * Thrown when a marketplace publish is blocked by a known business condition
+ * (e.g. no inventory keys and no buyer wallet credits). This is NOT a system
+ * error — it is an expected state that resolves once stock or wallet credits
+ * are available. Route handlers should downgrade logging to `warn` for this
+ * class so it does not create Sentry error noise.
+ */
+export class PublishBlockedError extends DomainError {
+  constructor(message: string) {
+    super(message, 422, 'PUBLISH_BLOCKED');
+  }
+}

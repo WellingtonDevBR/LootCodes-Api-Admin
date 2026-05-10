@@ -19,6 +19,13 @@ export interface RetryConfig {
   maxRetries: number;
   baseDelayMs: number;
   maxDelayMs: number;
+  /**
+   * Minimum delay to enforce after a 429 Too Many Requests response.
+   * Overrides the computed exponential backoff when the backoff would be shorter.
+   * Set this to match the provider's rate-limit window (e.g. 1_200 for Bamboo's
+   * 1 req/s catalog API). Defaults to no override (exponential backoff only).
+   */
+  rateLimitDelayMs?: number;
 }
 
 export interface CircuitBreakerConfig {
@@ -252,15 +259,24 @@ export class MarketplaceHttpClient {
     }
 
     let lastError: Error | undefined;
+    let prevAttemptWasRateLimited = false;
 
     for (let attempt = 0; attempt <= this.retryConfig.maxRetries; attempt++) {
       if (attempt > 0) {
-        const delay = Math.min(
+        const exponentialDelay = Math.min(
           this.retryConfig.baseDelayMs * Math.pow(2, attempt - 1),
           this.retryConfig.maxDelayMs,
         );
+        // After a 429, enforce the provider's rate-limit window as a floor so
+        // the retry doesn't immediately re-trigger the same limit.
+        const delay =
+          prevAttemptWasRateLimited && this.retryConfig.rateLimitDelayMs !== undefined
+            ? Math.max(exponentialDelay, this.retryConfig.rateLimitDelayMs)
+            : exponentialDelay;
         await sleep(delay);
       }
+
+      prevAttemptWasRateLimited = false;
 
       try {
         this.rl.record();
@@ -271,7 +287,9 @@ export class MarketplaceHttpClient {
         lastError = err instanceof Error ? err : new Error(String(err));
 
         if (err instanceof MarketplaceApiError && err.statusCode !== undefined) {
-          if (err.statusCode >= 400 && err.statusCode < 500 && err.statusCode !== 429) {
+          if (err.statusCode === 429) {
+            prevAttemptWasRateLimited = true;
+          } else if (err.statusCode >= 400 && err.statusCode < 500) {
             this.cb.recordFailure();
             throw err;
           }

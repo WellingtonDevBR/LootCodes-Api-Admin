@@ -233,6 +233,9 @@ export function createBambooManualBuyer(params: {
     providerCode: 'bamboo',
     timeoutMs: BAMBOO_HTTP_TIMEOUT_MS,
     rateLimiter: params.catalogRateLimiter ?? { maxRequests: 50, windowMs: 60_000 },
+    // Bamboo Catalog v2 enforces 1 req/s. After any 429 response, wait at least
+    // 1 200 ms before retrying so we always land in the next rate-limit window.
+    retry: { rateLimitDelayMs: 1_200 },
     headers: async () => ({ Authorization: basicAuth }),
     proxySigner: resolveBambooProxySigner(catalogBaseUrl),
   });
@@ -276,29 +279,14 @@ export class BambooManualBuyer {
   async quote(offerId: string, targetCurrency = 'USD'): Promise<BambooOfferQuote> {
     const tc = normalizeBambooWalletCurrency(targetCurrency);
     const path = `catalog?ProductId=${encodeURIComponent(offerId)}&TargetCurrency=${encodeURIComponent(tc)}`;
-    try {
-      const result = await this.catalogClient.get<BambooCatalogResponse>(path);
-      for (const brand of result.items ?? []) {
-        const product = brand.products?.find((p) => String(p.id) === String(offerId));
-        if (product) {
-          return mapProductToQuote(product, brand);
-        }
+    const result = await this.catalogClient.get<BambooCatalogResponse>(path);
+    for (const brand of result.items ?? []) {
+      const product = brand.products?.find((p) => String(p.id) === String(offerId));
+      if (product) {
+        return mapProductToQuote(product, brand);
       }
-      throw new Error(`Bamboo product not found: ${offerId}`);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (!/\b429\b|Too many requests/i.test(msg)) throw err;
-      logger.warn('Bamboo catalog quote rate-limited; retrying once', { offerId });
-      await sleep(2_500);
-      const result = await this.catalogClient.get<BambooCatalogResponse>(path);
-      for (const brand of result.items ?? []) {
-        const product = brand.products?.find((p) => String(p.id) === String(offerId));
-        if (product) {
-          return mapProductToQuote(product, brand);
-        }
-      }
-      throw new Error(`Bamboo product not found: ${offerId}`);
     }
+    throw new Error(`Bamboo product not found: ${offerId}`);
   }
 
   async purchase(

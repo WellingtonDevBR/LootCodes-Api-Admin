@@ -11,6 +11,7 @@ import {
   type JitPublishPlan,
   type JitPublishWalletStatus,
 } from './compute-jit-publish-plan.use-case.js';
+import { PublishBlockedError } from '../../errors/domain-errors.js';
 
 export interface PublishSellerListingToMarketplaceDtoInput {
   readonly listing_id: string;
@@ -87,7 +88,7 @@ export class PublishSellerListingToMarketplaceUseCase {
         if (plan.kind !== 'plan') {
           const msg = formatJitFailureMessage(plan);
           await this.sellerRepo.markSellerListingPublishFailure(dto.listing_id, msg);
-          throw new Error(msg);
+          throw new PublishBlockedError(msg);
         }
 
         quantity = plan.declaredStock;

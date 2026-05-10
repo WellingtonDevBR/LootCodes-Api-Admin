@@ -24,6 +24,7 @@ import type { LinkCatalogProductMarketplacePublishSnap } from '../../core/use-ca
 import type { IDatabase } from '../../core/ports/database.port.js';
 import { syncAppRouteProductCatalog } from '../../infra/procurement/approute-catalog-sync.js';
 import { createLogger } from '../../shared/logger.js';
+import { PublishBlockedError } from '../../core/errors/domain-errors.js';
 
 const logger = createLogger('admin-procurement-routes');
 
@@ -233,10 +234,18 @@ export async function adminProcurementRoutes(app: FastifyInstance) {
         };
       } catch (err) {
         marketplace_publish_error = err instanceof Error ? err.message : 'Marketplace publish failed';
-        logger.error('Marketplace publish during catalog link failed', err as Error, {
-          listing_id: baseResult.seller_listing_id,
-          admin_id: adminId,
-        });
+        if (err instanceof PublishBlockedError) {
+          logger.warn('Marketplace publish blocked (expected business condition)', {
+            listing_id: baseResult.seller_listing_id,
+            admin_id: adminId,
+            reason: err.message,
+          });
+        } else {
+          logger.error('Marketplace publish during catalog link failed', err as Error, {
+            listing_id: baseResult.seller_listing_id,
+            admin_id: adminId,
+          });
+        }
       }
     }
 

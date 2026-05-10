@@ -102,7 +102,7 @@ export async function internalCronRoutes(app: FastifyInstance): Promise<void> {
 
       const dto: ReconcileSellerListingsDto = parsed.data;
 
-      logger.info('Reconcile seller-listings cron invoked', {
+      logger.info('Reconcile seller-listings cron accepted — running in background', {
         requestId,
         variantFilterCount: dto.variant_ids?.length ?? 0,
         batch_limit: dto.batch_limit,
@@ -110,17 +110,24 @@ export async function internalCronRoutes(app: FastifyInstance): Promise<void> {
         phases: dto.phases,
       });
 
-      try {
-        const orchestrator = container.resolve<ReconcileSellerListingsUseCase>(
-          UC_TOKENS.ReconcileSellerListings,
-        );
-        const result = await orchestrator.execute(requestId, dto);
-        return reply.send(result);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        logger.error('Reconcile seller-listings cron failed', err as Error, { requestId });
-        return reply.code(500).send({ error: 'reconcile_failed', message });
-      }
+      // Respond immediately so the cron/lambda caller is not held open while
+      // all reconcile phases run. The orchestrator continues in the background.
+      reply.code(202).send({ accepted: true, request_id: requestId });
+
+      const orchestrator = container.resolve<ReconcileSellerListingsUseCase>(
+        UC_TOKENS.ReconcileSellerListings,
+      );
+
+      orchestrator.execute(requestId, dto).catch((err: unknown) => {
+        logger.error('Reconcile seller-listings background run failed', err as Error, {
+          requestId,
+        });
+        Sentry.withScope((scope) => {
+          scope.setTag('cron.job', 'reconcile-seller-listings');
+          scope.setContext('cron', { requestId, phases: dto.phases, dry_run: dto.dry_run });
+          Sentry.captureException(err);
+        });
+      });
     },
   );
 
