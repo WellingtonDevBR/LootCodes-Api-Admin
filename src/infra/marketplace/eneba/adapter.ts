@@ -514,15 +514,15 @@ export class EnebaAdapter
     // buyer-facing price from this value using its own fee schedule, which
     // means we don't need to mirror Eneba's exact fee structure on our side.
     // The auto-pricing cron passes NET prices when pricingModel='seller_price'.
+    //
+    // `preventPaidPriceChange: true` — Eneba skips the update (charges nothing)
+    // if the free-update quota is exhausted. We never want silent paid charges
+    // from the pricing cron; a skipped update is preferable to an unexpected fee.
     const items = updates.map((u) => ({
       auctionId: u.externalListingId,
       enabled: true,
       priceIWantToGet: { amount: u.priceCents, currency: u.currency ?? 'EUR' },
-      // When set, Eneba skips the update (and charges nothing) if the free-quota
-      // window is exhausted instead of deducting from the paid budget.
-      ...(u.preventPaidPriceChange != null
-        ? { preventPaidPriceChange: u.preventPaidPriceChange }
-        : {}),
+      preventPaidPriceChange: true,
     }));
 
     const data = await this.gqlClient.execute<EnebaUpdateAuctionPriceData>(
