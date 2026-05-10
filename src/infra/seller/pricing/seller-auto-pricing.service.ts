@@ -755,12 +755,14 @@ export class SellerAutoPricingService implements ISellerAutoPricingService {
           listing.price_cents, listing.currency, listing.listing_type as 'key_upload' | 'declared_stock',
           config.commission_rate_percent,
           listing.external_listing_id, listing.external_product_id ?? undefined,
+          config.fixed_fee_cents,
         );
         effectiveMinGross = await this.pricingService.reverseNetToGross(
           providerCode, providerAccountId,
           effectiveMin, listing.currency, listing.listing_type as 'key_upload' | 'declared_stock',
           config.commission_rate_percent,
           listing.external_listing_id, listing.external_product_id ?? undefined,
+          config.fixed_fee_cents,
         );
       }
 
@@ -777,6 +779,7 @@ export class SellerAutoPricingService implements ISellerAutoPricingService {
             gross, listing.currency, listing.listing_type as 'key_upload' | 'declared_stock',
             config.commission_rate_percent,
             listing.external_listing_id, listing.external_product_id ?? undefined,
+            config.fixed_fee_cents,
           );
         }
         return gross;

@@ -62,6 +62,18 @@ export class SellerPricingService implements ISellerPricingService {
 
   // ─── Reverse Net → Gross ──────────────────────────────────────────
 
+  /**
+   * Converts a desired NET payout (what the seller receives) to the GROSS price
+   * the buyer sees on the marketplace.
+   *
+   * When `fixedFeeCents` is provided the formula is exact and no API call is made:
+   *   gross = ceil((net + fixedFee) / (1 - commission))
+   *
+   * When only `configCommissionPercent` is known (no fixed fee) we fall back to
+   * `S_calculatePrice` to let the marketplace account for any hidden per-sale fees.
+   * The API call is a last resort — it consumes rate-limit quota and must not be
+   * called in a per-listing loop when the fee structure is already configured.
+   */
   async reverseNetToGross(
     providerCode: string,
     providerAccountId: string,
@@ -71,11 +83,22 @@ export class SellerPricingService implements ISellerPricingService {
     configCommissionPercent: number,
     externalListingId?: string,
     externalProductId?: string,
+    fixedFeeCents?: number,
   ): Promise<number> {
+    const rate = Math.max(0, configCommissionPercent) / 100;
+    const fee = Math.max(0, fixedFeeCents ?? 0);
+
+    // When both commission and fixed fee are configured, the math is exact.
+    // Skip the S_calculatePrice API call to avoid consuming rate-limit quota.
+    if (fee > 0 || fixedFeeCents != null) {
+      return Math.ceil((desiredNetCents + fee) / (1 - rate));
+    }
+
+    // No fixed-fee info — call the marketplace calculator for an accurate result.
     const adapter = this.registry.getPricingAdapter(providerCode);
     if (adapter) {
       try {
-        const roughGross = Math.round(desiredNetCents / (1 - configCommissionPercent / 100));
+        const roughGross = Math.round(desiredNetCents / (1 - rate));
         const ctx: PricingContext = {
           priceCents: roughGross,
           currency,
@@ -97,12 +120,21 @@ export class SellerPricingService implements ISellerPricingService {
       }
     }
 
-    const rate = Math.max(0, configCommissionPercent) / 100;
     return Math.round(desiredNetCents / (1 - rate));
   }
 
   // ─── Reverse Gross → Seller Price ─────────────────────────────────
 
+  /**
+   * Converts a GROSS price (what the buyer pays) to the NET payout the seller
+   * receives after marketplace commission and fixed fees.
+   *
+   * When `fixedFeeCents` is provided the formula is exact and no API call is made:
+   *   net = floor(gross × (1 - commission) - fixedFee)
+   *
+   * Falls back to `S_calculatePrice` only when the fixed fee is unknown.
+   * Avoid calling this in a per-listing loop when the fee structure is configured.
+   */
   async reverseGrossToSellerPrice(
     providerCode: string,
     providerAccountId: string,
@@ -112,7 +144,17 @@ export class SellerPricingService implements ISellerPricingService {
     configCommissionPercent: number,
     externalListingId?: string,
     externalProductId?: string,
+    fixedFeeCents?: number,
   ): Promise<number> {
+    const rate = Math.max(0, configCommissionPercent) / 100;
+    const fee = Math.max(0, fixedFeeCents ?? 0);
+
+    // Exact formula — no API call needed when fee structure is fully configured.
+    if (fee > 0 || fixedFeeCents != null) {
+      return Math.max(0, Math.floor(grossCents * (1 - rate) - fee));
+    }
+
+    // No fixed-fee info — call the marketplace calculator for an accurate result.
     const adapter = this.registry.getPricingAdapter(providerCode);
     if (adapter && externalListingId) {
       try {
@@ -135,7 +177,6 @@ export class SellerPricingService implements ISellerPricingService {
       }
     }
 
-    const rate = Math.max(0, configCommissionPercent) / 100;
     return Math.round(grossCents * (1 - rate));
   }
 
