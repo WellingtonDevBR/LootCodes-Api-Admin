@@ -738,6 +738,193 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
     return reply.send({ message: 'Not implemented yet' });
   });
 
+  // ─── Batch key cross-check by plaintext value ───────────────────────────
+
+  app.post('/keys/lookup-by-value', {
+    preHandler: [adminGuard],
+    config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+  }, async (request, reply) => {
+    const body = request.body as { key_values?: unknown };
+
+    if (!Array.isArray(body.key_values) || body.key_values.length === 0) {
+      return reply.code(400).send({ error: 'key_values array is required' });
+    }
+    if (body.key_values.length > 1000) {
+      return reply.code(400).send({ error: 'Maximum 1000 key values per lookup' });
+    }
+    for (const v of body.key_values) {
+      if (typeof v !== 'string' || v.trim().length === 0) {
+        return reply.code(400).send({ error: 'Each key_value must be a non-empty string' });
+      }
+    }
+
+    const rawValues = (body.key_values as string[]).map((v) => v.trim());
+
+    const hashFn = async (key: string): Promise<string> => {
+      const data = new TextEncoder().encode(key);
+      const buf = await crypto.subtle.digest('SHA-256', data);
+      return Buffer.from(buf).toString('hex');
+    };
+
+    const hashes = await Promise.all(rawValues.map((v) => hashFn(v)));
+    const hashToValue = new Map<string, string>();
+    hashes.forEach((h, i) => hashToValue.set(h, rawValues[i]!));
+
+    const db = container.resolve<import('../../core/ports/database.port.js').IDatabase>(
+      TOKENS.Database,
+    );
+
+    type KeyLookupRow = {
+      id: string;
+      raw_key_hash: string;
+      key_state: string;
+      variant_id: string;
+      order_id: string | null;
+      marked_faulty_at: string | null;
+      sales_blocked_at: string | null;
+    };
+
+    const found = await db.query<KeyLookupRow>(
+      'product_keys',
+      {
+        select: 'id, raw_key_hash, key_state, variant_id, order_id, marked_faulty_at, sales_blocked_at',
+        in: [['raw_key_hash', hashes]],
+      },
+    );
+
+    // Enrich with product + variant labels
+    const variantIds = [...new Set(found.map((r) => r.variant_id))];
+    type VariantRow = { id: string; sku: string | null; product_id: string };
+    const variants = variantIds.length > 0
+      ? await db.query<VariantRow>('product_variants', { select: 'id, sku, product_id', in: [['id', variantIds]] })
+      : [];
+    const variantMap = new Map(variants.map((v) => [v.id, v]));
+
+    const productIds = [...new Set(variants.map((v) => v.product_id))];
+    type ProductRow = { id: string; name: string };
+    const products = productIds.length > 0
+      ? await db.query<ProductRow>('products', { select: 'id, name', in: [['id', productIds]] })
+      : [];
+    const productMap = new Map(products.map((p) => [p.id, p]));
+
+    const foundSet = new Set(found.map((r) => r.raw_key_hash));
+
+    const results = rawValues.map((raw, i) => {
+      const hash = hashes[i]!;
+      const row = found.find((r) => r.raw_key_hash === hash);
+      if (!row) {
+        return { input_value: raw, matched: false, key_id: null, key_state: null, product_name: null, variant_sku: null, order_id: null };
+      }
+      const variant = variantMap.get(row.variant_id);
+      const product = variant ? productMap.get(variant.product_id) : undefined;
+      return {
+        input_value: raw,
+        matched: true,
+        key_id: row.id,
+        key_state: row.key_state,
+        product_name: product?.name ?? null,
+        variant_sku: variant?.sku ?? null,
+        order_id: row.order_id,
+      };
+    });
+
+    const matchedCount = results.filter((r) => r.matched).length;
+    void foundSet; // consumed above
+
+    return reply.send({ results, matched: matchedCount, total: rawValues.length });
+  });
+
+  // ─── Batch bulk state change ─────────────────────────────────────────────
+
+  app.post('/keys/bulk-set-state', {
+    preHandler: [adminGuard],
+    config: { rateLimit: { max: 20, timeWindow: '1 minute' } },
+  }, async (request, reply) => {
+    const body = request.body as {
+      key_ids?: unknown;
+      target_state?: unknown;
+      reason?: unknown;
+    };
+
+    if (!Array.isArray(body.key_ids) || body.key_ids.length === 0) {
+      return reply.code(400).send({ error: 'key_ids array is required' });
+    }
+    if (body.key_ids.length > DECRYPT_MAX_BATCH) {
+      return reply.code(400).send({ error: `Maximum ${DECRYPT_MAX_BATCH} keys per request` });
+    }
+    const keyIds = body.key_ids as unknown[];
+    for (const id of keyIds) {
+      if (typeof id !== 'string' || !UUID_RE.test(id)) {
+        return reply.code(400).send({ error: `Invalid key_id format: ${String(id).slice(0, 40)}` });
+      }
+    }
+
+    const ALLOWED_STATES = ['faulty', 'burnt'] as const;
+    type AllowedState = typeof ALLOWED_STATES[number];
+    if (!ALLOWED_STATES.includes(body.target_state as AllowedState)) {
+      return reply.code(400).send({ error: `target_state must be one of: ${ALLOWED_STATES.join(', ')}` });
+    }
+    const targetState = body.target_state as AllowedState;
+
+    if (targetState === 'faulty') {
+      if (typeof body.reason !== 'string' || body.reason.trim().length === 0) {
+        return reply.code(400).send({ error: 'reason is required when target_state is faulty' });
+      }
+      if (body.reason.trim().length > 500) {
+        return reply.code(400).send({ error: 'reason must be 500 characters or fewer' });
+      }
+    }
+
+    const authUser = (request as unknown as Record<string, unknown>).authUser as { id: string } | undefined;
+    const adminId = authUser?.id ?? 'unknown';
+
+    try {
+      if (targetState === 'faulty') {
+        const uc = container.resolve<import('../../core/use-cases/inventory/mark-keys-faulty.use-case.js').MarkKeysFaultyUseCase>(
+          UC_TOKENS.MarkKeysFaulty,
+        );
+        const result = await uc.execute({
+          key_ids: keyIds as string[],
+          reason: (body.reason as string).trim(),
+          admin_id: adminId,
+        });
+        return reply.send(result);
+      }
+
+      // burnt: direct update for keys currently in available state
+      const db = container.resolve<import('../../core/ports/database.port.js').IDatabase>(
+        TOKENS.Database,
+      );
+
+      const rows = await db.query<{ id: string; key_state: string }>(
+        'product_keys',
+        { select: 'id, key_state', in: [['id', keyIds as string[]]] },
+      );
+
+      const eligible = rows.filter((r) => r.key_state === 'available');
+      const locked = rows.filter((r) => r.key_state !== 'available');
+
+      const results: Array<{ key_id: string; outcome: string }> = [
+        ...locked.map((r) => ({ key_id: r.id, outcome: `state_locked:${r.key_state}` })),
+      ];
+
+      let keysUpdated = 0;
+      for (const row of eligible) {
+        await db.update('product_keys', { id: row.id }, {
+          key_state: 'burnt',
+          marketplace_eligible: false,
+        });
+        results.push({ key_id: row.id, outcome: 'updated' });
+        keysUpdated++;
+      }
+
+      return reply.send({ success: true, keys_marked: keysUpdated, results });
+    } catch (err) {
+      logger.error('bulk-set-state failed', err as Error, { target_state: targetState, key_count: keyIds.length });
+      return reply.code(500).send({ error: 'Failed to update key states' });
+    }
+  });
+
   app.post('/keys/mark-faulty', {
     preHandler: [adminGuard],
     config: { rateLimit: { max: 20, timeWindow: '1 minute' } },
