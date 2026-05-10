@@ -18,10 +18,13 @@ import type { IDatabase } from '../../../core/ports/database.port.js';
 import type {
   IMarketplaceAdapterRegistry,
   BatchDeclaredStockUpdate,
+  BatchPriceUpdate,
 } from '../../../core/ports/marketplace-adapter.port.js';
 import type { ISellerStockSyncService, RefreshStockResult } from '../../../core/ports/seller-pricing.port.js';
 import type { IBuyerWalletSnapshotter } from '../../../core/ports/buyer-wallet-snapshot.port.js';
+import { getSpendableCentsFromSnapshot } from '../../../core/ports/buyer-wallet-snapshot.port.js';
 import type { IProcurementFxConverter } from '../../../core/ports/procurement-fx-converter.port.js';
+import { MAX_PROCUREMENT_DECLARED_STOCK } from '../../../core/shared/procurement-declared-stock.js';
 import {
   CreditAwareDeclaredStockSelectorUseCase,
   type DeclaredStockOfferRow,
@@ -40,6 +43,9 @@ interface PendingSyncUpdate {
   readonly externalId: string;
   readonly qty: number; // 0 = disable
   readonly disableReason?: string;
+  /** When set, push this corrected price to the marketplace before declaring stock. */
+  readonly correctedPriceCents?: number;
+  readonly correctedPriceCurrency?: string;
 }
 
 interface StockListingRow {
@@ -193,6 +199,15 @@ export class SellerStockSyncService implements ISellerStockSyncService {
       const BATCH_SIZE = 50;
       for (let i = 0; i < updates.length; i += BATCH_SIZE) {
         const chunk = updates.slice(i, i + BATCH_SIZE);
+
+        // Apply price corrections before declaring stock.
+        const priceCorrections = chunk.filter(
+          (u) => u.qty > 0 && u.correctedPriceCents != null && u.correctedPriceCents > 0,
+        );
+        if (priceCorrections.length > 0) {
+          await this.flushBatchPriceCorrections(requestId, providerCode, priceCorrections, result);
+        }
+
         const batchItems: BatchDeclaredStockUpdate[] = chunk.map((u) => ({
           externalListingId: u.externalId,
           quantity: u.qty,
@@ -200,7 +215,6 @@ export class SellerStockSyncService implements ISellerStockSyncService {
         try {
           const batchResult = await batchAdapter.batchUpdateDeclaredStock(batchItems);
           if (batchResult.failed === 0) {
-            // All succeeded.
             for (const u of chunk) {
               await this.persistSyncUpdate(u);
               result.stockUpdated++;
@@ -209,7 +223,6 @@ export class SellerStockSyncService implements ISellerStockSyncService {
               requestId, providerCode, count: chunk.length,
             });
           } else {
-            // Partial failure — retry individually.
             logger.info('Stock-sync: batch declared stock had failures, retrying individually', {
               requestId, providerCode, updated: batchResult.updated, failed: batchResult.failed,
             });
@@ -256,6 +269,10 @@ export class SellerStockSyncService implements ISellerStockSyncService {
         });
         result.stockUpdated++;
       } else {
+        // Apply price correction first if needed.
+        if (update.correctedPriceCents != null && update.correctedPriceCents > 0) {
+          await this.applyPriceCorrection(requestId, providerCode, update, result);
+        }
         const adapter = this.registry.getDeclaredStockAdapter(providerCode);
         if (!adapter) return;
         const r = await adapter.declareStock(update.externalId, update.qty);
@@ -284,12 +301,147 @@ export class SellerStockSyncService implements ISellerStockSyncService {
     }
   }
 
+  private async flushBatchPriceCorrections(
+    requestId: string,
+    providerCode: string,
+    corrections: PendingSyncUpdate[],
+    result: RefreshStockResult,
+  ): Promise<void> {
+    const priceUpdates: BatchPriceUpdate[] = corrections.map((u) => ({
+      externalListingId: u.externalId,
+      priceCents: u.correctedPriceCents!,
+      currency: u.correctedPriceCurrency,
+    }));
+
+    const batchPriceAdapter = this.registry.getBatchPriceAdapter(providerCode);
+    if (batchPriceAdapter) {
+      try {
+        const r = await batchPriceAdapter.batchUpdatePrices(priceUpdates);
+        logger.info('Stock-sync: batch price correction applied', {
+          requestId, providerCode, updated: r.updated, failed: r.failed,
+        });
+        for (const correction of corrections) {
+          await this.db.update('seller_listings', { id: correction.listingId }, {
+            price_cents: correction.correctedPriceCents,
+            updated_at: new Date().toISOString(),
+          });
+        }
+        return;
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        logger.warn('Stock-sync: batch price correction failed, trying individually', {
+          requestId, providerCode, error: errMsg,
+        });
+      }
+    }
+
+    const listingAdapter = this.registry.getListingAdapter(providerCode);
+    for (const correction of corrections) {
+      try {
+        if (listingAdapter) {
+          await listingAdapter.updateListing({
+            externalListingId: correction.externalId,
+            priceCents: correction.correctedPriceCents!,
+            currency: correction.correctedPriceCurrency,
+          });
+        }
+        await this.db.update('seller_listings', { id: correction.listingId }, {
+          price_cents: correction.correctedPriceCents,
+          updated_at: new Date().toISOString(),
+        });
+      } catch (err) {
+        result.errors++;
+        const errMsg = err instanceof Error ? err.message : String(err);
+        logger.warn('Stock-sync: individual price correction failed', {
+          requestId, listingId: correction.listingId,
+          correctedPriceCents: correction.correctedPriceCents, error: errMsg,
+        });
+      }
+    }
+  }
+
+  private async applyPriceCorrection(
+    requestId: string,
+    providerCode: string,
+    update: PendingSyncUpdate,
+    result: RefreshStockResult,
+  ): Promise<void> {
+    try {
+      const batchPriceAdapter = this.registry.getBatchPriceAdapter(providerCode);
+      if (batchPriceAdapter) {
+        await batchPriceAdapter.batchUpdatePrices([{
+          externalListingId: update.externalId,
+          priceCents: update.correctedPriceCents!,
+          currency: update.correctedPriceCurrency,
+        }]);
+      } else {
+        const listingAdapter = this.registry.getListingAdapter(providerCode);
+        if (listingAdapter) {
+          await listingAdapter.updateListing({
+            externalListingId: update.externalId,
+            priceCents: update.correctedPriceCents!,
+            currency: update.correctedPriceCurrency,
+          });
+        }
+      }
+      await this.db.update('seller_listings', { id: update.listingId }, {
+        price_cents: update.correctedPriceCents,
+        updated_at: new Date().toISOString(),
+      });
+    } catch (err) {
+      result.errors++;
+      const errMsg = err instanceof Error ? err.message : String(err);
+      logger.warn('Stock-sync: price correction failed, will still declare stock', {
+        requestId, listingId: update.listingId,
+        correctedPriceCents: update.correctedPriceCents, error: errMsg,
+      });
+    }
+  }
+
   private async persistSyncUpdate(update: PendingSyncUpdate): Promise<void> {
     await this.db.update('seller_listings', { id: update.listingId }, {
       declared_stock: update.qty,
       last_synced_at: new Date().toISOString(),
       error_message: null,
     });
+  }
+
+  private async findCheapestCreditedOffer(
+    offers: DeclaredStockOfferRow[],
+    snapshot: Awaited<ReturnType<IBuyerWalletSnapshotter['snapshot']>>,
+  ): Promise<{ offer: DeclaredStockOfferRow; unitCostUsdCents: number } | null> {
+    const ranked: Array<{ offer: DeclaredStockOfferRow; unitCostUsdCents: number }> = [];
+    for (const offer of offers) {
+      if (offer.last_price_cents == null || offer.last_price_cents <= 0) continue;
+      const usd = await this.fx.toUsdCents(offer.last_price_cents, offer.currency);
+      if (usd == null || !Number.isFinite(usd) || usd <= 0) continue;
+      ranked.push({ offer, unitCostUsdCents: usd });
+    }
+    ranked.sort((a, b) => a.unitCostUsdCents - b.unitCostUsdCents);
+    for (const candidate of ranked) {
+      const spendable = getSpendableCentsFromSnapshot(
+        snapshot,
+        candidate.offer.provider_account_id,
+        candidate.offer.currency,
+      );
+      if (spendable >= (candidate.offer.last_price_cents ?? 0)) {
+        return candidate;
+      }
+    }
+    return null;
+  }
+
+  private async computeFloorInListingCurrency(
+    costUsdCents: number,
+    listingCurrency: string,
+    marginPct: number,
+  ): Promise<number> {
+    const usdPer100 = await this.fx.toUsdCents(100, listingCurrency);
+    const costInListing = usdPer100 != null && usdPer100 > 0
+      ? (costUsdCents / usdPer100) * 100
+      : costUsdCents;
+    const safeMargin = Math.max(0, marginPct ?? 0);
+    return Math.ceil(costInListing * (1 + safeMargin / 100));
   }
 
   // ─── Declared-stock branch (credit-aware, decision-only) ────────────────
@@ -357,6 +509,35 @@ export class SellerStockSyncService implements ISellerStockSyncService {
       });
       push({ listingId: listing.id, externalId, qty: decision.declaredQty });
       return;
+    }
+
+    if (decision.reason === 'uneconomic') {
+      // Price below procurement cost floor — find cheapest credited offer,
+      // correct the price to floor, and declare stock. Never block declaration
+      // due to stale/wrong price; fix the price and sell.
+      const cheapest = await this.findCheapestCreditedOffer(offers, walletSnapshot);
+      if (cheapest) {
+        const correctedPriceCents = await this.computeFloorInListingCurrency(
+          cheapest.unitCostUsdCents,
+          listing.currency,
+          merged.min_profit_margin_pct,
+        );
+        const declaredQty = Math.min(
+          Math.max(1, Math.trunc(cheapest.offer.available_quantity ?? 1)),
+          MAX_PROCUREMENT_DECLARED_STOCK,
+        );
+        logger.info('Stock-sync: price below floor — correcting price and declaring', {
+          requestId, listingId: listing.id, providerCode: listing.provider_code,
+          currentPriceCents: listing.price_cents,
+          correctedPriceCents,
+          currency: listing.currency,
+          buyerProviderCode: cheapest.offer.provider_code,
+          declaredQty,
+        });
+        push({ listingId: listing.id, externalId, qty: declaredQty, correctedPriceCents, correctedPriceCurrency: listing.currency });
+        return;
+      }
+      // No credited offer found after all — treat as no_credit.
     }
 
     // Disable — skip if already at 0 to avoid burning marketplace rate limits.

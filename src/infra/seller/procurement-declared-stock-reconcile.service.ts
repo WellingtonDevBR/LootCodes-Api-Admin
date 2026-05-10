@@ -18,6 +18,7 @@ import type { IDatabase, QueryOptions } from '../../core/ports/database.port.js'
 import type {
   IMarketplaceAdapterRegistry,
   BatchDeclaredStockUpdate,
+  BatchPriceUpdate,
   ISellerBatchDeclaredStockAdapter,
 } from '../../core/ports/marketplace-adapter.port.js';
 import type {
@@ -27,6 +28,7 @@ import type {
   ProcurementDeclaredStockReconcileResult,
 } from '../../core/ports/procurement-declared-stock-reconcile.port.js';
 import type { IBuyerWalletSnapshotter, WalletSnapshot } from '../../core/ports/buyer-wallet-snapshot.port.js';
+import { getSpendableCentsFromSnapshot } from '../../core/ports/buyer-wallet-snapshot.port.js';
 import type { IProcurementFxConverter } from '../../core/ports/procurement-fx-converter.port.js';
 import {
   CreditAwareDeclaredStockSelectorUseCase,
@@ -36,6 +38,7 @@ import {
 } from '../../core/use-cases/seller/credit-aware-declared-stock-selector.use-case.js';
 import { parseSellerConfig, type SellerProviderConfig } from '../../core/use-cases/seller/seller.types.js';
 import { mergeSellerListingPricingOverrides } from '../../core/use-cases/seller/listing-pricing-overrides-merge.js';
+import { MAX_PROCUREMENT_DECLARED_STOCK } from '../../core/shared/procurement-declared-stock.js';
 import { loadBuyerCapableOffersByVariant } from './load-procurement-offer-supply.js';
 import { dispatchListingDisable } from './dispatch-listing-disable.js';
 import { isTransientMarketplaceError } from './recognize-transient-marketplace-error.js';
@@ -52,6 +55,15 @@ interface PendingStockUpdate {
   /** qty > 0 = declare; qty === 0 = disable */
   readonly qty: number;
   readonly disableReason?: 'no_offer' | 'no_credit' | 'uneconomic';
+  /**
+   * When set, the listing price was below the procurement cost floor and must
+   * be corrected on the marketplace BEFORE declaring stock. The flush phase
+   * calls the batch-price or updateListing adapter first, then declares stock.
+   * This guarantees we never block stock declaration due to a stale/low price —
+   * we simply raise the price to floor and declare.
+   */
+  readonly correctedPriceCents?: number;
+  readonly correctedPriceCurrency?: string;
 }
 
 interface ListingRow {
@@ -160,6 +172,49 @@ export class ProcurementDeclaredStockReconcileService implements IProcurementDec
         pending.push({ listingId: listing.id, externalId: listing.external_listing_id, qty: decision.declaredQty });
         pendingByProvider.set(account.provider_code, pending);
         updated++;
+      } else if (decision.reason === 'uneconomic') {
+        // The listing price is currently below the procurement cost floor.
+        // Rule: never block stock declaration due to price — instead raise the
+        // price to (cheapest_offer_cost × (1 + margin%)) and declare stock.
+        const mergedConfig = mergeSellerListingPricingOverrides(account.seller_config, listing.pricing_overrides);
+        const cheapest = await this.findCheapestCreditedOffer(offers, walletSnapshot);
+        if (cheapest) {
+          const correctedPriceCents = await this.computeFloorInListingCurrency(
+            cheapest.unitCostUsdCents,
+            listing.currency,
+            mergedConfig.min_profit_margin_pct,
+          );
+          const declaredQty = Math.min(
+            Math.max(1, Math.trunc(cheapest.offer.available_quantity ?? 1)),
+            MAX_PROCUREMENT_DECLARED_STOCK,
+          );
+          logger.info('Reconcile: price below floor — correcting price and declaring', {
+            requestId, listingId: listing.id, providerCode: account.provider_code,
+            currentPriceCents: listing.price_cents,
+            correctedPriceCents,
+            currency: listing.currency,
+            buyerProviderCode: cheapest.offer.provider_code,
+            declaredQty,
+          });
+          const pending = pendingByProvider.get(account.provider_code) ?? [];
+          pending.push({
+            listingId: listing.id, externalId: listing.external_listing_id,
+            qty: declaredQty,
+            correctedPriceCents,
+            correctedPriceCurrency: listing.currency,
+          });
+          pendingByProvider.set(account.provider_code, pending);
+          updated++;
+        } else {
+          // Selector saw credit but then we couldn't find any — treat as no_credit.
+          logger.info('Reconcile: dispatching marketplace disable', {
+            requestId, listingId: listing.id, providerCode: account.provider_code, reason: 'no_credit',
+          });
+          const pending = pendingByProvider.get(account.provider_code) ?? [];
+          pending.push({ listingId: listing.id, externalId: listing.external_listing_id, qty: 0, disableReason: 'no_credit' });
+          pendingByProvider.set(account.provider_code, pending);
+          updated++;
+        }
       } else {
         logger.info('Reconcile: dispatching marketplace disable', {
           requestId, listingId: listing.id, providerCode: account.provider_code, reason: decision.reason,
@@ -230,6 +285,15 @@ export class ProcurementDeclaredStockReconcileService implements IProcurementDec
     batchAdapter: ISellerBatchDeclaredStockAdapter,
     failures: ProcurementDeclaredStockReconcileFailure[],
   ): Promise<void> {
+    // Price corrections must be pushed BEFORE declaring stock so the listing
+    // is never sold below cost. Batch-price-update the corrected items first.
+    const priceCorrections = chunk.filter(
+      (u) => u.qty > 0 && u.correctedPriceCents != null && u.correctedPriceCents > 0,
+    );
+    if (priceCorrections.length > 0) {
+      await this.flushBatchPriceCorrections(requestId, providerCode, priceCorrections, failures);
+    }
+
     const batchItems: BatchDeclaredStockUpdate[] = chunk.map((u) => ({
       externalListingId: u.externalId,
       quantity: u.qty,
@@ -239,7 +303,6 @@ export class ProcurementDeclaredStockReconcileService implements IProcurementDec
       const result = await batchAdapter.batchUpdateDeclaredStock(batchItems);
 
       if (result.failed === 0) {
-        // All succeeded — persist success for each listing.
         for (const update of chunk) {
           if (update.qty === 0) {
             await this.db.update('seller_listings', { id: update.listingId }, {
@@ -256,7 +319,6 @@ export class ProcurementDeclaredStockReconcileService implements IProcurementDec
           requestId, providerCode, count: chunk.length,
         });
       } else {
-        // Partial or full failure — fall back to individual calls for each item.
         logger.info('Reconcile: batch stock flush had failures, retrying individually', {
           requestId, providerCode, updated: result.updated, failed: result.failed,
         });
@@ -265,7 +327,6 @@ export class ProcurementDeclaredStockReconcileService implements IProcurementDec
         }
       }
     } catch (err) {
-      // Batch call itself threw (e.g. rate limit, circuit breaker) — fall back individually.
       const msg = err instanceof Error ? err.message : String(err);
       const isTransient = isTransientMarketplaceError(err);
       const logFn = isTransient ? logger.info.bind(logger) : logger.warn.bind(logger);
@@ -274,6 +335,75 @@ export class ProcurementDeclaredStockReconcileService implements IProcurementDec
       });
       for (const update of chunk) {
         await this.flushSingle(requestId, providerCode, update, failures);
+      }
+    }
+  }
+
+  /**
+   * Batch-price-update all listings whose price is below procurement floor.
+   * Uses the batch-price adapter when available (Eneba P_updateAuctionPrice),
+   * falls back to individual updateListing calls. Price updates are best-effort:
+   * if they fail we still proceed to declare stock and log the error.
+   */
+  private async flushBatchPriceCorrections(
+    requestId: string,
+    providerCode: string,
+    corrections: PendingStockUpdate[],
+    failures: ProcurementDeclaredStockReconcileFailure[],
+  ): Promise<void> {
+    const priceUpdates: BatchPriceUpdate[] = corrections.map((u) => ({
+      externalListingId: u.externalId,
+      priceCents: u.correctedPriceCents!,
+      currency: u.correctedPriceCurrency,
+    }));
+
+    const batchPriceAdapter = this.registry.getBatchPriceAdapter(providerCode);
+    if (batchPriceAdapter) {
+      try {
+        const result = await batchPriceAdapter.batchUpdatePrices(priceUpdates);
+        logger.info('Reconcile: batch price correction applied', {
+          requestId, providerCode, updated: result.updated, failed: result.failed,
+        });
+        if (result.updated > 0) {
+          // Persist corrected prices in DB for listings that succeeded.
+          for (const correction of corrections) {
+            await this.db.update('seller_listings', { id: correction.listingId }, {
+              price_cents: correction.correctedPriceCents,
+              updated_at: new Date().toISOString(),
+            });
+          }
+        }
+        return;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.warn('Reconcile: batch price correction failed, trying individually', {
+          requestId, providerCode, error: msg,
+        });
+      }
+    }
+
+    // Individual fallback.
+    const listingAdapter = this.registry.getListingAdapter(providerCode);
+    for (const correction of corrections) {
+      try {
+        if (listingAdapter) {
+          await listingAdapter.updateListing({
+            externalListingId: correction.externalId,
+            priceCents: correction.correctedPriceCents!,
+            currency: correction.correctedPriceCurrency,
+          });
+        }
+        await this.db.update('seller_listings', { id: correction.listingId }, {
+          price_cents: correction.correctedPriceCents,
+          updated_at: new Date().toISOString(),
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.warn('Reconcile: individual price correction failed', {
+          requestId, providerCode, listingId: correction.listingId,
+          correctedPriceCents: correction.correctedPriceCents, error: msg,
+        });
+        failures.push({ listing_id: correction.listingId, reason: `price_correction_failed: ${msg}` });
       }
     }
   }
@@ -297,6 +427,11 @@ export class ProcurementDeclaredStockReconcileService implements IProcurementDec
           error_message: update.disableReason ?? 'disabled',
         });
       } else {
+        // If this listing has a price correction, push the price first.
+        if (update.correctedPriceCents != null && update.correctedPriceCents > 0) {
+          await this.applyPriceCorrection(requestId, providerCode, update, failures);
+        }
+
         const adapter = this.registry.getDeclaredStockAdapter(providerCode);
         if (!adapter) {
           failures.push({ listing_id: update.listingId, reason: `no_declared_stock_adapter:${providerCode}` });
@@ -317,7 +452,100 @@ export class ProcurementDeclaredStockReconcileService implements IProcurementDec
     }
   }
 
+  private async applyPriceCorrection(
+    requestId: string,
+    providerCode: string,
+    update: PendingStockUpdate,
+    failures: ProcurementDeclaredStockReconcileFailure[],
+  ): Promise<void> {
+    try {
+      const batchPriceAdapter = this.registry.getBatchPriceAdapter(providerCode);
+      if (batchPriceAdapter) {
+        await batchPriceAdapter.batchUpdatePrices([{
+          externalListingId: update.externalId,
+          priceCents: update.correctedPriceCents!,
+          currency: update.correctedPriceCurrency,
+        }]);
+      } else {
+        const listingAdapter = this.registry.getListingAdapter(providerCode);
+        if (listingAdapter) {
+          await listingAdapter.updateListing({
+            externalListingId: update.externalId,
+            priceCents: update.correctedPriceCents!,
+            currency: update.correctedPriceCurrency,
+          });
+        }
+      }
+      await this.db.update('seller_listings', { id: update.listingId }, {
+        price_cents: update.correctedPriceCents,
+        updated_at: new Date().toISOString(),
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.warn('Reconcile: price correction failed, will still declare stock', {
+        requestId, providerCode, listingId: update.listingId,
+        correctedPriceCents: update.correctedPriceCents, error: msg,
+      });
+      failures.push({ listing_id: update.listingId, reason: `price_correction_failed: ${msg}` });
+    }
+  }
+
   // ─── Decision plumbing ────────────────────────────────────────────────
+
+  /**
+   * Finds the cheapest buyer offer that has sufficient wallet credit, ignoring
+   * the profitability ceiling. Used when the selector returns `uneconomic` so
+   * we can raise the price to floor and still declare stock.
+   */
+  private async findCheapestCreditedOffer(
+    offers: DeclaredStockOfferRow[],
+    snapshot: WalletSnapshot,
+  ): Promise<{ offer: DeclaredStockOfferRow; unitCostUsdCents: number } | null> {
+    const ranked: Array<{ offer: DeclaredStockOfferRow; unitCostUsdCents: number }> = [];
+
+    for (const offer of offers) {
+      if (offer.last_price_cents == null || offer.last_price_cents <= 0) continue;
+      const usd = await this.fx.toUsdCents(offer.last_price_cents, offer.currency);
+      if (usd == null || !Number.isFinite(usd) || usd <= 0) continue;
+      ranked.push({ offer, unitCostUsdCents: usd });
+    }
+
+    ranked.sort((a, b) => a.unitCostUsdCents - b.unitCostUsdCents);
+
+    for (const candidate of ranked) {
+      const spendable = getSpendableCentsFromSnapshot(
+        snapshot,
+        candidate.offer.provider_account_id,
+        candidate.offer.currency,
+      );
+      if (spendable >= (candidate.offer.last_price_cents ?? 0)) {
+        return candidate;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Converts a USD cost to the listing currency and adds the margin percentage,
+   * yielding the minimum price (priceIWantToGet for Eneba) that keeps us profitable.
+   *
+   * Formula: ceil(costInListingCurrency × (1 + marginPct/100))
+   */
+  private async computeFloorInListingCurrency(
+    costUsdCents: number,
+    listingCurrency: string,
+    marginPct: number,
+  ): Promise<number> {
+    // Convert USD→listingCurrency via the FX converter's reverse rate.
+    // toUsdCents(100 units of listingCurrency) gives USD per 100 units,
+    // so costUsdCents / (usdPer100 / 100) = listing cents.
+    const usdPer100 = await this.fx.toUsdCents(100, listingCurrency);
+    const costInListing = usdPer100 != null && usdPer100 > 0
+      ? (costUsdCents / usdPer100) * 100
+      : costUsdCents; // fallback: treat as same currency (should not happen in practice)
+    const safeMargin = Math.max(0, marginPct ?? 0);
+    return Math.ceil(costInListing * (1 + safeMargin / 100));
+  }
 
   private async runSelector(
     account: ProviderAccountRow,
