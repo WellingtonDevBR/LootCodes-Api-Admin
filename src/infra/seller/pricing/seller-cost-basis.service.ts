@@ -43,6 +43,54 @@ export class SellerCostBasisService {
     }
   }
 
+  /**
+   * Returns the cheapest active buyer-offer price per variant (in USD cents)
+   * from `provider_variant_offers`. Used as a cost-basis fallback for
+   * declared-stock / JIT listings where no physical `product_keys` exist
+   * (so `get_batch_variant_median_key_costs` would return 0).
+   *
+   * Only includes rows whose `currency` is `'USD'`. Offers priced in other
+   * currencies are skipped to avoid needing live FX conversion here.
+   */
+  async computeBatchProviderOfferCosts(variantIds: string[]): Promise<Map<string, number>> {
+    const result = new Map<string, number>();
+    if (variantIds.length === 0) return result;
+
+    try {
+      const rows = await this.db.query<{
+        variant_id: string;
+        last_price_cents: number | null;
+        currency: string | null;
+      }>('provider_variant_offers', {
+        select: 'variant_id, last_price_cents, currency',
+        in: [['variant_id', variantIds]],
+        eq: [['is_active', true]],
+      });
+
+      for (const row of rows) {
+        const priceCents = row.last_price_cents;
+        if (
+          typeof priceCents !== 'number'
+          || priceCents <= 0
+          || (row.currency ?? '').toUpperCase() !== 'USD'
+        ) {
+          continue;
+        }
+        const existing = result.get(row.variant_id);
+        if (existing == null || priceCents < existing) {
+          result.set(row.variant_id, priceCents);
+        }
+      }
+    } catch (err) {
+      logger.warn('Failed to load provider offer costs', {
+        variantCount: variantIds.length,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    return result;
+  }
+
   async computeBatchCostBasis(variantIds: string[]): Promise<Map<string, VariantCostEntry>> {
     if (variantIds.length === 0) return new Map();
 

@@ -186,6 +186,30 @@ export class SellerAutoPricingService implements ISellerAutoPricingService {
 
     const variantIds = [...new Set(listings.map((l) => l.variant_id))];
     const costBasisMap = await this.costBasisService.computeBatchCostBasis(variantIds);
+
+    // For declared_stock listings with no physical key inventory the key-cost RPC
+    // returns 0. Fall back to the cheapest active buyer offer price so that these
+    // JIT listings still get a meaningful cost_basis_cents.
+    const declaredStockZeroCostVariantIds = [
+      ...new Set(
+        listings
+          .filter(
+            (l) =>
+              l.listing_type === 'declared_stock'
+              && (costBasisMap.get(l.variant_id)?.median_cost_cents ?? 0) === 0,
+          )
+          .map((l) => l.variant_id),
+      ),
+    ];
+    const offerCostMap = await this.costBasisService.computeBatchProviderOfferCosts(
+      declaredStockZeroCostVariantIds,
+    );
+    if (offerCostMap.size > 0) {
+      logger.info('Loaded buyer-offer cost fallback for declared_stock listings', {
+        requestId, variantCount: offerCostMap.size,
+      });
+    }
+
     const currencies = [...new Set(listings.map((l) => l.currency))];
     const rateMap = await this.costBasisService.loadCurrencyRates(currencies);
 
@@ -195,7 +219,13 @@ export class SellerAutoPricingService implements ISellerAutoPricingService {
       result.listingsProcessed++;
       try {
         const costEntry = costBasisMap.get(listing.variant_id);
-        const medianUsdCents = costEntry?.median_cost_cents ?? 0;
+        let medianUsdCents = costEntry?.median_cost_cents ?? 0;
+
+        // JIT / declared_stock fallback: no physical keys → use buyer offer price
+        if (medianUsdCents === 0 && listing.listing_type === 'declared_stock') {
+          medianUsdCents = offerCostMap.get(listing.variant_id) ?? 0;
+        }
+
         const rate = rateMap.get(listing.currency.toUpperCase()) ?? 1;
         const costInListingCurrency = this.costBasisService.convertWithRate(medianUsdCents, rate);
 
@@ -235,6 +265,23 @@ export class SellerAutoPricingService implements ISellerAutoPricingService {
 
     const variantIds = [...new Set(listings.map((l) => l.variant_id))];
     const costBasisMap = await this.costBasisService.computeBatchCostBasis(variantIds);
+
+    // Buyer-offer cost fallback for declared_stock listings with no physical keys
+    const declaredStockZeroCostVariantIds = [
+      ...new Set(
+        listings
+          .filter(
+            (l) =>
+              l.listing_type === 'declared_stock'
+              && (costBasisMap.get(l.variant_id)?.median_cost_cents ?? 0) === 0,
+          )
+          .map((l) => l.variant_id),
+      ),
+    ];
+    const offerCostMap = await this.costBasisService.computeBatchProviderOfferCosts(
+      declaredStockZeroCostVariantIds,
+    );
+
     const currencies = [...new Set(listings.map((l) => l.currency))];
     const rateMap = await this.costBasisService.loadCurrencyRates(currencies);
 
@@ -314,7 +361,13 @@ export class SellerAutoPricingService implements ISellerAutoPricingService {
 
         try {
           const costEntry = costBasisMap.get(listing.variant_id);
-          const medianUsdCents = costEntry?.median_cost_cents ?? 0;
+          let medianUsdCents = costEntry?.median_cost_cents ?? 0;
+
+          // JIT / declared_stock fallback: no physical keys → use buyer offer price
+          if (medianUsdCents === 0 && listing.listing_type === 'declared_stock') {
+            medianUsdCents = offerCostMap.get(listing.variant_id) ?? 0;
+          }
+
           const rate = rateMap.get(listing.currency.toUpperCase()) ?? 1;
           const costInListingCurrency = this.costBasisService.convertWithRate(medianUsdCents, rate);
 
