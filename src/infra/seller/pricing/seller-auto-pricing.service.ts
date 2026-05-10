@@ -100,6 +100,11 @@ function evaluatePriceChangeBudget(
     return { allowed: true, isFree: true, feeCents: 0 };
   }
 
+  // Free quota exhausted — never allow paid changes when auto_price_free_only is set.
+  if (config.auto_price_free_only) {
+    return { allowed: false, isFree: false, feeCents: 0 };
+  }
+
   const paidChangesSoFar = recentChanges - config.price_change_free_quota;
   if (config.price_change_max_paid_per_window > 0 && paidChangesSoFar < config.price_change_max_paid_per_window) {
     return { allowed: true, isFree: false, feeCents: config.price_change_fee_cents };
@@ -785,15 +790,28 @@ export class SellerAutoPricingService implements ISellerAutoPricingService {
         return gross;
       };
 
+      const targetCentsNet = await convertGross(analysis.suggestedPriceCents);
+      const proposedCentsNet = analysis.proposedPriceCents != null
+        ? await convertGross(analysis.proposedPriceCents)
+        : null;
+
+      // For NET pricing models (e.g. Eneba), converting NET→GROSS→NET introduces
+      // rounding drift. The GROSS comparison in analyzeOptimalPosition may flag a
+      // change even when the computed NET target equals the current stored NET price.
+      // Suppress the push to avoid burning free quota every tick with no-op updates.
+      const netShouldChange = analysis.shouldChange && targetCentsNet !== listing.price_cents;
+
       return {
-        targetCents: await convertGross(analysis.suggestedPriceCents),
-        reasonCode: analysis.reasonCode,
-        reasonDetail: analysis.skipReason ?? analysis.reason,
-        shouldChange: analysis.shouldChange,
+        targetCents: targetCentsNet,
+        reasonCode: netShouldChange ? analysis.reasonCode : 'no_change',
+        reasonDetail: netShouldChange
+          ? (analysis.skipReason ?? analysis.reason)
+          : 'Target NET price equals current (rounding-stable)',
+        shouldChange: netShouldChange,
         competitorCount: live.nonOwnCount,
         lowestCompetitorCents: live.lowestNonOwnCents,
         ourPositionBefore: live.ourPositionBefore,
-        proposedPriceCents: analysis.proposedPriceCents != null ? await convertGross(analysis.proposedPriceCents) : null,
+        proposedPriceCents: proposedCentsNet,
         secondLowestCompetitorCents: live.secondLowestNonOwnCents ?? floorData.second_lowest_cents,
       };
     }
