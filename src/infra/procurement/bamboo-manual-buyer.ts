@@ -3,7 +3,7 @@
  * Mirrors Edge `provider-procurement/providers/bamboo/adapter.ts` purchase path.
  */
 import { createHash } from 'node:crypto';
-import { MarketplaceApiError, MarketplaceHttpClient } from '../marketplace/_shared/marketplace-http.js';
+import { MarketplaceApiError, MarketplaceHttpClient, type RetryConfig } from '../marketplace/_shared/marketplace-http.js';
 import type { BambooCatalogResponse, BambooOrderResponse, BambooCard } from '../marketplace/bamboo/types.js';
 import { getOptionalEnvVar } from '../../config/env.js';
 import { floatToCents } from '../../shared/pricing.js';
@@ -205,6 +205,13 @@ export function createBambooManualBuyer(params: {
    * Defaults to 50 req/min (appropriate for single interactive quotes).
    */
   readonly catalogRateLimiter?: { maxRequests: number; windowMs: number };
+  /**
+   * Override the catalog HTTP client's retry config.
+   * For bulk sync, pass `{ maxRetries: 0 }` to disable retries on 429 —
+   * the outer per-offer loop already handles failures gracefully, and
+   * retrying 429s only adds more requests that hit the same rate limit.
+   */
+  readonly catalogRetry?: Partial<RetryConfig>;
 }): BambooManualBuyer | null {
   const clientId = params.secrets['BAMBOO_CLIENT_ID'];
   const clientSecret = params.secrets['BAMBOO_CLIENT_SECRET'];
@@ -235,7 +242,9 @@ export function createBambooManualBuyer(params: {
     rateLimiter: params.catalogRateLimiter ?? { maxRequests: 50, windowMs: 60_000 },
     // Bamboo Catalog v2 enforces 1 req/s. After any 429 response, wait at least
     // 1 200 ms before retrying so we always land in the next rate-limit window.
-    retry: { rateLimitDelayMs: 1_200 },
+    // Callers can pass `{ maxRetries: 0 }` via catalogRetry to disable retries
+    // entirely (bulk sync: the outer per-offer loop handles failures gracefully).
+    retry: { rateLimitDelayMs: 1_200, ...params.catalogRetry },
     headers: async () => ({ Authorization: basicAuth }),
     proxySigner: resolveBambooProxySigner(catalogBaseUrl),
   });

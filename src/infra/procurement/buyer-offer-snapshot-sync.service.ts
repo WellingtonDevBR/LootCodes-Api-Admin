@@ -35,13 +35,22 @@ const logger = createLogger('buyer-offer-snapshot-sync');
 
 /**
  * Bamboo Catalog v2 API allows 1 request/second.
- * We wait 1 200 ms between consecutive quote calls (16 % headroom) so we never
- * trigger a 429, even accounting for clock skew and network jitter.
+ * We wait 1 500 ms between consecutive quote calls (50 % headroom) so transient
+ * clock skew, network jitter, or a previous cron run's tail requests never
+ * push us into the next rate-limit window.
  */
-const BAMBOO_INTER_OFFER_DELAY_MS = 1_200;
+const BAMBOO_INTER_OFFER_DELAY_MS = 1_500;
 
 /** Rate-limiter config to pass to BambooManualBuyer during bulk sync. */
-const BAMBOO_BULK_RATE_LIMITER = { maxRequests: 1, windowMs: 1_100 } as const;
+const BAMBOO_BULK_RATE_LIMITER = { maxRequests: 1, windowMs: 1_400 } as const;
+
+/**
+ * Disable retries on 429 during bulk sync. The outer per-offer loop already
+ * handles failures gracefully with logger.warn and moves on. Retrying a 429
+ * just adds more requests that hit the same server-side rate limit — it does
+ * not help and makes the cascade worse.
+ */
+const BAMBOO_BULK_RETRY = { maxRetries: 0 } as const;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -164,6 +173,10 @@ export class BuyerOfferSnapshotSyncService implements IBuyerOfferSnapshotSyncSer
         // Catalog v2 allows 1 req/s — enforce it client-side so we never
         // trigger a 429 from rapid sequential calls during bulk sync.
         catalogRateLimiter: BAMBOO_BULK_RATE_LIMITER,
+        // Do NOT retry 429s during bulk sync. The outer per-offer loop skips
+        // failed offers and moves on — retrying only adds more requests that
+        // hit the same quota, turning one 429 into three.
+        catalogRetry: BAMBOO_BULK_RETRY,
       });
       if (!buyer) {
         logger.warn('Bamboo buyer could not be created — missing credentials', {
