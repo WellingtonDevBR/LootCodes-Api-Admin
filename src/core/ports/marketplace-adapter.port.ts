@@ -162,6 +162,13 @@ export interface ISellerPricingAdapter {
 
 export interface ISellerCompetitionAdapter {
   getCompetitorPrices(externalProductId: string): Promise<CompetitorPrice[]>;
+  /**
+   * Optional batch variant — fetch competitor prices for multiple products in
+   * as few API calls as possible. Returns a Map keyed by externalProductId.
+   * Adapters that implement this avoid per-listing round-trips and rate limits.
+   * Falls back to sequential `getCompetitorPrices` when absent.
+   */
+  batchGetCompetitorPrices?(productIds: string[]): Promise<Map<string, CompetitorPrice[]>>;
 }
 
 export interface ISellerCallbackSetupAdapter {

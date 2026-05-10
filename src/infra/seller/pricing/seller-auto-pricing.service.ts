@@ -274,6 +274,39 @@ export class SellerAutoPricingService implements ISellerAutoPricingService {
 
       const pendingSnapshots: CompetitorSnapshotRow[] = [];
 
+      // Pre-fetch all competitor prices in one or a few batched API calls.
+      // Without this, we'd fire one request per listing — ~25 requests for Eneba —
+      // exhausting the rate limit and causing the batch price update to fail.
+      const competitorCache = new Map<string, CompetitorPrice[]>();
+      if (hasCompetition) {
+        const competitionAdapter = this.registry.getCompetitionAdapter(providerCode);
+        if (competitionAdapter?.batchGetCompetitorPrices) {
+          const uniqueProductIds = [
+            ...new Set(
+              providerListings
+                .filter((l) => Boolean(l.external_product_id))
+                .map((l) => l.external_product_id!),
+            ),
+          ];
+          try {
+            const fetched = await competitionAdapter.batchGetCompetitorPrices(uniqueProductIds);
+            for (const [pid, prices] of fetched) {
+              competitorCache.set(pid, prices);
+            }
+            logger.info('Pre-fetched competitor prices', {
+              requestId, providerCode,
+              uniqueProducts: uniqueProductIds.length,
+              fetched: fetched.size,
+            });
+          } catch (err) {
+            const errMsg = err instanceof Error ? err.message : String(err);
+            logger.info('Batch competitor pre-fetch failed; will skip competition for this run', {
+              requestId, providerCode, error: errMsg,
+            });
+          }
+        }
+      }
+
       for (const listing of providerListings) {
         result.listingsProcessed++;
         const config = mergeListingOverrides(baseConfig, listing);
@@ -371,27 +404,39 @@ export class SellerAutoPricingService implements ISellerAutoPricingService {
               profitabilityFloorCents,
             );
 
-          // Fetch competitors
+          // Fetch competitors — use pre-fetched cache when available.
+          // Falls back to a live API call only when the batch pre-fetch was skipped
+          // (e.g. adapter does not implement batchGetCompetitorPrices).
           let competitors: CompetitorPrice[] = [];
           if (hasCompetition) {
-            try {
-              competitors = await this.pricingService.getCompetitors(providerCode, listing.external_product_id);
-              competitors = stampCompetitorOwnership(competitors, listing.external_listing_id);
-            } catch (err) {
-              const errMsg = err instanceof Error ? err.message : String(err);
-              const errName = err instanceof Error ? err.name : '';
-              const isTransient =
-                errName === 'CircuitOpenError' ||
-                errName === 'RateLimitExceededError' ||
-                /^Circuit breaker open for /.test(errMsg) ||
-                /^Rate limit exceeded for /.test(errMsg);
-              const logFn = isTransient ? logger.info.bind(logger) : logger.error.bind(logger);
-              logFn('Failed to fetch competitors', {
-                requestId, listingId: listing.id,
-                error: errMsg,
-                transient: isTransient,
-              });
+            if (listing.external_product_id && competitorCache.has(listing.external_product_id)) {
+              competitors = stampCompetitorOwnership(
+                competitorCache.get(listing.external_product_id)!,
+                listing.external_listing_id,
+              );
+            } else if (!competitorCache.size) {
+              // Batch pre-fetch not supported or skipped — fall back to per-listing call.
+              try {
+                competitors = await this.pricingService.getCompetitors(providerCode, listing.external_product_id);
+                competitors = stampCompetitorOwnership(competitors, listing.external_listing_id);
+              } catch (err) {
+                const errMsg = err instanceof Error ? err.message : String(err);
+                const errName = err instanceof Error ? err.name : '';
+                const isTransient =
+                  errName === 'CircuitOpenError' ||
+                  errName === 'RateLimitExceededError' ||
+                  /^Circuit breaker open for /.test(errMsg) ||
+                  /^Rate limit exceeded for /.test(errMsg);
+                const logFn = isTransient ? logger.info.bind(logger) : logger.error.bind(logger);
+                logFn('Failed to fetch competitors', {
+                  requestId, listingId: listing.id,
+                  error: errMsg,
+                  transient: isTransient,
+                });
+              }
             }
+            // If competitorCache.size > 0 but this productId is missing, S_competition simply
+            // returned no data for it — treat as no competitors (empty array, already default).
           }
 
           // Snapshot + floors for smart pricing

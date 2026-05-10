@@ -359,32 +359,52 @@ export class EnebaAdapter
   // ─── ISellerCompetitionAdapter ─────────────────────────────────────
 
   async getCompetitorPrices(externalProductId: string): Promise<CompetitorPrice[]> {
-    if (this.isSandbox) {
-      logger.warn('Eneba sandbox does not support S_competition');
-      return [];
+    const result = await this.batchGetCompetitorPrices([externalProductId]);
+    return result.get(externalProductId) ?? [];
+  }
+
+  /**
+   * Batch-fetch full competitor lists for multiple products in chunks of 25.
+   * Eneba's `S_competition` accepts an array of productIds, so we reduce N
+   * per-listing round-trips to ceil(N/25) requests.
+   */
+  async batchGetCompetitorPrices(productIds: string[]): Promise<Map<string, CompetitorPrice[]>> {
+    const result = new Map<string, CompetitorPrice[]>();
+    if (productIds.length === 0 || this.isSandbox) {
+      if (this.isSandbox && productIds.length > 0) {
+        logger.warn('Eneba sandbox does not support S_competition');
+      }
+      return result;
     }
 
-    const data = await this.gqlClient.execute<EnebaCompetitionData>(
-      GET_COMPETITION_QUERY,
-      { productIds: [externalProductId] },
-    );
+    const CHUNK_SIZE = 25;
+    for (let i = 0; i < productIds.length; i += CHUNK_SIZE) {
+      const chunk = productIds.slice(i, i + CHUNK_SIZE);
+      const data = await this.gqlClient.execute<EnebaCompetitionData>(
+        GET_COMPETITION_QUERY,
+        { productIds: chunk },
+      );
 
-    const comp = (data.S_competition ?? []).find(
-      (c) => c.productId === externalProductId,
-    );
-    if (!comp?.competition?.edges?.length) return [];
+      for (const entry of data.S_competition ?? []) {
+        const edges = entry.competition?.edges ?? [];
+        const sorted = edges
+          .map((e) => e.node)
+          .sort((a, b) => a.price.amount - b.price.amount);
 
-    const sorted = comp.competition.edges
-      .map((e) => e.node)
-      .sort((a, b) => a.price.amount - b.price.amount);
+        result.set(
+          entry.productId,
+          sorted.map((node) => ({
+            merchantName: node.merchantName,
+            priceCents: node.price.amount,
+            currency: node.price.currency,
+            inStock: true,
+            isOwnOffer: node.belongsToYou,
+          })),
+        );
+      }
+    }
 
-    return sorted.map((node) => ({
-      merchantName: node.merchantName,
-      priceCents: node.price.amount,
-      currency: node.price.currency,
-      inStock: true,
-      isOwnOffer: node.belongsToYou,
-    }));
+    return result;
   }
 
   // ─── ISellerPricingAdapter ─────────────────────────────────────────
@@ -610,36 +630,20 @@ export class EnebaAdapter
   }
 
   /**
-   * Batch-fetch lowest marketplace offer per product from `S_competition` (pricing is not on `S_products`).
+   * Batch-fetch lowest marketplace offer per product from `S_competition`.
+   * Delegates to `batchGetCompetitorPrices` so we have a single S_competition call path.
    */
   private async cheapestCompetitionPriceByProductId(
     productIds: string[],
   ): Promise<Map<string, { cents: number; currency: string }>> {
     const result = new Map<string, { cents: number; currency: string }>();
-    if (productIds.length === 0 || this.isSandbox) return result;
+    if (productIds.length === 0) return result;
 
-    const chunkSize = 25;
-    for (let i = 0; i < productIds.length; i += chunkSize) {
-      const chunk = productIds.slice(i, i + chunkSize);
-      const data = await this.gqlClient.execute<EnebaCompetitionData>(GET_COMPETITION_QUERY, {
-        productIds: chunk,
-      });
-      for (const entry of data.S_competition ?? []) {
-        const edges = entry.competition?.edges ?? [];
-        if (edges.length === 0) continue;
-        let minAmount = Number.POSITIVE_INFINITY;
-        let currency = 'EUR';
-        for (const e of edges) {
-          const a = e.node.price.amount;
-          if (a < minAmount) {
-            minAmount = a;
-            currency = e.node.price.currency;
-          }
-        }
-        if (minAmount !== Number.POSITIVE_INFINITY) {
-          result.set(entry.productId, { cents: Math.round(minAmount), currency });
-        }
-      }
+    const allCompetitors = await this.batchGetCompetitorPrices(productIds);
+    for (const [productId, competitors] of allCompetitors) {
+      if (competitors.length === 0) continue;
+      const cheapest = competitors[0]!;
+      result.set(productId, { cents: Math.round(cheapest.priceCents), currency: cheapest.currency });
     }
     return result;
   }
