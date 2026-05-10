@@ -455,6 +455,7 @@ export class SellerAutoPricingService implements ISellerAutoPricingService {
               config.min_price_floor_cents,
               isNetPricingModel ? undefined : config.commission_rate_percent,
               profitabilityFloorCents,
+              isNetPricingModel ? 0 : config.fixed_fee_cents,
             );
 
           // Floor-correction guard: if the current price is below the cost floor, push

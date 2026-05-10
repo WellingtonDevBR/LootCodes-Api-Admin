@@ -199,16 +199,21 @@ export class SellerCostBasisService {
     providerMinFloorCents: number,
     commissionRatePercent?: number,
     profitabilityFloorCents?: number | null,
+    fixedFeeCents?: number,
   ): number {
     let floor: number;
     if (listing.min_price_mode === 'manual' && listing.min_price_override_cents > 0) {
       floor = listing.min_price_override_cents;
     } else {
       const rawCost = listing.cost_basis_cents > 0 ? listing.cost_basis_cents : listing.min_price_cents;
+      const fee = Math.max(0, fixedFeeCents ?? 0);
       if (rawCost > 0 && commissionRatePercent != null && commissionRatePercent > 0) {
-        floor = Math.ceil(rawCost / (1 - commissionRatePercent / 100));
+        // Include fixed fee in the floor so that (price * (1 - commission) - fee) >= cost.
+        // Without this, a marketplace fixed fee (e.g. Eneba's €0.25) silently erodes margin
+        // and the declared-stock selector correctly rejects the offer as uneconomic.
+        floor = Math.ceil((rawCost + fee) / (1 - commissionRatePercent / 100));
       } else {
-        floor = rawCost;
+        floor = rawCost + fee;
       }
     }
 
