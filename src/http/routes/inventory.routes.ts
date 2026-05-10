@@ -452,6 +452,7 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
   });
 
   const DECRYPT_MAX_BATCH = 50;
+  const BULK_STATE_MAX_BATCH = 100;
   const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
   app.post('/keys/decrypt', {
@@ -849,8 +850,8 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
     if (!Array.isArray(body.key_ids) || body.key_ids.length === 0) {
       return reply.code(400).send({ error: 'key_ids array is required' });
     }
-    if (body.key_ids.length > DECRYPT_MAX_BATCH) {
-      return reply.code(400).send({ error: `Maximum ${DECRYPT_MAX_BATCH} keys per request` });
+    if (body.key_ids.length > BULK_STATE_MAX_BATCH) {
+      return reply.code(400).send({ error: `Maximum ${BULK_STATE_MAX_BATCH} keys per operation` });
     }
     const keyIds = body.key_ids as unknown[];
     for (const id of keyIds) {
@@ -937,8 +938,8 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
     if (!Array.isArray(body.key_ids) || body.key_ids.length === 0) {
       return reply.code(400).send({ error: 'key_ids array is required' });
     }
-    if (body.key_ids.length > DECRYPT_MAX_BATCH) {
-      return reply.code(400).send({ error: `Maximum ${DECRYPT_MAX_BATCH} keys per request` });
+    if (body.key_ids.length > BULK_STATE_MAX_BATCH) {
+      return reply.code(400).send({ error: `Maximum ${BULK_STATE_MAX_BATCH} keys per operation` });
     }
     const keyIds = body.key_ids as unknown[];
     for (const id of keyIds) {
