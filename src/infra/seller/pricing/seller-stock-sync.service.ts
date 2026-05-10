@@ -477,6 +477,17 @@ export class SellerStockSyncService implements ISellerStockSyncService {
     const minFloorUsd =
       (await this.fx.toUsdCents(merged.min_price_floor_cents, baseConfig.default_currency))
       ?? merged.min_price_floor_cents;
+    // FX-convert per-sale fixed fee so the selector can apply it correctly.
+    const fixedFeeUsd =
+      (await this.fx.toUsdCents(merged.fixed_fee_cents, baseConfig.default_currency))
+      ?? merged.fixed_fee_cents;
+
+    // For seller_price adapters (e.g. Eneba with priceIWantToGet), listing.price_cents
+    // already stores the NET payout. Pass it directly as netPayoutUsdCents to avoid
+    // the selector double-deducting commission on an already-net value.
+    const pricingModel = this.registry.getPricingAdapter(listing.provider_code)?.pricingModel;
+    const netPayoutUsdCents =
+      pricingModel === 'seller_price' && salePriceUsd > 0 ? salePriceUsd : undefined;
 
     const cfg: DeclaredStockPricingConfig = {
       sellerSalePriceUsdCents: salePriceUsd,
@@ -484,6 +495,8 @@ export class SellerStockSyncService implements ISellerStockSyncService {
       commissionRatePercent: merged.commission_rate_percent,
       minPriceFloorUsdCents: minFloorUsd,
       listingMinUsdCents: listingMinUsd,
+      fixedFeeUsdCents: fixedFeeUsd,
+      ...(netPayoutUsdCents != null ? { netPayoutUsdCents } : {}),
       requestedQty: 1,
     };
 
@@ -506,7 +519,6 @@ export class SellerStockSyncService implements ISellerStockSyncService {
       // declaration due to stale/wrong price; fix the price and sell.
       const cheapest = await this.findCheapestCreditedOffer(offers, walletSnapshot);
       if (cheapest) {
-        const pricingModel = this.registry.getPricingAdapter(listing.provider_code)?.pricingModel;
         const correctedPriceCents = await computeStrategyAwareCorrectedPrice({
           db: this.db,
           fx: this.fx,
