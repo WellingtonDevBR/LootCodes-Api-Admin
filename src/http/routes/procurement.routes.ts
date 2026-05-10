@@ -235,7 +235,7 @@ export async function adminProcurementRoutes(app: FastifyInstance) {
       } catch (err) {
         marketplace_publish_error = err instanceof Error ? err.message : 'Marketplace publish failed';
         if (err instanceof PublishBlockedError) {
-          logger.warn('Marketplace publish blocked (expected business condition)', {
+          logger.info('Marketplace publish blocked (expected business condition)', {
             listing_id: baseResult.seller_listing_id,
             admin_id: adminId,
             reason: err.message,
