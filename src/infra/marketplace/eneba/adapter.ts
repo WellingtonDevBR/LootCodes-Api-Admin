@@ -384,7 +384,8 @@ export class EnebaAdapter
       return result;
     }
 
-    const CHUNK_SIZE = 25;
+    // Eneba docs allow up to 100 product IDs per S_competition call.
+    const CHUNK_SIZE = 100;
     for (let i = 0; i < productIds.length; i += CHUNK_SIZE) {
       const chunk = productIds.slice(i, i + CHUNK_SIZE);
       const data = await this.gqlClient.execute<EnebaCompetitionData>(

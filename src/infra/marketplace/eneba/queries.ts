@@ -40,11 +40,13 @@ export const SEARCH_PRODUCTS_QUERY = `
   }
 `;
 
+// Max 50 competitors per product per Eneba docs. We fetch all 50 so P1/P2
+// analysis has the full picture rather than only the first 10.
 export const GET_COMPETITION_QUERY = `
   query GetCompetition($productIds: [S_Uuid!]!) {
     S_competition(productIds: $productIds) {
       productId
-      competition(first: 10) {
+      competition(first: 50) {
         totalCount
         edges {
           node {
