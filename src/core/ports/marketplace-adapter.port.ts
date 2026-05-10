@@ -115,6 +115,13 @@ export interface BatchPriceUpdate {
   priceCents: number;
   /** Defaults to EUR in the Eneba adapter when omitted. */
   currency?: string;
+  /**
+   * When true, the marketplace MUST NOT charge for the price change if the
+   * free-update quota is exhausted — it should simply skip the update instead.
+   * Set this to `true` for providers with `auto_price_free_only: true`
+   * (e.g. Eneba) so a quota-exhausted run never produces unexpected fees.
+   */
+  preventPaidPriceChange?: boolean;
 }
 
 export interface BatchPriceUpdateResult {

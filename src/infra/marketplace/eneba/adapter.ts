@@ -518,6 +518,11 @@ export class EnebaAdapter
       auctionId: u.externalListingId,
       enabled: true,
       priceIWantToGet: { amount: u.priceCents, currency: u.currency ?? 'EUR' },
+      // When set, Eneba skips the update (and charges nothing) if the free-quota
+      // window is exhausted instead of deducting from the paid budget.
+      ...(u.preventPaidPriceChange != null
+        ? { preventPaidPriceChange: u.preventPaidPriceChange }
+        : {}),
     }));
 
     const data = await this.gqlClient.execute<EnebaUpdateAuctionPriceData>(

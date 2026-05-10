@@ -366,6 +366,11 @@ export class SellerAutoPricingService implements ISellerAutoPricingService {
         }
       }
 
+      // For providers with auto_price_free_only, always send preventPaidPriceChange=true
+      // so the marketplace rejects (without charging) any update that would exceed the
+      // free quota — even if our local counter thinks slots are still available.
+      const preventPaid = baseConfig.auto_price_free_only;
+
       const batchUpdates: Array<{
         listingId: string;
         externalListingId: string;
@@ -721,6 +726,7 @@ export class SellerAutoPricingService implements ISellerAutoPricingService {
           const mapped = batchUpdates.map((u) => ({
             externalListingId: u.externalListingId,
             priceCents: u.newPriceCents,
+            ...(preventPaid ? { preventPaidPriceChange: true } : {}),
           }));
 
           const batchResult = await this.pricingService.batchUpdateListingPrices(
