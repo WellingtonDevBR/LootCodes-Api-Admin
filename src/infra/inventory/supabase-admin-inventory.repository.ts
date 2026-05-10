@@ -78,7 +78,7 @@ export class SupabaseAdminInventoryRepository implements IAdminInventoryReposito
 
   async updateAffectedKey(dto: UpdateAffectedKeyDto): Promise<UpdateAffectedKeyResult> {
     await this.db.update('product_keys', { id: dto.key_id }, {
-      status: dto.new_status,
+      key_state: dto.new_status,
       updated_at: new Date().toISOString(),
     });
     return { success: true };

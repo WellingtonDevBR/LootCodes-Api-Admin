@@ -11,9 +11,9 @@ import { createLogger } from '../../shared/logger.js';
 
 const logger = createLogger('admin-inventory-routes');
 
-function mapKeyState(keyState: string | null, isUsed: boolean): 'available' | 'reserved' | 'sold' {
+/** Bucket a raw key_state into the available / reserved / sold KPI counter. */
+function keyStateToKpiBucket(keyState: string | null, isUsed: boolean): 'available' | 'reserved' | 'sold' {
   if (isUsed || keyState === 'used' || keyState === 'seller_provisioned') return 'sold';
-  // faulty and burnt keys are no longer available for sale — count as sold (consumed).
   if (keyState === 'faulty' || keyState === 'burnt') return 'sold';
   if (keyState === 'assigned' || keyState === 'revealed' || keyState === 'seller_reserved' || keyState === 'seller_uploaded') return 'reserved';
   return 'available';
@@ -206,7 +206,6 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
         variantFaceValue: meta?.face_value ?? null,
         variantRegionName: regionName,
         key: '••••••••',
-        status: mapKeyState(k.key_state as string | null, k.is_used as boolean),
         keyState: k.key_state as string,
         supplierId: '',
         supplierName: (k.supplier_reference as string) || '—',
@@ -244,8 +243,8 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
     const eqFilters: Array<[string, unknown]> = [['variant_id', variantId]];
     const inFilters: Array<[string, unknown[]]> = [];
 
-    if (query.status) {
-      const states = query.status.split(',').filter(s => VALID_KEY_STATES.has(s.trim()));
+    if (query.key_state) {
+      const states = query.key_state.split(',').filter(s => VALID_KEY_STATES.has(s.trim()));
       if (states.length > 0) {
         inFilters.push(['key_state', states]);
       }
@@ -269,18 +268,17 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
       limit: 10000,
     });
     for (const k of allKeys) {
-      const s = mapKeyState(k.key_state, k.is_used);
-      if (s === 'available') available++;
-      else if (s === 'reserved') reserved++;
+      const bucket = keyStateToKpiBucket(k.key_state, k.is_used);
+      if (bucket === 'available') available++;
+      else if (bucket === 'reserved') reserved++;
       else sold++;
     }
 
     const mapped = keys.map(k => {
-      const keyState = k.key_state as string | null;
       return {
         id: k.id as string,
         masked_value: '••••••••',
-        status: mapKeyState(keyState, k.is_used as boolean),
+        keyState: (k.key_state as string) ?? 'available',
         created_at: (k.created_at as string) ?? '',
         sold_at: (k.used_at as string) || null,
         order_id: (k.order_id as string) || null,
@@ -649,7 +647,7 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
       }
     }
 
-    const csvLines: string[] = ['key_id,product,variant_id,key_value,status,added_at'];
+    const csvLines: string[] = ['key_id,product,variant_id,key_value,key_state,added_at'];
 
     for (const row of rows) {
       let keyValue = '';
