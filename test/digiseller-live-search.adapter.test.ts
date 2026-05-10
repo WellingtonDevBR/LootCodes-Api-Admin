@@ -22,7 +22,7 @@ describe('DigisellerMarketplaceAdapter.searchProducts', () => {
     const hits = await adapter.searchProducts('mine', 5);
 
     expect(httpClient.post).toHaveBeenCalledWith(
-      'seller-goods',
+      '/api/seller-goods',
       expect.objectContaining({ id_seller: 152_200, page: 1 }),
     );
     expect(hits).toHaveLength(1);

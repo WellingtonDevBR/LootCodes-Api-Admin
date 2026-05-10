@@ -98,7 +98,7 @@ describe('Internal cron routes — POST /internal/cron/reconcile-seller-listings
   });
 
   describe('happy path', () => {
-    it('returns 200 and the orchestrator result for an empty body', async () => {
+    it('returns 202 accepted immediately and fires the orchestrator in background', async () => {
       const res = await testApp.app.inject({
         method: 'POST',
         url: '/internal/cron/reconcile-seller-listings',
@@ -106,11 +106,11 @@ describe('Internal cron routes — POST /internal/cron/reconcile-seller-listings
         payload: {},
       });
 
-      expect(res.statusCode).toBe(200);
+      expect(res.statusCode).toBe(202);
       expect(orchestrator.execute).toHaveBeenCalledTimes(1);
       const body = res.json();
-      expect(body.fulfillment_mode).toBe('auto');
-      expect(body.phases['pricing'].ran).toBe(true);
+      expect(body.accepted).toBe(true);
+      expect(typeof body.request_id).toBe('string');
     });
 
     it('forwards variant_ids, batch_limit, dry_run, and phases to the orchestrator', async () => {
@@ -126,7 +126,7 @@ describe('Internal cron routes — POST /internal/cron/reconcile-seller-listings
         },
       });
 
-      expect(res.statusCode).toBe(200);
+      expect(res.statusCode).toBe(202);
       const dto = orchestrator.execute.mock.calls[0]![1] as ReconcileSellerListingsDto;
       expect(dto.variant_ids).toEqual([VARIANT_UUID]);
       expect(dto.batch_limit).toBe(25);
@@ -200,7 +200,7 @@ describe('Internal cron routes — POST /internal/cron/reconcile-seller-listings
   });
 
   describe('orchestrator failure', () => {
-    it('returns 500 with reconcile_failed when the orchestrator throws', async () => {
+    it('returns 202 immediately even when the orchestrator rejects (error is logged in background)', async () => {
       orchestrator.execute.mockRejectedValueOnce(new Error('boom'));
 
       const res = await testApp.app.inject({
@@ -210,8 +210,9 @@ describe('Internal cron routes — POST /internal/cron/reconcile-seller-listings
         payload: {},
       });
 
-      expect(res.statusCode).toBe(500);
-      expect(res.json().error).toBe('reconcile_failed');
+      expect(res.statusCode).toBe(202);
+      expect(res.json().accepted).toBe(true);
+      expect(orchestrator.execute).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -237,7 +238,7 @@ describe('Internal cron routes — POST /internal/cron/reconcile-seller-listings
         payload: { phases: ['sync-buyer-catalog'] },
       });
 
-      expect(res.statusCode).toBe(200);
+      expect(res.statusCode).toBe(202);
       const dto = orchestrator.execute.mock.calls[0]![1] as ReconcileSellerListingsDto;
       expect(dto.phases).toEqual(['sync-buyer-catalog']);
     });
