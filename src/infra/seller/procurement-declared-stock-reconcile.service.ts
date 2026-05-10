@@ -15,7 +15,11 @@
 import { injectable, inject } from 'tsyringe';
 import { TOKENS } from '../../di/tokens.js';
 import type { IDatabase, QueryOptions } from '../../core/ports/database.port.js';
-import type { IMarketplaceAdapterRegistry } from '../../core/ports/marketplace-adapter.port.js';
+import type {
+  IMarketplaceAdapterRegistry,
+  BatchDeclaredStockUpdate,
+  ISellerBatchDeclaredStockAdapter,
+} from '../../core/ports/marketplace-adapter.port.js';
 import type {
   IProcurementDeclaredStockReconcileService,
   ProcurementDeclaredStockReconcileDto,
@@ -40,6 +44,15 @@ import { createLogger } from '../../shared/logger.js';
 const logger = createLogger('procurement-declared-stock-reconcile');
 
 const DEFAULT_BATCH_LIMIT = 500;
+
+/** A resolved stock-declare/disable intent buffered before flushing to marketplace APIs. */
+interface PendingStockUpdate {
+  readonly listingId: string;
+  readonly externalId: string;
+  /** qty > 0 = declare; qty === 0 = disable */
+  readonly qty: number;
+  readonly disableReason?: 'no_offer' | 'no_credit' | 'uneconomic';
+}
 
 interface ListingRow {
   readonly id: string;
@@ -99,29 +112,30 @@ export class ProcurementDeclaredStockReconcileService implements IProcurementDec
     let skipped = 0;
     const failures: ProcurementDeclaredStockReconcileFailure[] = [];
 
+    // Phase 1: Compute decisions for every listing (no marketplace stock API calls).
+    // Buffer all intended updates keyed by provider_code so Phase 2 can batch them.
+    const pendingByProvider = new Map<string, PendingStockUpdate[]>();
+
     for (const listing of listings) {
       scanned++;
       const account = accountMap.get(listing.provider_account_id);
-      if (!account) {
-        skipped++;
-        continue;
-      }
-      if (!listing.external_listing_id) {
-        skipped++;
-        continue;
-      }
-      if (listing.listing_type !== 'declared_stock') {
-        skipped++;
-        continue;
-      }
+      if (!account) { skipped++; continue; }
+      if (!listing.external_listing_id) { skipped++; continue; }
+      if (listing.listing_type !== 'declared_stock') { skipped++; continue; }
 
       const internalQty = internalMap.get(listing.variant_id) ?? 0;
 
-      // Internal keys cover this listing — declare the in-stock count
-      // directly without consulting buyer credit.
       if (internalQty > 0) {
-        await this.applyDeclareInternal(requestId, listing, account.provider_code, internalQty, dryRun, failures);
-        if (!dryRun) updated++;
+        // Internal keys cover this listing — declare directly.
+        logger.info('Reconcile: pushing internal stock to marketplace', {
+          requestId, listingId: listing.id, providerCode: account.provider_code, qty: internalQty,
+        });
+        if (!dryRun) {
+          const pending = pendingByProvider.get(account.provider_code) ?? [];
+          pending.push({ listingId: listing.id, externalId: listing.external_listing_id, qty: internalQty });
+          pendingByProvider.set(account.provider_code, pending);
+          updated++;
+        }
         continue;
       }
 
@@ -135,12 +149,35 @@ export class ProcurementDeclaredStockReconcileService implements IProcurementDec
       }
 
       if (decision.kind === 'declare') {
-        await this.applyDeclareFromBuyer(requestId, listing, account.provider_code, decision, failures);
+        logger.info('Reconcile: declaring stock from credited buyer', {
+          requestId, listingId: listing.id, providerCode: account.provider_code,
+          buyerProviderCode: decision.offer.provider_code,
+          buyerProviderAccountId: decision.offer.provider_account_id,
+          declaredQty: decision.declaredQty,
+          costBasisUsdCents: decision.costBasisUsdCents,
+        });
+        const pending = pendingByProvider.get(account.provider_code) ?? [];
+        pending.push({ listingId: listing.id, externalId: listing.external_listing_id, qty: decision.declaredQty });
+        pendingByProvider.set(account.provider_code, pending);
         updated++;
       } else {
-        await this.applyDisable(requestId, listing, account.provider_code, decision.reason, failures);
+        logger.info('Reconcile: dispatching marketplace disable', {
+          requestId, listingId: listing.id, providerCode: account.provider_code, reason: decision.reason,
+        });
+        const pending = pendingByProvider.get(account.provider_code) ?? [];
+        pending.push({
+          listingId: listing.id, externalId: listing.external_listing_id,
+          qty: 0, disableReason: decision.reason,
+        });
+        pendingByProvider.set(account.provider_code, pending);
         updated++;
       }
+    }
+
+    // Phase 2: Flush all buffered updates — batch for providers that support it,
+    // individual fallback for the rest.
+    for (const [providerCode, updates] of pendingByProvider) {
+      await this.flushProviderUpdates(requestId, providerCode, updates, failures);
     }
 
     logger.info('Procurement declared stock reconcile complete', {
@@ -153,6 +190,131 @@ export class ProcurementDeclaredStockReconcileService implements IProcurementDec
     });
 
     return { dry_run: dryRun, scanned, updated, skipped, failures };
+  }
+
+  // ─── Phase 2: Marketplace flush ───────────────────────────────────────
+
+  /**
+   * Flush all buffered stock updates for one provider.
+   * Uses batch API when available (e.g. Eneba P_updateDeclaredStock up to 50 items
+   * in one GraphQL call) to stay within rate limits; falls back to individual
+   * `declareStock` / `dispatchListingDisable` calls for providers without batch support.
+   */
+  private async flushProviderUpdates(
+    requestId: string,
+    providerCode: string,
+    updates: PendingStockUpdate[],
+    failures: ProcurementDeclaredStockReconcileFailure[],
+  ): Promise<void> {
+    const batchAdapter = this.registry.getBatchDeclaredStockAdapter(providerCode);
+
+    if (batchAdapter) {
+      const BATCH_SIZE = 50;
+      for (let i = 0; i < updates.length; i += BATCH_SIZE) {
+        const chunk = updates.slice(i, i + BATCH_SIZE);
+        await this.flushBatch(requestId, providerCode, chunk, batchAdapter, failures);
+      }
+      return;
+    }
+
+    // Individual fallback for providers without batch support.
+    for (const update of updates) {
+      await this.flushSingle(requestId, providerCode, update, failures);
+    }
+  }
+
+  private async flushBatch(
+    requestId: string,
+    providerCode: string,
+    chunk: PendingStockUpdate[],
+    batchAdapter: ISellerBatchDeclaredStockAdapter,
+    failures: ProcurementDeclaredStockReconcileFailure[],
+  ): Promise<void> {
+    const batchItems: BatchDeclaredStockUpdate[] = chunk.map((u) => ({
+      externalListingId: u.externalId,
+      quantity: u.qty,
+    }));
+
+    try {
+      const result = await batchAdapter.batchUpdateDeclaredStock(batchItems);
+
+      if (result.failed === 0) {
+        // All succeeded — persist success for each listing.
+        for (const update of chunk) {
+          if (update.qty === 0) {
+            await this.db.update('seller_listings', { id: update.listingId }, {
+              declared_stock: 0,
+              last_synced_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+              error_message: update.disableReason ?? 'disabled',
+            });
+          } else {
+            await this.persistSuccess(update.listingId, update.qty);
+          }
+        }
+        logger.info('Reconcile: batch stock flush succeeded', {
+          requestId, providerCode, count: chunk.length,
+        });
+      } else {
+        // Partial or full failure — fall back to individual calls for each item.
+        logger.info('Reconcile: batch stock flush had failures, retrying individually', {
+          requestId, providerCode, updated: result.updated, failed: result.failed,
+        });
+        for (const update of chunk) {
+          await this.flushSingle(requestId, providerCode, update, failures);
+        }
+      }
+    } catch (err) {
+      // Batch call itself threw (e.g. rate limit, circuit breaker) — fall back individually.
+      const msg = err instanceof Error ? err.message : String(err);
+      const isTransient = isTransientMarketplaceError(err);
+      const logFn = isTransient ? logger.info.bind(logger) : logger.warn.bind(logger);
+      logFn('Reconcile: batch stock flush threw, retrying individually', {
+        requestId, providerCode, count: chunk.length, error: msg, transient: isTransient,
+      });
+      for (const update of chunk) {
+        await this.flushSingle(requestId, providerCode, update, failures);
+      }
+    }
+  }
+
+  private async flushSingle(
+    requestId: string,
+    providerCode: string,
+    update: PendingStockUpdate,
+    failures: ProcurementDeclaredStockReconcileFailure[],
+  ): Promise<void> {
+    try {
+      if (update.qty === 0) {
+        const r = await dispatchListingDisable(this.registry, providerCode, update.externalId);
+        if (!r.success) {
+          failures.push({ listing_id: update.listingId, reason: r.error ?? `disable_${update.disableReason ?? 'unknown'}_failed` });
+        }
+        await this.db.update('seller_listings', { id: update.listingId }, {
+          declared_stock: 0,
+          last_synced_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          error_message: update.disableReason ?? 'disabled',
+        });
+      } else {
+        const adapter = this.registry.getDeclaredStockAdapter(providerCode);
+        if (!adapter) {
+          failures.push({ listing_id: update.listingId, reason: `no_declared_stock_adapter:${providerCode}` });
+          return;
+        }
+        const r = await adapter.declareStock(update.externalId, update.qty);
+        if (!r.success) {
+          failures.push({ listing_id: update.listingId, reason: r.error ?? 'declare_stock_failed' });
+          await this.persistError(update.listingId, r.error ?? 'declare_stock_failed');
+          return;
+        }
+        const applied = typeof r.declaredQuantity === 'number' && Number.isFinite(r.declaredQuantity)
+          ? r.declaredQuantity : update.qty;
+        await this.persistSuccess(update.listingId, applied);
+      }
+    } catch (err) {
+      this.recordFailure(requestId, update.listingId, err, failures);
+    }
   }
 
   // ─── Decision plumbing ────────────────────────────────────────────────
@@ -225,6 +387,15 @@ export class ProcurementDeclaredStockReconcileService implements IProcurementDec
     const adapter = this.registry.getPricingAdapter(account.provider_code);
     if (!adapter) return null;
 
+    // seller_price adapters (e.g. Eneba with priceIWantToGet) store net amounts
+    // in listing.price_cents — calling calculateNetPayout() would treat the NET
+    // price as a GROSS price in S_calculatePrice and return a lower incorrect
+    // value while burning API rate-limit budget per listing. Return directly.
+    if (adapter.pricingModel === 'seller_price') {
+      const usd = await this.fx.toUsdCents(listing.price_cents, listing.currency);
+      return typeof usd === 'number' && Number.isFinite(usd) && usd > 0 ? usd : listing.price_cents;
+    }
+
     try {
       const payout = await adapter.calculateNetPayout({
         priceCents: listing.price_cents,
@@ -253,109 +424,6 @@ export class ProcurementDeclaredStockReconcileService implements IProcurementDec
         transient: isTransient,
       });
       return null;
-    }
-  }
-
-  private async applyDeclareInternal(
-    requestId: string,
-    listing: ListingRow,
-    providerCode: string,
-    internalQty: number,
-    dryRun: boolean,
-    failures: ProcurementDeclaredStockReconcileFailure[],
-  ): Promise<void> {
-    if (dryRun) return;
-    const adapter = this.registry.getDeclaredStockAdapter(providerCode);
-    if (!adapter) {
-      failures.push({ listing_id: listing.id, reason: `no_declared_stock_adapter:${providerCode}` });
-      return;
-    }
-    const externalId = listing.external_listing_id;
-    if (!externalId) return;
-    try {
-      logger.info('Reconcile: pushing internal stock to marketplace', {
-        requestId, listingId: listing.id, providerCode, qty: internalQty,
-      });
-      const r = await adapter.declareStock(externalId, internalQty);
-      if (!r.success) {
-        failures.push({ listing_id: listing.id, reason: r.error ?? 'declare_stock_failed' });
-        await this.persistError(listing.id, r.error ?? 'declare_stock_failed');
-        return;
-      }
-      const applied = typeof r.declaredQuantity === 'number' && Number.isFinite(r.declaredQuantity)
-        ? r.declaredQuantity : internalQty;
-      await this.persistSuccess(listing.id, applied);
-    } catch (err) {
-      this.recordFailure(requestId, listing.id, err, failures);
-    }
-  }
-
-  private async applyDeclareFromBuyer(
-    requestId: string,
-    listing: ListingRow,
-    providerCode: string,
-    decision: Extract<DeclaredStockSelectorResult, { kind: 'declare' }>,
-    failures: ProcurementDeclaredStockReconcileFailure[],
-  ): Promise<void> {
-    const adapter = this.registry.getDeclaredStockAdapter(providerCode);
-    if (!adapter) {
-      failures.push({ listing_id: listing.id, reason: `no_declared_stock_adapter:${providerCode}` });
-      return;
-    }
-    const externalId = listing.external_listing_id;
-    if (!externalId) return;
-    try {
-      logger.info('Reconcile: declaring stock from credited buyer', {
-        requestId, listingId: listing.id, providerCode,
-        buyerProviderCode: decision.offer.provider_code,
-        buyerProviderAccountId: decision.offer.provider_account_id,
-        declaredQty: decision.declaredQty,
-        costBasisUsdCents: decision.costBasisUsdCents,
-      });
-      const r = await adapter.declareStock(externalId, decision.declaredQty);
-      if (!r.success) {
-        failures.push({ listing_id: listing.id, reason: r.error ?? 'declare_stock_failed' });
-        await this.persistError(listing.id, r.error ?? 'declare_stock_failed');
-        return;
-      }
-      const applied =
-        typeof r.declaredQuantity === 'number' && Number.isFinite(r.declaredQuantity)
-          ? r.declaredQuantity
-          : decision.declaredQty;
-      await this.persistSuccess(listing.id, applied);
-    } catch (err) {
-      this.recordFailure(requestId, listing.id, err, failures);
-    }
-  }
-
-  private async applyDisable(
-    requestId: string,
-    listing: ListingRow,
-    providerCode: string,
-    reason: 'no_offer' | 'no_credit' | 'uneconomic',
-    failures: ProcurementDeclaredStockReconcileFailure[],
-  ): Promise<void> {
-    const externalId = listing.external_listing_id;
-    if (!externalId) return;
-    try {
-      logger.info('Reconcile: dispatching marketplace disable', {
-        requestId, listingId: listing.id, providerCode, reason,
-      });
-      const r = await dispatchListingDisable(this.registry, providerCode, externalId);
-      if (!r.success) {
-        failures.push({ listing_id: listing.id, reason: r.error ?? `disable_${reason}_failed` });
-      }
-      // Persist `error_message=reason` so admin sees WHY this listing went
-      // dark, even when the dispatch itself succeeded. `declared_stock=0`
-      // mirrors what the marketplace now reflects.
-      await this.db.update('seller_listings', { id: listing.id }, {
-        declared_stock: 0,
-        last_synced_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        error_message: reason,
-      });
-    } catch (err) {
-      this.recordFailure(requestId, listing.id, err, failures);
     }
   }
 

@@ -75,7 +75,7 @@ export class G2AAdapter
     ISellerBatchPriceAdapter,
     IProductSearchAdapter
 {
-  readonly pricingModel = 'gross' as const;
+  readonly pricingModel = 'gross_price' as const;
 
   private readonly offerCache = new Map<string, G2AOfferDetail>();
 

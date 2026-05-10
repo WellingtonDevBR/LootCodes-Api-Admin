@@ -157,6 +157,16 @@ export interface ISellerStockSyncAdapter {
 }
 
 export interface ISellerPricingAdapter {
+  /**
+   * 'seller_price' → the adapter submits net amounts (e.g. Eneba `priceIWantToGet`).
+   * `listing.price_cents` is already the net payout after fees — calling
+   * `calculateNetPayout` would treat the net price as gross, returning a
+   * lower incorrect value AND burning API rate-limit budget unnecessarily.
+   *
+   * 'gross_price' (default) → `listing.price_cents` is the gross buyer-facing
+   * price; callers must invoke `calculateNetPayout` to learn the net amount.
+   */
+  readonly pricingModel?: 'gross_price' | 'seller_price';
   calculateNetPayout(ctx: PricingContext): Promise<SellerPayoutResult>;
 }
 

@@ -377,16 +377,15 @@ export class DigisellerMarketplaceAdapter
       this.assertRetval(resp, 'setupFormDelivery');
       logger.info('Digiseller form delivery configured', { productId });
     } catch (err) {
-      // Form delivery setup is best-effort here — the listing was already
-      // created or stock was already updated. A transient infra failure
-      // (circuit breaker open, rate limit, upstream auth wobble) is not
-      // an actionable bug; the next reconcile cron tick recovers it.
-      const isTransient = isTransientMarketplaceError(err);
-      const logFn = isTransient ? logger.info.bind(logger) : logger.warn.bind(logger);
-      logFn('Digiseller setupFormDelivery failed', {
+      // Form delivery setup is best-effort — stock was already updated successfully.
+      // Digiseller returns 400 "Address can't be less than 8 symbols" when a form
+      // field definition is missing or malformed; this is a configuration gap, not
+      // a stock-sync failure. Log at info to avoid Sentry noise; stock declarations
+      // still succeed even when this call fails.
+      logger.info('Digiseller setupFormDelivery failed', {
         productId,
         error: err instanceof Error ? err.message : String(err),
-        transient: isTransient,
+        transient: isTransientMarketplaceError(err),
       });
     }
   }
