@@ -86,21 +86,32 @@ export async function computeStrategyAwareCorrectedPrice(
 
   const floorInModelUnits = isSellerPrice ? costFloorNet : costFloorGross;
 
-  // ── Step 3: Load cached competitor floor from DB (no API call) ────────
+  // ── Step 3: Load cached competitor floors from DB (no API call) ──────
+  // The pricing phase (which runs before declared-stock) writes both
+  // `lowest_competitor_cents` (P1) and `second_lowest_cents` (P2) to
+  // `seller_competitor_floors`. We need P2 for `smart_compete` so we can
+  // target P2 − 1 (1 cent below the next price tier above our floor).
   let lowestCompetitorGross: number | null = null;
+  let secondLowestCompetitorGross: number | null = null;
   try {
     const row = await db.queryOne<{
       lowest_competitor_cents: number | null;
+      second_lowest_cents: number | null;
       updated_at: string | null;
     }>('seller_competitor_floors', {
       eq: [['seller_listing_id', listingId]],
     });
 
-    if (row && row.lowest_competitor_cents != null && row.lowest_competitor_cents > 0) {
+    if (row) {
       const updatedAt = row.updated_at ? new Date(row.updated_at).getTime() : 0;
       const ageMs = Date.now() - updatedAt;
       if (ageMs <= COMPETITOR_CACHE_MAX_AGE_MS) {
-        lowestCompetitorGross = row.lowest_competitor_cents;
+        if (row.lowest_competitor_cents != null && row.lowest_competitor_cents > 0) {
+          lowestCompetitorGross = row.lowest_competitor_cents;
+        }
+        if (row.second_lowest_cents != null && row.second_lowest_cents > 0) {
+          secondLowestCompetitorGross = row.second_lowest_cents;
+        }
       }
     }
   } catch (err) {
@@ -113,11 +124,14 @@ export async function computeStrategyAwareCorrectedPrice(
   // ── Step 4: Apply pricing strategy ────────────────────────────────────
   // Strategy operates in GROSS terms (competitor prices are buyer-facing).
   // costFloorGross is the minimum gross price we'd accept.
+  // For smart_compete: P2 (secondLowestCompetitorGross) enables the gap-exploit
+  // logic — target = P2 − 1, staying 1 cent below the next price tier.
   const strategyGross = applySellerPriceStrategy(
     priceStrategy,
     priceStrategyValue ?? 0,
-    costFloorGross,  // costCents = our minimum gross acceptable price
-    lowestCompetitorGross, // null = no competitors → strategy returns costCents
+    costFloorGross,
+    lowestCompetitorGross,
+    secondLowestCompetitorGross,
   );
 
   // Strategy price should never go below our computed gross floor.
@@ -143,6 +157,7 @@ export async function computeStrategyAwareCorrectedPrice(
       costFloorNet,
       costFloorGross,
       lowestCompetitorGross,
+      secondLowestCompetitorGross,
       strategyGross,
       clampedStrategyGross,
       finalPrice,
