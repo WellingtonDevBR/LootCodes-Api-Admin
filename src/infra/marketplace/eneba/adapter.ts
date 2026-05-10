@@ -309,6 +309,7 @@ export class EnebaAdapter
     quantity: number,
   ): Promise<DeclareStockResult> {
     if (quantity === 0) {
+      // Clear declared stock — sets declaredStock: null, effectively disabling the listing.
       const data = await this.gqlClient.execute<EnebaUpdateAuctionData>(
         UPDATE_AUCTION_MUTATION,
         { auctionId: externalListingId, declaredStock: null },
@@ -319,15 +320,16 @@ export class EnebaAdapter
       };
     }
 
-    const data = await this.gqlClient.execute<EnebaUpdateDeclaredStockData>(
-      UPDATE_DECLARED_STOCK_MUTATION,
-      {
-        statuses: [{ auctionId: externalListingId, declaredStock: quantity }],
-      },
+    // Use S_updateAuction with BOTH declaredStock AND enabled: true so that
+    // listings previously disabled (declaredStock: null) are re-activated in
+    // the same round-trip. P_updateDeclaredStock alone does not re-enable.
+    const data = await this.gqlClient.execute<EnebaUpdateAuctionData>(
+      UPDATE_AUCTION_MUTATION,
+      { auctionId: externalListingId, declaredStock: quantity, enabled: true },
     );
 
     return {
-      success: data.P_updateDeclaredStock.success,
+      success: data.S_updateAuction.success,
       declaredQuantity: quantity,
     };
   }
@@ -496,8 +498,13 @@ export class EnebaAdapter
       return { updated: 0, failed: 0 };
     }
 
+    // Include enabled: true on every item so that auctions previously disabled
+    // (e.g. after a no-credit/uneconomic cycle) are re-activated when a new
+    // price is pushed. P_updateAuctionPrice accepts the enabled field per the
+    // Eneba API docs.
     const items = updates.map((u) => ({
       auctionId: u.externalListingId,
+      enabled: true,
       price: { amount: u.priceCents, currency: u.currency ?? 'EUR' },
     }));
 
