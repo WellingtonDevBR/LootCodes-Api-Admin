@@ -65,7 +65,10 @@ export class SellerDomainEventsService implements ISellerDomainEventPort {
         version: 1,
       });
 
-      await this.invokeEventDispatcher({
+      // Fire-and-forget: the event is already persisted to domain_events above.
+      // Awaiting the dispatcher would block the webhook response for up to 150s
+      // if the Edge Function is slow, causing spurious 504 errors back to marketplaces.
+      void this.invokeEventDispatcher({
         event_type: 'inventory.stock_changed',
         aggregate_type: 'inventory',
         aggregate_id: aggregateId,
@@ -107,6 +110,7 @@ export class SellerDomainEventsService implements ISellerDomainEventPort {
           'X-Internal-Secret': internalSecret,
         },
         body: JSON.stringify(event),
+        signal: AbortSignal.timeout(30_000),
       });
 
       if (!res.ok) {
