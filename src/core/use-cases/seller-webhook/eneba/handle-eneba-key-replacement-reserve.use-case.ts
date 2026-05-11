@@ -266,12 +266,12 @@ export class HandleEnebaKeyReplacementReserveUseCase {
           ? (meta.price as Record<string, unknown>).currency as string
           : 'EUR';
 
-      // Mark key as faulty
+      // Mark key as faulty — marked_faulty_by is null (automated webhook, no admin actor)
       await this.db.update('product_keys', { id: provision.product_key_id }, {
         key_state: 'faulty',
         marked_faulty_at: new Date().toISOString(),
         marked_faulty_reason: 'marketplace_replacement',
-        marked_faulty_by: 'eneba_webhook',
+        marked_faulty_by: null,
         ...(originalGrossCents > 0 ? { write_off_cents: originalGrossCents } : {}),
       });
 
