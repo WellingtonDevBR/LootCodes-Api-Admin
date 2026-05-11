@@ -831,20 +831,21 @@ export class SellerAutoPricingService implements ISellerAutoPricingService {
           observedGrossNetRatio = ownOffer.priceCents / listing.price_cents;
           effectiveMinGross = Math.round(effectiveMin * observedGrossNetRatio);
         } else {
-          // Fall back to formula only when our own offer is not in the competitor list.
+          // Own offer absent from competitor list — call the marketplace's price
+          // calculator (S_calculatePrice / calculateNetPayout) for an accurate result.
+          // fixedFeeCents is intentionally omitted so the formula is bypassed and
+          // the adapter API is used as the source of truth for fee computation.
           listingCompareGross = await this.pricingService.reverseNetToGross(
             providerCode, providerAccountId,
             listing.price_cents, listing.currency, listing.listing_type as 'key_upload' | 'declared_stock',
             config.commission_rate_percent,
             listing.external_listing_id, listing.external_product_id ?? undefined,
-            config.fixed_fee_cents,
           );
           effectiveMinGross = await this.pricingService.reverseNetToGross(
             providerCode, providerAccountId,
             effectiveMin, listing.currency, listing.listing_type as 'key_upload' | 'declared_stock',
             config.commission_rate_percent,
             listing.external_listing_id, listing.external_product_id ?? undefined,
-            config.fixed_fee_cents,
           );
         }
       }
@@ -861,12 +862,13 @@ export class SellerAutoPricingService implements ISellerAutoPricingService {
           if (observedGrossNetRatio !== null && observedGrossNetRatio > 0) {
             return Math.round(gross / observedGrossNetRatio);
           }
+          // Fallback: let S_calculatePrice / calculateNetPayout compute the
+          // accurate NET for this GROSS. fixedFeeCents omitted intentionally.
           return this.pricingService.reverseGrossToSellerPrice(
             providerCode, providerAccountId,
             gross, listing.currency, listing.listing_type as 'key_upload' | 'declared_stock',
             config.commission_rate_percent,
             listing.external_listing_id, listing.external_product_id ?? undefined,
-            config.fixed_fee_cents,
           );
         }
         return gross;
