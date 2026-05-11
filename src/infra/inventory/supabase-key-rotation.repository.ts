@@ -6,7 +6,7 @@
  *
  * Only considers keys in states where re-encryption is safe:
  *   - available  — in stock, not yet allocated
- *   - reserved   — held for an in-flight order; still needs to be deliverable
+ *   - assigned   — held for an in-flight order; still needs to be deliverable
  *
  * Sold, faulty, and cancelled keys are excluded because:
  *   - sold keys: plaintext was already delivered; re-encrypting is cosmetic
@@ -22,7 +22,7 @@ import type {
 } from '../../core/ports/key-rotation-repository.port.js';
 import type { EncryptedKeyPayload } from '../../core/ports/key-encryption.port.js';
 
-const ROTATABLE_STATUSES = ['available', 'reserved'] as const;
+const ROTATABLE_STATES = ['available', 'assigned'] as const;
 
 @injectable()
 export class SupabaseKeyRotationRepository implements IKeyRotationRepository {
@@ -43,14 +43,14 @@ export class SupabaseKeyRotationRepository implements IKeyRotationRepository {
       this.db.query<KeyRotationRecord>('product_keys', {
         select: SELECT,
         filter: { encryption_key_id: null },
-        in: [['status', ROTATABLE_STATUSES as unknown as unknown[]]],
+        in: [['key_state', ROTATABLE_STATES as unknown as unknown[]]],
         limit: batchSize,
         order: { column: 'created_at', ascending: true },
       }),
       this.db.query<KeyRotationRecord>('product_keys', {
         select: SELECT,
         neq: [['encryption_key_id', currentKeyId]],
-        in: [['status', ROTATABLE_STATUSES as unknown as unknown[]]],
+        in: [['key_state', ROTATABLE_STATES as unknown as unknown[]]],
         limit: batchSize,
         order: { column: 'created_at', ascending: true },
       }),
