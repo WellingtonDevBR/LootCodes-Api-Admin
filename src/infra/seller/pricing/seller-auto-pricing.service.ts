@@ -814,22 +814,39 @@ export class SellerAutoPricingService implements ISellerAutoPricingService {
 
       let listingCompareGross = listing.price_cents;
       let effectiveMinGross = effectiveMin;
+      // GROSS/NET scaling ratio derived from the actual observed price (own offer in
+      // competitor list). For Eneba's seller_price model the configured fee formula
+      // (commission % + fixed fee) does NOT match how Eneba computes the buyer-facing
+      // gross price via priceIWantToGet — using it inflates the effective floor above
+      // all competitors and prevents the strategy from ever suggesting a price raise.
+      let observedGrossNetRatio: number | null = null;
 
       if (isNetPricingModel && listing.external_listing_id) {
-        listingCompareGross = await this.pricingService.reverseNetToGross(
-          providerCode, providerAccountId,
-          listing.price_cents, listing.currency, listing.listing_type as 'key_upload' | 'declared_stock',
-          config.commission_rate_percent,
-          listing.external_listing_id, listing.external_product_id ?? undefined,
-          config.fixed_fee_cents,
-        );
-        effectiveMinGross = await this.pricingService.reverseNetToGross(
-          providerCode, providerAccountId,
-          effectiveMin, listing.currency, listing.listing_type as 'key_upload' | 'declared_stock',
-          config.commission_rate_percent,
-          listing.external_listing_id, listing.external_product_id ?? undefined,
-          config.fixed_fee_cents,
-        );
+        // Prefer the actual GROSS from the competitor list (our own offer as the
+        // marketplace reports it) over the formula-based conversion. This is accurate
+        // regardless of the provider's fee structure.
+        const ownOffer = competitors.find((c) => c.isOwnOffer === true);
+        if (ownOffer && ownOffer.priceCents > 0 && listing.price_cents > 0) {
+          listingCompareGross = ownOffer.priceCents;
+          observedGrossNetRatio = ownOffer.priceCents / listing.price_cents;
+          effectiveMinGross = Math.round(effectiveMin * observedGrossNetRatio);
+        } else {
+          // Fall back to formula only when our own offer is not in the competitor list.
+          listingCompareGross = await this.pricingService.reverseNetToGross(
+            providerCode, providerAccountId,
+            listing.price_cents, listing.currency, listing.listing_type as 'key_upload' | 'declared_stock',
+            config.commission_rate_percent,
+            listing.external_listing_id, listing.external_product_id ?? undefined,
+            config.fixed_fee_cents,
+          );
+          effectiveMinGross = await this.pricingService.reverseNetToGross(
+            providerCode, providerAccountId,
+            effectiveMin, listing.currency, listing.listing_type as 'key_upload' | 'declared_stock',
+            config.commission_rate_percent,
+            listing.external_listing_id, listing.external_product_id ?? undefined,
+            config.fixed_fee_cents,
+          );
+        }
       }
 
       const analysis = await this.intelligenceService.analyzeOptimalPosition(
@@ -840,6 +857,10 @@ export class SellerAutoPricingService implements ISellerAutoPricingService {
 
       const convertGross = async (gross: number): Promise<number> => {
         if (isNetPricingModel && listing.external_listing_id) {
+          // Use observed ratio when available — avoids formula rounding errors.
+          if (observedGrossNetRatio !== null && observedGrossNetRatio > 0) {
+            return Math.round(gross / observedGrossNetRatio);
+          }
           return this.pricingService.reverseGrossToSellerPrice(
             providerCode, providerAccountId,
             gross, listing.currency, listing.listing_type as 'key_upload' | 'declared_stock',
