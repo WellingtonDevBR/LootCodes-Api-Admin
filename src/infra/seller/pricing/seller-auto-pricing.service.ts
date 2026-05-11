@@ -627,12 +627,32 @@ export class SellerAutoPricingService implements ISellerAutoPricingService {
             }
           }
 
+          // For NET pricing models, derive the GROSS/NET ratio from our own offer in
+          // the competitor list. This is more accurate than any formula because it
+          // uses the marketplace's own computed buyer price for our listing.
+          let netModelGrossNetRatio: number | null = null;
+          if (isNetPricingModel && listing.external_listing_id && config.smart_pricing_enabled) {
+            const ownOffer = competitors.find((c) => c.isOwnOffer === true);
+            if (ownOffer && ownOffer.priceCents > 0 && listing.price_cents > 0) {
+              netModelGrossNetRatio = ownOffer.priceCents / listing.price_cents;
+            } else {
+              logger.error('smart-pricing: own offer absent from competitor list for NET pricing model — skipping listing', {
+                requestId,
+                listingId: listing.id,
+                providerCode,
+                externalListingId: listing.external_listing_id,
+              });
+              result.errors++;
+              continue;
+            }
+          }
+
           // Resolve target price
           const target = await this.resolvePriceTarget(
             listing, competitors, config, effectiveMin,
             providerCode, providerAccountId, requestId,
             hasCompetition, hasPricing, isNetPricingModel,
-            effectiveCostCents, preparedFloor,
+            effectiveCostCents, preparedFloor, netModelGrossNetRatio,
           );
 
           if (!target.shouldChange) {
@@ -794,6 +814,7 @@ export class SellerAutoPricingService implements ISellerAutoPricingService {
     isNetPricingModel: boolean,
     costInListingCurrency: number,
     preparedFloor: CompetitorFloorData | null,
+    netModelGrossNetRatio: number | null = null,
   ): Promise<{
     targetCents: number;
     reasonCode: string;
@@ -814,37 +835,12 @@ export class SellerAutoPricingService implements ISellerAutoPricingService {
 
       let listingCompareGross = listing.price_cents;
       let effectiveMinGross = effectiveMin;
-      // GROSS/NET scaling ratio derived from the actual observed price (own offer in
-      // competitor list). For Eneba's seller_price model the configured fee formula
-      // (commission % + fixed fee) does NOT match how Eneba computes the buyer-facing
-      // gross price via priceIWantToGet — using it inflates the effective floor above
-      // all competitors and prevents the strategy from ever suggesting a price raise.
-      let observedGrossNetRatio: number | null = null;
-
-      if (isNetPricingModel && listing.external_listing_id) {
-        // Prefer the actual GROSS from the competitor list (our own offer as the
-        // marketplace reports it) over the formula-based conversion. This is accurate
-        // regardless of the provider's fee structure.
-        const ownOffer = competitors.find((c) => c.isOwnOffer === true);
-        if (ownOffer && ownOffer.priceCents > 0 && listing.price_cents > 0) {
-          listingCompareGross = ownOffer.priceCents;
-          observedGrossNetRatio = ownOffer.priceCents / listing.price_cents;
-          effectiveMinGross = Math.round(effectiveMin * observedGrossNetRatio);
-        } else {
-          // Our own offer is absent from the competitor snapshot — we have no
-          // accurate GROSS/NET ratio and no safe way to compute one without risking
-          // a mispriced update. Skip this listing so we never push a price derived
-          // from a guess. It will be retried on the next cron tick once Eneba
-          // includes our offer in the competition response again.
-          logger.error('smart-pricing: own offer absent from competitor list for NET pricing model — skipping listing', {
-            requestId,
-            listingId: listing.id,
-            providerCode,
-            externalListingId: listing.external_listing_id,
-          });
-          result.errors++;
-          continue;
-        }
+      if (isNetPricingModel && listing.external_listing_id && netModelGrossNetRatio !== null) {
+        // Use the ratio pre-computed in the outer loop from the actual observed GROSS
+        // price (our own offer as the marketplace reports it). More accurate than any
+        // formula since it reflects the marketplace's own fee computation.
+        listingCompareGross = Math.round(listing.price_cents * netModelGrossNetRatio);
+        effectiveMinGross = Math.round(effectiveMin * netModelGrossNetRatio);
       }
 
       const analysis = await this.intelligenceService.analyzeOptimalPosition(
@@ -855,10 +851,11 @@ export class SellerAutoPricingService implements ISellerAutoPricingService {
 
       const convertGross = async (gross: number): Promise<number> => {
         if (isNetPricingModel && listing.external_listing_id) {
-          if (observedGrossNetRatio !== null && observedGrossNetRatio > 0) {
-            return Math.round(gross / observedGrossNetRatio);
+          if (netModelGrossNetRatio !== null && netModelGrossNetRatio > 0) {
+            return Math.round(gross / netModelGrossNetRatio);
           }
-          // Should be unreachable: we skip the listing when ownOffer is absent.
+          // Should be unreachable: the outer loop skips listings where the ratio
+          // could not be derived (own offer absent from competitor snapshot).
           throw new Error(`NET pricing model gross→net conversion has no ratio for listing ${listing.id}`);
         }
         return gross;
