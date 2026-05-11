@@ -1,0 +1,206 @@
+/**
+ * WgcardsManualBuyer — wires together the crypto, token manager, and HTTP client
+ * into a cohesive buyer object consumed by `WgcardsBuyerProvider`.
+ *
+ * Factory function `createWgcardsManualBuyer` follows the same pattern as
+ * `createBambooManualBuyer` and `createAppRouteManualBuyer`:
+ *   - Reads secrets from `provider_secrets_ref` (via Vault) — never from `api_profile`.
+ *   - Reads non-secret config (base_url) from `api_profile`.
+ *   - Returns `null` with a `logger.warn` if any required secret is missing.
+ *
+ * Secrets expected in `provider_secrets_ref`:
+ *   WGCARDS_APP_ID     — also serves as the AES-128 key (must be 16 bytes)
+ *   WGCARDS_APP_KEY    — used only for getToken; not stored elsewhere
+ *   WGCARDS_ACCOUNT_ID — accountId sent in all request envelopes
+ *
+ * api_profile keys:
+ *   base_url  — defaults to https://api.wgcards.com (omit for production)
+ */
+import { createLogger } from '../../../shared/logger.js';
+import { WgcardsAesCrypto } from './wgcards-aes-crypto.js';
+import { WgcardsTokenManager, type WgcardsCachedToken } from './wgcards-token-manager.js';
+import {
+  WgcardsHttpClient,
+  type WgcardsAccountData,
+  type WgcardsStockEntry,
+  type WgcardsBuyCardData,
+  type WgcardsPlaceOrderRequest,
+} from './wgcards-http-client.js';
+
+const logger = createLogger('wgcards-manual-buyer');
+
+const WGCARDS_DEFAULT_BASE_URL = 'https://api.wgcards.com';
+
+/** Poll config: how long to wait for card delivery after placeOrder. */
+const CARD_POLL_INTERVAL_MS = 2_000;
+const CARD_POLL_MAX_ATTEMPTS = 15; // 30 s total max
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function profileStr(profile: Record<string, unknown>, key: string): string | undefined {
+  const v = profile[key];
+  return typeof v === 'string' && v.trim().length > 0 ? v.trim() : undefined;
+}
+
+export interface WgcardsQuoteResult {
+  /** Unit cost in the smallest denomination of `currency` (i.e. cents for USD). */
+  readonly price_cents: number;
+  readonly currency: string;
+  /** null when the supplier reports unlimited stock (-1). */
+  readonly available_quantity: number | null;
+}
+
+export interface WgcardsPurchaseResult {
+  readonly success: boolean;
+  readonly orderId?: string;
+  readonly keys?: readonly string[];
+  readonly error?: string;
+  readonly recoverable?: boolean;
+}
+
+export class WgcardsManualBuyer {
+  constructor(
+    private readonly client: WgcardsHttpClient,
+    private readonly appId: string,
+  ) {}
+
+  async getAccount(): Promise<WgcardsAccountData> {
+    return this.client.getAccount();
+  }
+
+  async quote(skuId: string): Promise<WgcardsQuoteResult> {
+    const stocks = await this.client.getStock([skuId]);
+    const entry = stocks.find((s) => s.skuId === skuId);
+    if (!entry) {
+      throw new Error(`WGCards getStock: skuId ${skuId} not found in response`);
+    }
+
+    // WGCards returns prices in the `skuPrice` field via getItemAndStock, but
+    // getStock only returns `number` (quantity). For quote pricing we use the
+    // stock check combined with the cached snapshot price. If stock is 0 we
+    // report unavailable.
+    const availableQuantity = entry.number === -1 ? null : entry.number;
+
+    // Price cannot be obtained from getStock alone — we return 0 cents and
+    // let the provider snapshot supply the cost. The stock availability is
+    // the primary output of quote() from WGCards.
+    return {
+      price_cents: 0,
+      currency: 'USD',
+      available_quantity: availableQuantity,
+    };
+  }
+
+  async purchase(req: WgcardsPlaceOrderRequest): Promise<WgcardsPurchaseResult> {
+    let orderId: string;
+    try {
+      orderId = await this.client.placeOrder(req);
+    } catch (err) {
+      logger.error('WGCards placeOrder failed', err instanceof Error ? err : new Error(String(err)), {
+        serviceOrder: req.serviceOrder,
+      });
+      return {
+        success: false,
+        error: err instanceof Error ? err.message : String(err),
+        recoverable: false,
+      };
+    }
+
+    logger.info('WGCards: order placed, polling for cards', { orderId });
+
+    // Poll getBuyCard until all cards are delivered or max attempts reached.
+    for (let attempt = 1; attempt <= CARD_POLL_MAX_ATTEMPTS; attempt++) {
+      await sleep(CARD_POLL_INTERVAL_MS);
+
+      let cardData: WgcardsBuyCardData;
+      try {
+        cardData = await this.client.getBuyCard(orderId);
+      } catch (err) {
+        logger.warn('WGCards getBuyCard poll error', err instanceof Error ? err : new Error(String(err)), {
+          orderId,
+          attempt,
+        });
+        continue;
+      }
+
+      if (cardData.records.length > 0) {
+        const keys = cardData.records.map((r) => r.card.trim()).filter(Boolean);
+        logger.info('WGCards: cards received', { orderId, count: keys.length });
+        return { success: true, orderId, keys };
+      }
+
+      logger.debug('WGCards: cards not yet delivered', { orderId, attempt });
+    }
+
+    // Cards not received within poll window — order placed but delivery pending.
+    logger.warn('WGCards: card delivery timed out after polling', { orderId });
+    return {
+      success: false,
+      orderId,
+      error: `WGCards order ${orderId} placed but cards not delivered within poll window`,
+      recoverable: true,
+    };
+  }
+}
+
+// ─── Factory ─────────────────────────────────────────────────────────────────
+
+export function createWgcardsManualBuyer(params: {
+  readonly secrets: Record<string, string>;
+  readonly profile: Record<string, unknown>;
+  readonly initialTokenCache?: WgcardsCachedToken | null;
+  readonly onTokenRefreshed?: (entry: WgcardsCachedToken) => void;
+}): WgcardsManualBuyer | null {
+  const appId = params.secrets['WGCARDS_APP_ID'];
+  const appKey = params.secrets['WGCARDS_APP_KEY'];
+  const accountId = params.secrets['WGCARDS_ACCOUNT_ID'];
+
+  if (!appId?.trim() || !appKey?.trim() || !accountId?.trim()) {
+    logger.warn(
+      'WGCards manual buyer unavailable — missing WGCARDS_APP_ID, WGCARDS_APP_KEY, or WGCARDS_ACCOUNT_ID',
+    );
+    return null;
+  }
+
+  let crypto: WgcardsAesCrypto;
+  try {
+    crypto = new WgcardsAesCrypto(appId.trim());
+  } catch (err) {
+    logger.warn(
+      'WGCards manual buyer unavailable — AES key construction failed',
+      err instanceof Error ? err : new Error(String(err)),
+    );
+    return null;
+  }
+
+  const baseUrl =
+    profileStr(params.profile, 'base_url') ??
+    profileStr(params.profile, 'baseUrl') ??
+    WGCARDS_DEFAULT_BASE_URL;
+
+  // Wire token manager — the `fetchToken` lambda closes over the HTTP client
+  // that the token manager itself is passed to. To avoid a circular dep, we
+  // create the client first with a placeholder, then set it up via a wrapper.
+  let httpClient: WgcardsHttpClient;
+
+  const tokenManager = new WgcardsTokenManager({
+    initialCache: params.initialTokenCache ?? null,
+    onTokenRefreshed: params.onTokenRefreshed,
+    fetchToken: async () => {
+      // httpClient is assigned below before any API call can be made.
+      return httpClient.getToken(appKey.trim());
+    },
+  });
+
+  httpClient = new WgcardsHttpClient(
+    baseUrl,
+    appId.trim(),
+    accountId.trim(),
+    crypto,
+    tokenManager,
+  );
+
+  return new WgcardsManualBuyer(httpClient, appId.trim());
+}
