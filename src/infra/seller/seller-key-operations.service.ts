@@ -224,16 +224,14 @@ export class SellerKeyOperationsService implements ISellerKeyOperationsPort {
     reservationId: string,
     targetStatus: 'cancelled' | 'expired' | 'failed',
   ): Promise<number> {
+    // release_seller_reserved_keys atomically:
+    //   1. Sets seller_reserved keys back to available
+    //   2. Marks all pending provisions as failed
+    // Both happen in a single DB transaction, eliminating the phantom-provision
+    // race where the key was released but the provision stayed 'pending' and
+    // permanently blocked claim_and_reserve_atomic's NOT EXISTS guard.
     const releasedCount = await this.db.rpc<number>('release_seller_reserved_keys', {
       p_reservation_id: reservationId,
-    });
-
-    await this.db.update(
-      'seller_key_provisions',
-      { reservation_id: reservationId, status: 'pending' },
-      { status: 'failed' },
-    ).catch((err) => {
-      logger.error('Failed to mark provisions as failed', err as Error, { reservationId });
     });
 
     await this.db.update(
