@@ -228,6 +228,148 @@ export async function internalCronRoutes(app: FastifyInstance): Promise<void> {
   );
 
   /**
+   * POST /internal/cron/seller-housekeeping
+   *
+   * Lightweight DB-only maintenance: expire stale reservations, refresh cost
+   * bases, and reconcile paused-listing admin alerts.
+   * No external marketplace calls — safe to run every 5 minutes.
+   */
+  app.post(
+    '/seller-housekeeping',
+    { preHandler: [procurementCronSecretGuard] },
+    async (request, reply) => {
+      const requestId = resolveRequestId(request, 'cron-seller-housekeeping');
+      logger.info('Seller housekeeping cron accepted — running in background', { requestId });
+      reply.code(202).send({ accepted: true, request_id: requestId });
+
+      const orchestrator = container.resolve<ReconcileSellerListingsUseCase>(
+        UC_TOKENS.ReconcileSellerListings,
+      );
+      orchestrator.execute(requestId, {
+        phases: ['expire-reservations', 'cost-basis', 'paused-listing-alerts'],
+      }).catch((err: unknown) => {
+        logger.error('Seller housekeeping background run failed', err as Error, { requestId });
+        Sentry.withScope((scope) => {
+          scope.setTag('cron.job', 'seller-housekeeping');
+          scope.setContext('cron', { requestId });
+          Sentry.captureException(err);
+        });
+      });
+    },
+  );
+
+  /**
+   * POST /internal/cron/seller-pricing
+   *
+   * Recompute prices and push to all marketplaces (Eneba, Kinguin, …).
+   * Depends on cost-basis being fresh — schedule after seller-housekeeping.
+   * Recommended cadence: every 10 minutes.
+   */
+  app.post(
+    '/seller-pricing',
+    { preHandler: [procurementCronSecretGuard] },
+    async (request, reply) => {
+      const requestId = resolveRequestId(request, 'cron-seller-pricing');
+      logger.info('Seller pricing cron accepted — running in background', { requestId });
+      reply.code(202).send({ accepted: true, request_id: requestId });
+
+      const orchestrator = container.resolve<ReconcileSellerListingsUseCase>(
+        UC_TOKENS.ReconcileSellerListings,
+      );
+      orchestrator.execute(requestId, { phases: ['pricing'] }).catch((err: unknown) => {
+        logger.error('Seller pricing background run failed', err as Error, { requestId });
+        Sentry.withScope((scope) => {
+          scope.setTag('cron.job', 'seller-pricing');
+          scope.setContext('cron', { requestId });
+          Sentry.captureException(err);
+        });
+      });
+    },
+  );
+
+  /**
+   * POST /internal/cron/seller-declared-stock
+   *
+   * Credit-aware declared-stock reconcile: snapshots buyer wallets, picks the
+   * cheapest funded offer per listing, and pushes stock quantities to all
+   * marketplaces. Schedule immediately after sync-buyer-catalog so quotes are
+   * fresh. Accepts the same optional body as reconcile-seller-listings.
+   * Recommended cadence: every 5 minutes.
+   */
+  app.post(
+    '/seller-declared-stock',
+    { preHandler: [procurementCronSecretGuard] },
+    async (request, reply) => {
+      const requestId = resolveRequestId(request, 'cron-seller-declared-stock');
+
+      const parsed = reconcileBodySchema.safeParse(request.body ?? {});
+      if (!parsed.success) {
+        const issues = parsed.error.issues.map((i) => ({
+          path: i.path.join('.') || '<root>',
+          message: i.message,
+        }));
+        logger.warn('Seller declared-stock cron rejected — invalid body', { requestId, issues });
+        return reply.code(400).send({ error: 'invalid_request_body', issues });
+      }
+
+      const { variant_ids, batch_limit, dry_run } = parsed.data;
+      logger.info('Seller declared-stock cron accepted — running in background', {
+        requestId,
+        variantFilterCount: variant_ids?.length ?? 0,
+        batch_limit,
+        dry_run: dry_run === true,
+      });
+      reply.code(202).send({ accepted: true, request_id: requestId });
+
+      const orchestrator = container.resolve<ReconcileSellerListingsUseCase>(
+        UC_TOKENS.ReconcileSellerListings,
+      );
+      orchestrator.execute(requestId, {
+        phases: ['declared-stock'],
+        variant_ids,
+        batch_limit,
+        dry_run,
+      }).catch((err: unknown) => {
+        logger.error('Seller declared-stock background run failed', err as Error, { requestId });
+        Sentry.withScope((scope) => {
+          scope.setTag('cron.job', 'seller-declared-stock');
+          scope.setContext('cron', { requestId, dry_run, variant_ids });
+          Sentry.captureException(err);
+        });
+      });
+    },
+  );
+
+  /**
+   * POST /internal/cron/seller-remote-stock
+   *
+   * Pulls remote stock levels back from marketplaces for all
+   * auto_sync_stock=true listings. Read-only against marketplaces — safe to
+   * run at a slower cadence (every 15–30 minutes) to reduce API load.
+   */
+  app.post(
+    '/seller-remote-stock',
+    { preHandler: [procurementCronSecretGuard] },
+    async (request, reply) => {
+      const requestId = resolveRequestId(request, 'cron-seller-remote-stock');
+      logger.info('Seller remote-stock cron accepted — running in background', { requestId });
+      reply.code(202).send({ accepted: true, request_id: requestId });
+
+      const orchestrator = container.resolve<ReconcileSellerListingsUseCase>(
+        UC_TOKENS.ReconcileSellerListings,
+      );
+      orchestrator.execute(requestId, { phases: ['remote-stock'] }).catch((err: unknown) => {
+        logger.error('Seller remote-stock background run failed', err as Error, { requestId });
+        Sentry.withScope((scope) => {
+          scope.setTag('cron.job', 'seller-remote-stock');
+          scope.setContext('cron', { requestId });
+          Sentry.captureException(err);
+        });
+      });
+    },
+  );
+
+  /**
    * POST /internal/cron/sync-buyer-catalog
    *
    * Fetches live quotes from all active buyer providers (currently Bamboo) and
