@@ -5,10 +5,7 @@ import { container } from '../../di/container.js';
 import { TOKENS, UC_TOKENS } from '../../di/tokens.js';
 import type { IBuyerOfferSnapshotSyncService } from '../../core/ports/buyer-offer-snapshot-sync.port.js';
 import type { ReconcileSellerListingsUseCase } from '../../core/use-cases/seller/reconcile-seller-listings.use-case.js';
-import {
-  RECONCILE_PHASES,
-  type ReconcileSellerListingsDto,
-} from '../../core/use-cases/seller/reconcile-seller-listings.types.js';
+import { RECONCILE_PHASES } from '../../core/use-cases/seller/reconcile-seller-listings.types.js';
 import type { RecryptProductKeysBatchUseCase } from '../../core/use-cases/inventory/recrypt-product-keys-batch.use-case.js';
 import type { ExpirePriceMatchClaimsUseCase } from '../../core/use-cases/price-match/expire-price-match-claims.use-case.js';
 import type { ProcessPriceDropRefundsUseCase } from '../../core/use-cases/price-match/process-price-drop-refunds.use-case.js';
@@ -74,56 +71,6 @@ export async function internalCronRoutes(app: FastifyInstance): Promise<void> {
         Sentry.withScope((scope) => {
           scope.setTag('cron.job', 'recrypt-product-keys');
           scope.setContext('cron', { requestId, batch_size });
-          Sentry.captureException(err);
-        });
-      });
-    },
-  );
-
-  app.post(
-    '/reconcile-seller-listings',
-    { preHandler: [procurementCronSecretGuard] },
-    async (request, reply) => {
-      const requestId = resolveRequestId(request, 'cron-reconcile-seller-listings');
-
-      const parsed = reconcileBodySchema.safeParse(request.body ?? {});
-      if (!parsed.success) {
-        const issues = parsed.error.issues.map((i) => ({
-          path: i.path.join('.') || '<root>',
-          message: i.message,
-        }));
-        logger.warn('Reconcile seller-listings cron rejected — invalid body', {
-          requestId,
-          issues,
-        });
-        return reply.code(400).send({ error: 'invalid_request_body', issues });
-      }
-
-      const dto: ReconcileSellerListingsDto = parsed.data;
-
-      logger.info('Reconcile seller-listings cron accepted — running in background', {
-        requestId,
-        variantFilterCount: dto.variant_ids?.length ?? 0,
-        batch_limit: dto.batch_limit,
-        dry_run: dto.dry_run === true,
-        phases: dto.phases,
-      });
-
-      // Respond immediately so the cron/lambda caller is not held open while
-      // all reconcile phases run. The orchestrator continues in the background.
-      reply.code(202).send({ accepted: true, request_id: requestId });
-
-      const orchestrator = container.resolve<ReconcileSellerListingsUseCase>(
-        UC_TOKENS.ReconcileSellerListings,
-      );
-
-      orchestrator.execute(requestId, dto).catch((err: unknown) => {
-        logger.error('Reconcile seller-listings background run failed', err as Error, {
-          requestId,
-        });
-        Sentry.withScope((scope) => {
-          scope.setTag('cron.job', 'reconcile-seller-listings');
-          scope.setContext('cron', { requestId, phases: dto.phases, dry_run: dto.dry_run });
           Sentry.captureException(err);
         });
       });
