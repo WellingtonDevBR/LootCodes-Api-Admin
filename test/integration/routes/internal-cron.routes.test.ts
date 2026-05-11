@@ -281,23 +281,21 @@ describe('Internal cron routes — POST /internal/cron/sync-buyer-catalog', () =
     expect(syncService.syncAll).not.toHaveBeenCalled();
   });
 
-  it('returns 200 and the sync result for a valid request', async () => {
+  it('returns 202 accepted immediately and fires syncAll in background', async () => {
     const res = await testApp.app.inject({
       method: 'POST',
       url: '/internal/cron/sync-buyer-catalog',
       headers: { 'x-internal-secret': VALID_SECRET },
     });
 
-    expect(res.statusCode).toBe(200);
+    expect(res.statusCode).toBe(202);
     expect(syncService.syncAll).toHaveBeenCalledOnce();
     const body = res.json();
-    expect(body.scanned).toBe(10);
-    expect(body.updated).toBe(8);
-    expect(body.failed).toBe(1);
-    expect(body.skipped).toBe(1);
+    expect(body.accepted).toBe(true);
+    expect(typeof body.request_id).toBe('string');
   });
 
-  it('returns 500 when the sync service throws', async () => {
+  it('returns 202 immediately even when syncAll rejects (error logged in background)', async () => {
     syncService.syncAll.mockRejectedValueOnce(new Error('network timeout'));
 
     const res = await testApp.app.inject({
@@ -306,8 +304,8 @@ describe('Internal cron routes — POST /internal/cron/sync-buyer-catalog', () =
       headers: { 'x-internal-secret': VALID_SECRET },
     });
 
-    expect(res.statusCode).toBe(500);
-    expect(res.json().error).toBe('sync_buyer_catalog_failed');
-    expect(res.json().message).toBe('network timeout');
+    expect(res.statusCode).toBe(202);
+    expect(res.json().accepted).toBe(true);
+    expect(syncService.syncAll).toHaveBeenCalledOnce();
   });
 });
