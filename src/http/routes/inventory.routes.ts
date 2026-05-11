@@ -365,11 +365,19 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
     };
 
     const hashes = await Promise.all(rawKeys.map(k => hashFn(k)));
-    const existingRows = await db.query<{ raw_key_hash: string }>(
-      'product_keys',
-      { select: 'raw_key_hash', in: [['raw_key_hash', hashes]] },
-    );
-    const existingHashes = new Set(existingRows.map(r => r.raw_key_hash));
+
+    // Chunk hash lookups: each SHA-256 hash is 64 chars; sending all at once in a GET URL
+    // would exceed the ~8 KB PostgREST URL limit for large batches.
+    const HASH_LOOKUP_CHUNK = 100;
+    const existingHashes = new Set<string>();
+    for (let c = 0; c < hashes.length; c += HASH_LOOKUP_CHUNK) {
+      const chunk = hashes.slice(c, c + HASH_LOOKUP_CHUNK);
+      const rows = await db.query<{ raw_key_hash: string }>(
+        'product_keys',
+        { select: 'raw_key_hash', in: [['raw_key_hash', chunk]] },
+      );
+      for (const r of rows) existingHashes.add(r.raw_key_hash);
+    }
 
     // Separate new keys from duplicates
     const newEntries: Array<{ key: string; hash: string }> = [];
