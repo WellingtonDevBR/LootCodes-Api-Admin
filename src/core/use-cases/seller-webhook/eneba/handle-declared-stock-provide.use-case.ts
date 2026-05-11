@@ -205,7 +205,14 @@ export class HandleDeclaredStockProvideUseCase {
     preferredOrderId: string,
   ): ReservationRow | undefined {
     if (!rows.length) return undefined;
-    return rows.find((r) => r.external_order_id === preferredOrderId) ?? rows[0];
+    // Prefer an exact match on the new orderId (direct PROVIDE or idempotent replay).
+    const exact = rows.find((r) => r.external_order_id === preferredOrderId);
+    if (exact) return exact;
+    // Substitute-buyer PROVIDE: multiple rows share the originalOrderId (e.g. a
+    // multi-item Eneba cart order each with its own RESERVE callback, some of which
+    // may have been cancelled). Pick the pending row so we don't attempt to
+    // provision against an already-cancelled reservation.
+    return rows.find((r) => r.status === 'pending') ?? rows[0];
   }
 
   private parseMetadata(raw: Record<string, unknown>): {
