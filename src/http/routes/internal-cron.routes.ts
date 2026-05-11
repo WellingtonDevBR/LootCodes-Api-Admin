@@ -65,19 +65,18 @@ export async function internalCronRoutes(app: FastifyInstance): Promise<void> {
       }
 
       const { batch_size } = parsed.data;
-      logger.info('Recrypt product-keys cron invoked', { requestId, batch_size });
+      logger.info('Recrypt product-keys cron accepted — running in background', { requestId, batch_size });
+      reply.code(202).send({ accepted: true, request_id: requestId });
 
-      try {
-        const uc = container.resolve<RecryptProductKeysBatchUseCase>(
-          UC_TOKENS.RecryptProductKeysBatch,
-        );
-        const result = await uc.execute({ batchSize: batch_size });
-        return reply.send(result);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        logger.error('Recrypt product-keys cron failed', err as Error, { requestId });
-        return reply.code(500).send({ error: 'recrypt_failed', message });
-      }
+      const uc = container.resolve<RecryptProductKeysBatchUseCase>(UC_TOKENS.RecryptProductKeysBatch);
+      uc.execute({ batchSize: batch_size }).catch((err: unknown) => {
+        logger.error('Recrypt product-keys background run failed', err as Error, { requestId });
+        Sentry.withScope((scope) => {
+          scope.setTag('cron.job', 'recrypt-product-keys');
+          scope.setContext('cron', { requestId, batch_size });
+          Sentry.captureException(err);
+        });
+      });
     },
   );
 
@@ -136,24 +135,18 @@ export async function internalCronRoutes(app: FastifyInstance): Promise<void> {
     { preHandler: [procurementCronSecretGuard] },
     async (request, reply) => {
       const requestId = resolveRequestId(request, 'cron-expire-price-match-claims');
-      logger.info('Expire price-match claims cron invoked', { requestId });
+      logger.info('Expire price-match claims cron accepted — running in background', { requestId });
+      reply.code(202).send({ accepted: true, request_id: requestId });
 
-      try {
-        const uc = container.resolve<ExpirePriceMatchClaimsUseCase>(
-          UC_TOKENS.ExpirePriceMatchClaims,
-        );
-        const result = await uc.execute();
-        logger.info('Expire price-match claims cron completed', { requestId, expiredCount: result.expiredCount });
-        return reply.send(result);
-      } catch (err) {
-        const error = err instanceof Error ? err : new Error(String(err));
+      const uc = container.resolve<ExpirePriceMatchClaimsUseCase>(UC_TOKENS.ExpirePriceMatchClaims);
+      uc.execute().catch((err: unknown) => {
+        logger.error('Expire price-match claims background run failed', err as Error, { requestId });
         Sentry.withScope((scope) => {
           scope.setTag('cron.job', 'expire-price-match-claims');
-          scope.setContext('cron', { requestId, job: 'expire-price-match-claims' });
-          logger.error('Expire price-match claims cron failed', error, { requestId });
+          scope.setContext('cron', { requestId });
+          Sentry.captureException(err);
         });
-        return reply.code(500).send({ error: 'expire_price_match_claims_failed', message: error.message });
-      }
+      });
     },
   );
 
@@ -162,24 +155,18 @@ export async function internalCronRoutes(app: FastifyInstance): Promise<void> {
     { preHandler: [procurementCronSecretGuard] },
     async (request, reply) => {
       const requestId = resolveRequestId(request, 'cron-process-price-drop-refunds');
-      logger.info('Process price-drop refunds cron invoked', { requestId });
+      logger.info('Process price-drop refunds cron accepted — running in background', { requestId });
+      reply.code(202).send({ accepted: true, request_id: requestId });
 
-      try {
-        const uc = container.resolve<ProcessPriceDropRefundsUseCase>(
-          UC_TOKENS.ProcessPriceDropRefunds,
-        );
-        const result = await uc.execute();
-        logger.info('Process price-drop refunds cron completed', { requestId, grantedCount: result.grantedCount });
-        return reply.send(result);
-      } catch (err) {
-        const error = err instanceof Error ? err : new Error(String(err));
+      const uc = container.resolve<ProcessPriceDropRefundsUseCase>(UC_TOKENS.ProcessPriceDropRefunds);
+      uc.execute().catch((err: unknown) => {
+        logger.error('Process price-drop refunds background run failed', err as Error, { requestId });
         Sentry.withScope((scope) => {
           scope.setTag('cron.job', 'process-price-drop-refunds');
-          scope.setContext('cron', { requestId, job: 'process-price-drop-refunds' });
-          logger.error('Process price-drop refunds cron failed', error, { requestId });
+          scope.setContext('cron', { requestId });
+          Sentry.captureException(err);
         });
-        return reply.code(500).send({ error: 'process_price_drop_refunds_failed', message: error.message });
-      }
+      });
     },
   );
 
@@ -200,30 +187,18 @@ export async function internalCronRoutes(app: FastifyInstance): Promise<void> {
       }
 
       const batchSize = parsed.data.batch_size ?? 200;
-      logger.info('Settle pending referrals cron invoked', { requestId, batchSize });
+      logger.info('Settle pending referrals cron accepted — running in background', { requestId, batchSize });
+      reply.code(202).send({ accepted: true, request_id: requestId });
 
-      try {
-        const uc = container.resolve<SettlePendingReferralsUseCase>(
-          UC_TOKENS.SettlePendingReferrals,
-        );
-        const result = await uc.execute({ batchSize });
-        logger.info('Settle pending referrals cron completed', {
-          requestId,
-          attempted: result.attempted,
-          settled: result.settled,
-          stillPending: result.stillPending,
-          errors: result.errors,
-        });
-        return reply.send(result);
-      } catch (err) {
-        const error = err instanceof Error ? err : new Error(String(err));
+      const uc = container.resolve<SettlePendingReferralsUseCase>(UC_TOKENS.SettlePendingReferrals);
+      uc.execute({ batchSize }).catch((err: unknown) => {
+        logger.error('Settle pending referrals background run failed', err as Error, { requestId });
         Sentry.withScope((scope) => {
           scope.setTag('cron.job', 'settle-pending-referrals');
-          scope.setContext('cron', { requestId, job: 'settle-pending-referrals', batchSize });
-          logger.error('Settle pending referrals cron failed', error, { requestId, batchSize });
+          scope.setContext('cron', { requestId, batchSize });
+          Sentry.captureException(err);
         });
-        return reply.code(500).send({ error: 'settle_pending_referrals_failed', message: error.message });
-      }
+      });
     },
   );
 
@@ -385,24 +360,18 @@ export async function internalCronRoutes(app: FastifyInstance): Promise<void> {
     { preHandler: [procurementCronSecretGuard] },
     async (request, reply) => {
       const requestId = resolveRequestId(request, 'cron-sync-buyer-catalog');
-      logger.info('Sync buyer catalog cron invoked', { requestId });
+      logger.info('Sync buyer catalog cron accepted — running in background', { requestId });
+      reply.code(202).send({ accepted: true, request_id: requestId });
 
-      try {
-        const svc = container.resolve<IBuyerOfferSnapshotSyncService>(
-          TOKENS.BuyerOfferSnapshotSyncService,
-        );
-        const result = await svc.syncAll(requestId);
-        logger.info('Sync buyer catalog cron completed', { requestId, ...result });
-        return reply.send(result);
-      } catch (err) {
-        const error = err instanceof Error ? err : new Error(String(err));
+      const svc = container.resolve<IBuyerOfferSnapshotSyncService>(TOKENS.BuyerOfferSnapshotSyncService);
+      svc.syncAll(requestId).catch((err: unknown) => {
+        logger.error('Sync buyer catalog background run failed', err as Error, { requestId });
         Sentry.withScope((scope) => {
           scope.setTag('cron.job', 'sync-buyer-catalog');
           scope.setContext('cron', { requestId });
-          logger.error('Sync buyer catalog cron failed', error, { requestId });
+          Sentry.captureException(err);
         });
-        return reply.code(500).send({ error: 'sync_buyer_catalog_failed', message: error.message });
-      }
+      });
     },
   );
 }
