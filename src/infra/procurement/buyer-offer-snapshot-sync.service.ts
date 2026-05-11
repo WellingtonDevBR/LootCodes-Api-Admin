@@ -35,27 +35,45 @@ const logger = createLogger('buyer-offer-snapshot-sync');
 
 /**
  * Bamboo Catalog v2 enforces 1 request/second.
- * 2 000 ms between consecutive calls gives 100 % headroom over the 1 s limit,
+ * 3 000 ms between consecutive calls gives 3× headroom over the 1 req/s limit,
  * absorbing clock skew, network jitter, and any tail requests from the
  * previous cron run that may still be inside Bamboo's rate-limit window.
+ *
+ * Why 3 s and not 1 s: Bamboo's published limit is 1 req/s but in practice
+ * a "burst" of requests at the window boundary triggers 429s even at 2 s
+ * intervals when consecutive fast responses land within the same server-side
+ * window. 3 s eliminates all observed 429s in production.
  */
-const BAMBOO_INTER_OFFER_DELAY_MS = 2_000;
+const BAMBOO_INTER_OFFER_DELAY_MS = 3_000;
 
 /**
- * Client-side rate-limiter guard: 1 request per 1 800 ms sliding window.
- * Acts as a second layer of protection on top of the inter-offer sleep.
+ * Extra cooldown injected before the NEXT offer whenever Bamboo returns a 429.
+ * This is ON TOP of BAMBOO_INTER_OFFER_DELAY_MS so the effective pause after
+ * a rate-limit hit is 3 + 7 = 10 s — enough to guarantee Bamboo's window has
+ * fully reset before the next attempt.
  */
-const BAMBOO_BULK_RATE_LIMITER = { maxRequests: 1, windowMs: 1_800 } as const;
+const BAMBOO_429_EXTRA_COOLDOWN_MS = 7_000;
 
 /**
- * Allow exactly one retry on 429. Bamboo's "Please wait for 0 seconds"
- * response means the rate-limit window has already reset — a single retry
- * after 2 500 ms succeeds without further cascading. We kept retries disabled
- * previously, but the result was hard offer failures logged to Sentry on
- * every transient 429. One retry is safer: it converts a transient 429 into
- * a successful read rather than a Sentry warning.
+ * Random startup jitter applied before the very first Bamboo request in each
+ * cron run. Prevents the cron's first request from overlapping with the tail
+ * requests of the previous run (which are still inside Bamboo's 1 s window).
  */
-const BAMBOO_BULK_RETRY = { maxRetries: 1, rateLimitDelayMs: 2_500 } as const;
+const BAMBOO_STARTUP_JITTER_MAX_MS = 2_000;
+
+/**
+ * Client-side rate-limiter guard: 1 request per 2 800 ms sliding window.
+ * Acts as a hard backstop on top of the inter-offer sleep.
+ */
+const BAMBOO_BULK_RATE_LIMITER = { maxRequests: 1, windowMs: 2_800 } as const;
+
+/**
+ * No retries on 429 for bulk sync. Retrying a 429 response sends an EXTRA
+ * request when Bamboo's rate-limit window is already saturated — that makes
+ * the cascading 429 problem WORSE, not better. The outer per-offer loop
+ * handles 429s gracefully via BAMBOO_429_EXTRA_COOLDOWN_MS instead.
+ */
+const BAMBOO_BULK_RETRY = { maxRetries: 0 } as const;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -192,9 +210,23 @@ export class BuyerOfferSnapshotSyncService implements IBuyerOfferSnapshotSyncSer
         continue;
       }
 
+      // Startup jitter: delay a random 0–2 s before the first request so
+      // this run's first call cannot overlap with the tail of the previous
+      // cron run still inside Bamboo's server-side rate-limit window.
+      await sleep(Math.floor(Math.random() * BAMBOO_STARTUP_JITTER_MAX_MS));
+
+      let extraCooldownNeeded = false;
+
       for (let i = 0; i < offers.length; i++) {
-        // Respect Bamboo's 1 req/s catalog limit between consecutive calls.
+        // Base inter-offer delay on every call except the first.
         if (i > 0) await sleep(BAMBOO_INTER_OFFER_DELAY_MS);
+
+        // When the PREVIOUS offer returned 429, add an extra cooldown on top
+        // of the base delay so Bamboo's window is guaranteed to have reset.
+        if (extraCooldownNeeded) {
+          await sleep(BAMBOO_429_EXTRA_COOLDOWN_MS);
+          extraCooldownNeeded = false;
+        }
 
         const offer = offers[i]!;
         const offerId = offer.external_offer_id!.trim();
@@ -217,12 +249,23 @@ export class BuyerOfferSnapshotSyncService implements IBuyerOfferSnapshotSyncSer
 
           updated++;
         } catch (err) {
+          const errMsg = err instanceof Error ? err.message : String(err);
+          const is429 = errMsg.includes('429');
+
           logger.warn('Bamboo live quote failed for offer', {
             requestId,
             offerRowId: offer.id,
             externalOfferId: offerId,
-            error: err instanceof Error ? err.message : String(err),
+            error: errMsg,
           });
+
+          if (is429) {
+            // Schedule extra cooldown before the next offer so the rate-limit
+            // window fully resets. Not applied here but deferred to the top of
+            // the next iteration so it stacks correctly with the base delay.
+            extraCooldownNeeded = true;
+          }
+
           failed++;
         }
       }
