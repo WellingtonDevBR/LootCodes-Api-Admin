@@ -371,29 +371,33 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
     );
     const existingHashes = new Set(existingRows.map(r => r.raw_key_hash));
 
-    let uploaded = 0;
+    // Separate new keys from duplicates
+    const newEntries: Array<{ key: string; hash: string }> = [];
     let duplicates = 0;
-
     for (let i = 0; i < rawKeys.length; i++) {
-      const key = rawKeys[i];
-      const hash = hashes[i];
-
-      if (existingHashes.has(hash)) {
+      if (existingHashes.has(hashes[i])) {
         duplicates++;
-        continue;
+      } else {
+        newEntries.push({ key: rawKeys[i], hash: hashes[i] });
       }
+    }
 
-      try {
-        const encrypted = await SecureKeyManager.encrypt(key);
-
-        await db.insert('product_keys', {
+    // Encrypt new keys in parallel chunks to avoid overwhelming the event loop
+    const ENCRYPT_CHUNK = 50;
+    const rows: Record<string, unknown>[] = [];
+    for (let c = 0; c < newEntries.length; c += ENCRYPT_CHUNK) {
+      const chunk = newEntries.slice(c, c + ENCRYPT_CHUNK);
+      const encryptedChunk = await Promise.all(chunk.map((e) => SecureKeyManager.encrypt(e.key)));
+      for (let j = 0; j < chunk.length; j++) {
+        const enc = encryptedChunk[j];
+        rows.push({
           variant_id: body.variant_id,
-          encrypted_key: encrypted.encrypted,
-          encryption_iv: encrypted.iv,
-          encryption_salt: encrypted.salt,
-          encryption_key_id: encrypted.keyId,
+          encrypted_key: enc.encrypted,
+          encryption_iv: enc.iv,
+          encryption_salt: enc.salt,
+          encryption_key_id: enc.keyId,
           encryption_version: 'aes-256-gcm',
-          raw_key_hash: hash,
+          raw_key_hash: chunk[j].hash,
           key_state: 'available',
           is_used: false,
           created_by: adminUserId,
@@ -403,10 +407,21 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
           marketplace_eligible: body.marketplace_eligible ?? true,
           allowed_seller_provider_account_ids: body.allowed_seller_provider_account_ids ?? null,
         });
-        uploaded++;
+      }
+    }
+
+    // Bulk-insert all prepared rows in one DB round-trip (or chunked at 500 for safety)
+    const INSERT_CHUNK = 500;
+    let uploaded = 0;
+    for (let c = 0; c < rows.length; c += INSERT_CHUNK) {
+      const chunk = rows.slice(c, c + INSERT_CHUNK);
+      try {
+        await db.insertMany('product_keys', chunk);
+        uploaded += chunk.length;
       } catch (err) {
-        logger.error('Failed to encrypt/insert key', err as Error, {
-          keyIndex: i,
+        logger.error('Bulk key insert failed', err as Error, {
+          chunkStart: c,
+          chunkSize: chunk.length,
           variant_id: body.variant_id,
         });
       }
