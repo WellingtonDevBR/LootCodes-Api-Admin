@@ -66,13 +66,14 @@ export class SellerPricingService implements ISellerPricingService {
    * Converts a desired NET payout (what the seller receives) to the GROSS price
    * the buyer sees on the marketplace.
    *
-   * When `fixedFeeCents` is provided the formula is exact and no API call is made:
+   * When `fixedFeeCents` is provided the formula is used:
    *   gross = ceil((net + fixedFee) / (1 - commission))
    *
-   * When only `configCommissionPercent` is known (no fixed fee) we fall back to
-   * `S_calculatePrice` to let the marketplace account for any hidden per-sale fees.
-   * The API call is a last resort — it consumes rate-limit quota and must not be
-   * called in a per-listing loop when the fee structure is already configured.
+   * When `fixedFeeCents` is omitted (e.g. NET pricing model adapters like Eneba),
+   * the marketplace's own price calculator (`S_calculatePrice` / calculateNetPayout)
+   * is called as the authoritative source of truth for fee computation.
+   * Throws if the API is unavailable or returns an invalid result — no formula
+   * fallback, no silent wrong value.
    */
   async reverseNetToGross(
     providerCode: string,
@@ -88,39 +89,34 @@ export class SellerPricingService implements ISellerPricingService {
     const rate = Math.max(0, configCommissionPercent) / 100;
     const fee = Math.max(0, fixedFeeCents ?? 0);
 
-    // When both commission and fixed fee are configured, the math is exact.
-    // Skip the S_calculatePrice API call to avoid consuming rate-limit quota.
     if (fee > 0 || fixedFeeCents != null) {
       return Math.ceil((desiredNetCents + fee) / (1 - rate));
     }
 
-    // No fixed-fee info — call the marketplace calculator for an accurate result.
+    // No fixed fee configured — use the marketplace calculator as the source of truth.
     const adapter = this.registry.getPricingAdapter(providerCode);
-    if (adapter) {
-      try {
-        const roughGross = Math.round(desiredNetCents / (1 - rate));
-        const ctx: PricingContext = {
-          priceCents: roughGross,
-          currency,
-          listingType,
-          externalListingId,
-          externalProductId,
-        };
-        const payout = await adapter.calculateNetPayout(ctx);
-
-        if (payout.netPayoutCents > 0) {
-          const ratio = roughGross / payout.netPayoutCents;
-          return Math.round(desiredNetCents * ratio);
-        }
-      } catch (err) {
-        logger.warn('Adapter-based reverse pricing failed', {
-          providerCode,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
+    if (!adapter) {
+      throw new Error(`reverseNetToGross: no pricing adapter for provider ${providerCode}`);
     }
 
-    return Math.round(desiredNetCents / (1 - rate));
+    const roughGross = Math.round(desiredNetCents / (1 - rate));
+    const ctx: PricingContext = {
+      priceCents: roughGross,
+      currency,
+      listingType,
+      externalListingId,
+      externalProductId,
+    };
+    const payout = await adapter.calculateNetPayout(ctx);
+
+    if (payout.netPayoutCents <= 0) {
+      throw new Error(
+        `reverseNetToGross: calculateNetPayout returned invalid netPayoutCents=${payout.netPayoutCents} for provider ${providerCode}`,
+      );
+    }
+
+    const ratio = roughGross / payout.netPayoutCents;
+    return Math.round(desiredNetCents * ratio);
   }
 
   // ─── Reverse Gross → Seller Price ─────────────────────────────────
@@ -129,11 +125,14 @@ export class SellerPricingService implements ISellerPricingService {
    * Converts a GROSS price (what the buyer pays) to the NET payout the seller
    * receives after marketplace commission and fixed fees.
    *
-   * When `fixedFeeCents` is provided the formula is exact and no API call is made:
+   * When `fixedFeeCents` is provided the formula is used:
    *   net = floor(gross × (1 - commission) - fixedFee)
    *
-   * Falls back to `S_calculatePrice` only when the fixed fee is unknown.
-   * Avoid calling this in a per-listing loop when the fee structure is configured.
+   * When `fixedFeeCents` is omitted (e.g. NET pricing model adapters like Eneba),
+   * the marketplace's own price calculator (`S_calculatePrice` / calculateNetPayout)
+   * is called as the authoritative source of truth.
+   * Throws if the API is unavailable or returns an invalid result — no formula
+   * fallback, no silent wrong value.
    */
   async reverseGrossToSellerPrice(
     providerCode: string,
@@ -149,35 +148,36 @@ export class SellerPricingService implements ISellerPricingService {
     const rate = Math.max(0, configCommissionPercent) / 100;
     const fee = Math.max(0, fixedFeeCents ?? 0);
 
-    // Exact formula — no API call needed when fee structure is fully configured.
     if (fee > 0 || fixedFeeCents != null) {
       return Math.max(0, Math.floor(grossCents * (1 - rate) - fee));
     }
 
-    // No fixed-fee info — call the marketplace calculator for an accurate result.
+    // No fixed fee configured — use the marketplace calculator as the source of truth.
     const adapter = this.registry.getPricingAdapter(providerCode);
-    if (adapter && externalListingId) {
-      try {
-        const ctx: PricingContext = {
-          priceCents: grossCents,
-          currency,
-          listingType,
-          externalListingId,
-          externalProductId,
-        };
-        const payout = await adapter.calculateNetPayout(ctx);
-        if (payout.netPayoutCents > 0) {
-          return payout.netPayoutCents;
-        }
-      } catch (err) {
-        logger.warn('Adapter-based gross→net pricing failed', {
-          providerCode,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
+    if (!adapter) {
+      throw new Error(`reverseGrossToSellerPrice: no pricing adapter for provider ${providerCode}`);
     }
 
-    return Math.round(grossCents * (1 - rate));
+    if (!externalListingId) {
+      throw new Error(`reverseGrossToSellerPrice: externalListingId required for provider ${providerCode} (no fixed fee configured)`);
+    }
+
+    const ctx: PricingContext = {
+      priceCents: grossCents,
+      currency,
+      listingType,
+      externalListingId,
+      externalProductId,
+    };
+    const payout = await adapter.calculateNetPayout(ctx);
+
+    if (payout.netPayoutCents <= 0) {
+      throw new Error(
+        `reverseGrossToSellerPrice: calculateNetPayout returned invalid netPayoutCents=${payout.netPayoutCents} for provider ${providerCode}`,
+      );
+    }
+
+    return payout.netPayoutCents;
   }
 
   // ─── Min Price Enforcement ────────────────────────────────────────

@@ -831,22 +831,19 @@ export class SellerAutoPricingService implements ISellerAutoPricingService {
           observedGrossNetRatio = ownOffer.priceCents / listing.price_cents;
           effectiveMinGross = Math.round(effectiveMin * observedGrossNetRatio);
         } else {
-          // Own offer absent from competitor list — call the marketplace's price
-          // calculator (S_calculatePrice / calculateNetPayout) for an accurate result.
-          // fixedFeeCents is intentionally omitted so the formula is bypassed and
-          // the adapter API is used as the source of truth for fee computation.
-          listingCompareGross = await this.pricingService.reverseNetToGross(
-            providerCode, providerAccountId,
-            listing.price_cents, listing.currency, listing.listing_type as 'key_upload' | 'declared_stock',
-            config.commission_rate_percent,
-            listing.external_listing_id, listing.external_product_id ?? undefined,
-          );
-          effectiveMinGross = await this.pricingService.reverseNetToGross(
-            providerCode, providerAccountId,
-            effectiveMin, listing.currency, listing.listing_type as 'key_upload' | 'declared_stock',
-            config.commission_rate_percent,
-            listing.external_listing_id, listing.external_product_id ?? undefined,
-          );
+          // Our own offer is absent from the competitor snapshot — we have no
+          // accurate GROSS/NET ratio and no safe way to compute one without risking
+          // a mispriced update. Skip this listing so we never push a price derived
+          // from a guess. It will be retried on the next cron tick once Eneba
+          // includes our offer in the competition response again.
+          logger.error('smart-pricing: own offer absent from competitor list for NET pricing model — skipping listing', {
+            requestId,
+            listingId: listing.id,
+            providerCode,
+            externalListingId: listing.external_listing_id,
+          });
+          result.errors++;
+          continue;
         }
       }
 
@@ -858,18 +855,11 @@ export class SellerAutoPricingService implements ISellerAutoPricingService {
 
       const convertGross = async (gross: number): Promise<number> => {
         if (isNetPricingModel && listing.external_listing_id) {
-          // Use observed ratio when available — avoids formula rounding errors.
           if (observedGrossNetRatio !== null && observedGrossNetRatio > 0) {
             return Math.round(gross / observedGrossNetRatio);
           }
-          // Fallback: let S_calculatePrice / calculateNetPayout compute the
-          // accurate NET for this GROSS. fixedFeeCents omitted intentionally.
-          return this.pricingService.reverseGrossToSellerPrice(
-            providerCode, providerAccountId,
-            gross, listing.currency, listing.listing_type as 'key_upload' | 'declared_stock',
-            config.commission_rate_percent,
-            listing.external_listing_id, listing.external_product_id ?? undefined,
-          );
+          // Should be unreachable: we skip the listing when ownOffer is absent.
+          throw new Error(`NET pricing model gross→net conversion has no ratio for listing ${listing.id}`);
         }
         return gross;
       };
