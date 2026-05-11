@@ -28,7 +28,7 @@ let pass = 0;
 let fail = 0;
 
 function ok(label: string): void {
-  console.info(`  ✅ ${label}`);
+  console.warn(`  ✅ ${label}`);
   pass++;
 }
 
@@ -39,7 +39,7 @@ function ko(label: string, err: unknown): void {
 
 // ─── 1. AES crypto round-trip ─────────────────────────────────────────────────
 
-console.info('\n[1] AES-128-ECB round-trip');
+console.warn('\n[1] AES-128-ECB round-trip');
 try {
   const crypto = new WgcardsAesCrypto(TEST_APP_ID);
   const original = JSON.stringify({ appId: TEST_APP_ID, appKey: TEST_APP_KEY });
@@ -56,7 +56,7 @@ try {
 
 // ─── 2. AES key length validation ────────────────────────────────────────────
 
-console.info('\n[2] AES key length validation');
+console.warn('\n[2] AES key length validation');
 try {
   new WgcardsAesCrypto('tooshort');
   ko('should reject short appId', 'no error thrown');
@@ -73,7 +73,7 @@ try {
 
 // ─── 3. Token manager coalescing ─────────────────────────────────────────────
 
-console.info('\n[3] Token manager concurrent refresh coalescing');
+console.warn('\n[3] Token manager concurrent refresh coalescing');
 try {
   let fetchCount = 0;
   const mgr = new WgcardsTokenManager({
@@ -96,7 +96,7 @@ try {
 
 // ─── 4. Token manager initial cache (no fetch needed) ────────────────────────
 
-console.info('\n[4] Token manager: initial cache skips fetch');
+console.warn('\n[4] Token manager: initial cache skips fetch');
 try {
   let fetched = false;
   const mgr = new WgcardsTokenManager({
@@ -115,7 +115,7 @@ try {
 
 // ─── 5. Factory returns null on missing secrets ───────────────────────────────
 
-console.info('\n[5] Factory: null on missing secrets');
+console.warn('\n[5] Factory: null on missing secrets');
 try {
   const buyer = createWgcardsManualBuyer({ secrets: {}, profile: {} });
   if (buyer === null) {
@@ -129,7 +129,7 @@ try {
 
 // ─── 6. Factory constructs successfully with valid creds ─────────────────────
 
-console.info('\n[6] Factory: constructs with valid credentials');
+console.warn('\n[6] Factory: constructs with valid credentials');
 try {
   const buyer = createWgcardsManualBuyer({
     secrets: {
@@ -151,21 +151,22 @@ try {
 // ─── 7. Live sandbox: getToken ────────────────────────────────────────────────
 
 if (LIVE) {
-  console.info('\n[7] LIVE: getToken → getStock → getAccount');
+  console.warn('\n[7] LIVE: getToken → getStock → getAccount');
   try {
     const crypto = new WgcardsAesCrypto(TEST_APP_ID);
     let capturedToken: string | null = null;
+    const clientRef: { instance: WgcardsHttpClient | null } = { instance: null };
 
     const tokenManager = new WgcardsTokenManager({
       initialCache: null,
       onTokenRefreshed: (entry) => {
         capturedToken = entry.accessToken;
       },
-      fetchToken: async () => httpClient.getToken(TEST_APP_KEY),
+      fetchToken: async () => clientRef.instance!.getToken(TEST_APP_KEY),
     });
 
-    let httpClient: WgcardsHttpClient;
-    httpClient = new WgcardsHttpClient(TEST_BASE_URL, TEST_APP_ID, TEST_ACCOUNT_ID, crypto, tokenManager);
+    const httpClient = new WgcardsHttpClient(TEST_BASE_URL, TEST_APP_ID, TEST_ACCOUNT_ID, crypto, tokenManager);
+    clientRef.instance = httpClient;
 
     const token = await tokenManager.getToken();
     if (token && token.length > 0) {
@@ -189,11 +190,11 @@ if (LIVE) {
     ko('LIVE getToken/getAccount/getStock', err);
   }
 } else {
-  console.info('\n[7] LIVE tests skipped — set WGCARDS_LIVE=1 to run against sandbox');
+  console.warn('\n[7] LIVE tests skipped — set WGCARDS_LIVE=1 to run against sandbox');
 }
 
 // ─── Summary ──────────────────────────────────────────────────────────────────
 
-console.info(`\n${'─'.repeat(50)}`);
-console.info(`Smoke test complete: ${pass} passed, ${fail} failed`);
+console.warn(`\n${'─'.repeat(50)}`);
+console.warn(`Smoke test complete: ${pass} passed, ${fail} failed`);
 if (fail > 0) process.exit(1);

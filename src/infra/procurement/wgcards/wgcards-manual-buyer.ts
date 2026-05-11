@@ -22,7 +22,6 @@ import { WgcardsTokenManager, type WgcardsCachedToken } from './wgcards-token-ma
 import {
   WgcardsHttpClient,
   type WgcardsAccountData,
-  type WgcardsStockEntry,
   type WgcardsBuyCardData,
   type WgcardsPlaceOrderRequest,
 } from './wgcards-http-client.js';
@@ -183,24 +182,27 @@ export function createWgcardsManualBuyer(params: {
   // Wire token manager — the `fetchToken` lambda closes over the HTTP client
   // that the token manager itself is passed to. To avoid a circular dep, we
   // create the client first with a placeholder, then set it up via a wrapper.
-  let httpClient: WgcardsHttpClient;
+  // Wire token manager — the `fetchToken` lambda closes over the HTTP client.
+  // We use a wrapper object so the reference can be updated after construction
+  // without triggering a circular-dependency or prefer-const violation.
+  const clientRef: { instance: WgcardsHttpClient | null } = { instance: null };
 
   const tokenManager = new WgcardsTokenManager({
     initialCache: params.initialTokenCache ?? null,
     onTokenRefreshed: params.onTokenRefreshed,
     fetchToken: async () => {
-      // httpClient is assigned below before any API call can be made.
-      return httpClient.getToken(appKey.trim());
+      return clientRef.instance!.getToken(appKey.trim());
     },
   });
 
-  httpClient = new WgcardsHttpClient(
+  const httpClient = new WgcardsHttpClient(
     baseUrl,
     appId.trim(),
     accountId.trim(),
     crypto,
     tokenManager,
   );
+  clientRef.instance = httpClient;
 
   return new WgcardsManualBuyer(httpClient, appId.trim());
 }

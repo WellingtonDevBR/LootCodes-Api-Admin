@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
+import { describe, expect, it, vi, afterEach } from 'vitest';
 import { WgcardsAesCrypto } from '../src/infra/procurement/wgcards/wgcards-aes-crypto.js';
 import { WgcardsTokenManager } from '../src/infra/procurement/wgcards/wgcards-token-manager.js';
 import { WgcardsHttpClient } from '../src/infra/procurement/wgcards/wgcards-http-client.js';
