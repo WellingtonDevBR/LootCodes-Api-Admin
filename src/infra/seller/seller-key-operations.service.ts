@@ -267,15 +267,42 @@ export class SellerKeyOperationsService implements ISellerKeyOperationsPort {
     const keysRestocked = await this.restockProvisionedKeys(reservation.id, provisionsToReturn);
 
     const totals = await this.computeCumulativeRefundFraction(reservation.id);
-    const isFinalRefund = !!totals.fraction
-      && totals.fraction.numerator >= totals.fraction.denominator;
+
+    // Guard against the deltaAmount=0 bug: when restockProvisionedKeys returns 0 (race condition
+    // where the CANCEL arrived before provisions were flipped from 'delivered' → 'refunded'),
+    // totals.refunded stays 0 → fraction.numerator = 0 → targetCumulativeAmount = 0 → no debit.
+    // In that case, use the *requested* cancel count (provisionsToReturn.length) as the effective
+    // numerator so the debit transaction is always recorded for a genuine CANCEL.
+    const effectiveNumerator =
+      totals.refunded === 0 && keysRestocked === 0 && provisionsToReturn.length > 0
+        ? provisionsToReturn.length
+        : totals.refunded;
+    const effectiveFraction: { numerator: number; denominator: number } | undefined =
+      totals.provisioned > 0
+        ? { numerator: Math.min(effectiveNumerator, totals.provisioned), denominator: totals.provisioned }
+        : totals.fraction;
+
+    const isFinalRefund = !effectiveFraction || effectiveFraction.numerator >= effectiveFraction.denominator;
+
+    if (keysRestocked === 0 && provisionsToReturn.length > 0) {
+      logger.warn(
+        'Post-provision return: restock returned 0 despite requested provisions — using requested count for refund ledger',
+        {
+          reservationId: reservation.id,
+          requestedCount: provisionsToReturn.length,
+          totalDelivered: totalDeliveredThisCall,
+          providerCode,
+          externalOrderId,
+        },
+      );
+    }
 
     const { orderId } = await this.applyMarketplaceRefundLedger(
       reservation,
       providerCode,
       externalOrderId,
       reason,
-      { refundFraction: totals.fraction, refundEventId },
+      { refundFraction: effectiveFraction, refundEventId },
     );
 
     if (isFinalRefund) {
@@ -298,7 +325,7 @@ export class SellerKeyOperationsService implements ISellerKeyOperationsPort {
         keysReleased: keysRestocked,
         partial,
         ...(partial
-          ? { totalDelivered: totals.provisioned, totalRefunded: totals.refunded }
+          ? { totalDelivered: totals.provisioned, totalRefunded: effectiveNumerator }
           : {}),
       },
     });
@@ -311,7 +338,7 @@ export class SellerKeyOperationsService implements ISellerKeyOperationsPort {
         : `Marketplace return — keys restocked (${providerCode})`,
       message: partial
         ? `${providerCode} partially refunded order ${externalOrderId}: ${keysRestocked} key(s) restocked this notification ` +
-          `(${totals.refunded}/${totals.provisioned} cumulative). Reservation ${reservation.id} kept as provisioned; ledger updated.`
+          `(${effectiveNumerator}/${totals.provisioned} cumulative). Reservation ${reservation.id} kept as provisioned; ledger updated.`
         : `${providerCode} returned order ${externalOrderId} after provision; ${keysRestocked} key(s) set back to available inventory. ` +
           `Reservation ${reservation.id} cancelled and ledger updated.`,
       metadata: {
@@ -323,7 +350,7 @@ export class SellerKeyOperationsService implements ISellerKeyOperationsPort {
         marketplace_order_id: orderId,
         partial,
         ...(partial
-          ? { total_delivered: totals.provisioned, total_refunded: totals.refunded }
+          ? { total_delivered: totals.provisioned, total_refunded: effectiveNumerator }
           : {}),
       },
     });
@@ -356,7 +383,7 @@ export class SellerKeyOperationsService implements ISellerKeyOperationsPort {
       keysRestocked,
       externalOrderId,
       marketplaceOrderId: orderId,
-      cumulativeRefunded: totals.refunded,
+      cumulativeRefunded: effectiveNumerator,
       cumulativeProvisioned: totals.provisioned,
       isFinalRefund,
     });
