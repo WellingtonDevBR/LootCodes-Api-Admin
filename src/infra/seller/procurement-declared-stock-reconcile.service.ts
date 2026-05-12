@@ -55,7 +55,7 @@ interface PendingStockUpdate {
   readonly externalId: string;
   /** qty > 0 = declare; qty === 0 = disable */
   readonly qty: number;
-  readonly disableReason?: 'no_offer' | 'no_credit' | 'uneconomic';
+  readonly disableReason?: 'no_offer' | 'no_credit' | 'uneconomic' | 'internal_stock_only';
   /**
    * When set, the listing price was below the procurement cost floor and must
    * be corrected on the marketplace BEFORE declaring stock. The flush phase
@@ -148,6 +148,26 @@ export class ProcurementDeclaredStockReconcileService implements IProcurementDec
           pending.push({ listingId: listing.id, externalId: listing.external_listing_id, qty: internalQty });
           pendingByProvider.set(account.provider_code, pending);
           updated++;
+        }
+        continue;
+      }
+
+      // When pricing_overrides.disable_jit_on_stockout is true, the listing should
+      // never switch to JIT procurement — disable cleanly (no price change) instead.
+      // This is for listings intentionally priced below JIT cost (e.g. selling owned
+      // inventory at a specific price without the system auto-correcting to JIT floor).
+      const disableJitOnStockout = listing.pricing_overrides?.disable_jit_on_stockout === true;
+      if (disableJitOnStockout) {
+        logger.info('Reconcile: internal-stock-only listing has no keys — disabling without JIT switch', {
+          requestId, listingId: listing.id, providerCode: account.provider_code,
+        });
+        if (!dryRun) {
+          const pending = pendingByProvider.get(account.provider_code) ?? [];
+          pending.push({ listingId: listing.id, externalId: listing.external_listing_id, qty: 0, disableReason: 'internal_stock_only' });
+          pendingByProvider.set(account.provider_code, pending);
+          updated++;
+        } else {
+          skipped++;
         }
         continue;
       }

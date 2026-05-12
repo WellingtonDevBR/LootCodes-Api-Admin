@@ -467,6 +467,25 @@ export class SellerStockSyncService implements ISellerStockSyncService {
     }
 
     // No internal keys + follows_provider — consult buyer credit.
+    // But first: if this listing is flagged as internal-stock-only, disable cleanly
+    // without switching to JIT. This prevents the system from raising the price to a
+    // JIT-profitable floor when the user is intentionally selling below JIT cost.
+    const disableJitOnStockout = listing.pricing_overrides?.disable_jit_on_stockout === true;
+    if (disableJitOnStockout) {
+      logger.info('Stock-sync: internal-stock-only listing has no keys — disabling without JIT switch', {
+        requestId, listingId: listing.id, providerCode: listing.provider_code,
+      });
+      if (listing.declared_stock === 0) {
+        await this.db.update('seller_listings', { id: listing.id }, {
+          last_synced_at: new Date().toISOString(),
+          error_message: null,
+        });
+        return;
+      }
+      push({ listingId: listing.id, externalId, qty: 0, disableReason: 'internal_stock_only' });
+      return;
+    }
+
     const baseConfig = providerSellerConfig ?? parseSellerConfig({});
     const merged = mergeSellerListingPricingOverrides(baseConfig, listing.pricing_overrides);
 
