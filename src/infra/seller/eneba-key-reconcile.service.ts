@@ -13,6 +13,9 @@
  * Pass 2 — Orphaned provisions (our DB shows `delivered`, Eneba says not SOLD)
  *   → Load delivered provisions within LOOKBACK_DAYS whose reservation is
  *     still `provisioned` (CANCEL never processed correctly).
+ *   → ONLY verifiable provisions (those with a stored raw_key_hash) are checked.
+ *     Provisions without a hash cannot be matched against Eneba's returned key values
+ *     and are skipped with an info log to prevent false-positive restocks.
  *   → Batch-query Eneba `S_keys(ordersNumbers: [...])` per provision's
  *     external_order_id.
  *   → Provisions whose key Eneba returns as SOLD/REPORTED = delivered correctly
@@ -165,6 +168,21 @@ export class EnebaKeyReconcileService implements IEnebaKeyReconcileService {
       if (hash) hashToProvision.set(hash, prov);
     }
 
+    // Pass 2 can only verify provisions whose key has a stored hash.
+    // Keys without raw_key_hash cannot be matched against Eneba returned values — they
+    // would always appear "orphaned" regardless of their actual state, causing false restocks.
+    const provisionIdsWithHash = new Set(Array.from(hashToProvision.values()).map((p) => p.id));
+    const verifiableProvisions = deliveredProvisions.filter((p) => provisionIdsWithHash.has(p.id));
+    const unverifiableCount = deliveredProvisions.length - verifiableProvisions.length;
+    if (unverifiableCount > 0) {
+      logger.info('[eneba-key-reconcile] Provisions skipped — key has no raw_key_hash, cannot verify against Eneba', {
+        requestId,
+        listingId: listing.id,
+        skippedCount: unverifiableCount,
+        totalDelivered: deliveredProvisions.length,
+      });
+    }
+
     // ── Pass 1: REPORTED keys (query by stockId, state=REPORTED) ──────
     const { keys: reportedKeys } = await adapter.getAllStockKeys(listing.external_listing_id, 'REPORTED');
     sub.reported_keys_found = reportedKeys.length;
@@ -185,7 +203,6 @@ export class EnebaKeyReconcileService implements IEnebaKeyReconcileService {
       const dbKey = await this.db.queryOne<{ id: string; key_state: string }>('product_keys', {
         select: 'id, key_state',
         filter: { raw_key_hash: hash },
-        maybeSingle: true,
       });
       if (!dbKey) {
         logger.warn('[eneba-key-reconcile] Reported key not found in product_keys by hash', {
@@ -203,14 +220,14 @@ export class EnebaKeyReconcileService implements IEnebaKeyReconcileService {
       }
     }
 
-    if (deliveredProvisions.length === 0) return sub;
+    if (verifiableProvisions.length === 0) return sub;
 
     // ── Pass 2: Orphaned provisions (delivered here, not SOLD on Eneba) ─
-    // Collect all external_order_ids from our provisioned reservations.
-    // reservation_id is nullable on seller_key_provisions; skip null entries.
+    // Only check verifiable provisions (those with a known raw_key_hash).
+    // Provisions without a hash are excluded above to prevent false-positive restocks.
     const externalOrderIds = [
       ...new Set(
-        deliveredProvisions
+        verifiableProvisions
           .map((p) => reservationMap.get(p.reservation_id)?.external_order_id)
           .filter((id): id is string => !!id),
       ),
@@ -255,8 +272,8 @@ export class EnebaKeyReconcileService implements IEnebaKeyReconcileService {
       }
     }
 
-    // Orphaned = delivered on our side but NOT confirmed as SOLD or REPORTED on Eneba
-    const orphanedProvisions = deliveredProvisions.filter((p) => !confirmedProvisionIds.has(p.id));
+    // Orphaned = verifiable provisions NOT confirmed as SOLD or REPORTED on Eneba
+    const orphanedProvisions = verifiableProvisions.filter((p) => !confirmedProvisionIds.has(p.id));
     sub.orphaned_provisions_found = orphanedProvisions.length;
 
     if (orphanedProvisions.length === 0) return sub;
@@ -366,11 +383,10 @@ export class EnebaKeyReconcileService implements IEnebaKeyReconcileService {
       ? `Eneba buyer report: ${reportReason}`
       : 'Eneba buyer report (no reason provided)';
 
-    // Fetch current state first to avoid a no-op update and get log context
+    // Fetch current state to skip no-op updates and get log context
     const dbKey = await this.db.queryOne<{ id: string; key_state: string }>('product_keys', {
       select: 'id, key_state',
       filter: { id: keyId },
-      maybeSingle: true,
     });
 
     if (!dbKey || dbKey.key_state === 'faulty') return;
@@ -415,15 +431,15 @@ export class EnebaKeyReconcileService implements IEnebaKeyReconcileService {
       ],
     });
 
-    // Resolve provider_code for each unique account — single query per account
+    // Resolve provider_code for all unique accounts in one batch query
     const accountIds = [...new Set(rows.map((r) => r.provider_account_id))];
     const accountMap = new Map<string, string>();
-    for (const accountId of accountIds) {
-      const account = await this.db.queryOne<{ provider_code: string }>('provider_accounts', {
-        select: 'provider_code',
-        filter: { id: accountId },
+    if (accountIds.length > 0) {
+      const accounts = await this.db.query<{ id: string; provider_code: string }>('provider_accounts', {
+        select: 'id, provider_code',
+        in: [['id', accountIds]],
       });
-      if (account) accountMap.set(accountId, account.provider_code);
+      for (const a of accounts) accountMap.set(a.id, a.provider_code);
     }
 
     return rows
