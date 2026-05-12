@@ -70,9 +70,7 @@ export class HandleDeclaredStockReserveUseCase {
         }
 
         if (listing.status !== 'active') {
-          // Listing being deactivated mid-RESERVE is rare but expected when
-          // an admin or the reconcile cron has just taken it offline.
-          logger.info('Listing not active, rejecting reservation', {
+          logger.warn('Listing not active, rejecting reservation', {
             auctionId, orderId, status: listing.status,
           });
           return { success: false, orderId, reason: 'listing_inactive' };
@@ -167,7 +165,7 @@ export class HandleDeclaredStockReserveUseCase {
           // unrecognized failure — those are real bugs.
           const isExpectedNoStock = /INSUFFICIENT_STOCK|Key claim failed/.test(claimMsg);
           if (isExpectedNoStock) {
-            logger.info('No keys available for marketplace reserve — propagating variant unavailability', {
+            logger.warn('No keys available for marketplace reserve — propagating variant unavailability', {
               orderId, auctionId, variantId: listing.variant_id, error: claimMsg,
             });
           } else {

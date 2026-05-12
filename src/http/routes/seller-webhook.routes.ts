@@ -166,26 +166,15 @@ export async function sellerWebhookRoutes(app: FastifyInstance) {
         });
 
         if (!result.success) {
-          // Production reference (Sentry LOOTCODES-API-T / -S): every
-          // success:false here was double-reported — once via logger.warn
-          // (auto-forwarded) and once via Sentry.captureMessage. The vast
-          // majority of these failures are normal market behavior:
-          //   - `out_of_stock`: no buyer-capable provider has stock at our floor
-          //   - `listing_inactive` / `listing_not_found`: race with reconcile
-          //   - `no_auctions`: caller-side payload weirdness
-          // Use case has already logged at the right level for each case.
-          // Only surface to Sentry as `warn` for `unexpected_error` — true bugs.
+          // Every success:false response is a sale Eneba couldn't complete — always
+          // warn to Sentry so we have a full audit trail of why. Eneba counts these
+          // against the listing's failure threshold and disables auctions when too
+          // many accumulate, so we MUST be able to see every failure and its reason.
           const reason = result.reason ?? 'unexpected_error';
-          if (reason === 'unexpected_error') {
-            logger.warn('Eneba RESERVE returned failure (unexpected) — responding success:false', {
-              orderId, originalOrderId, reason,
-              auctionIds: auctions?.map((a) => a.auctionId),
-            });
-          } else {
-            logger.info('Eneba RESERVE responding success:false (expected business outcome)', {
-              orderId, originalOrderId, reason,
-            });
-          }
+          logger.warn('Eneba RESERVE responding success:false', {
+            orderId, originalOrderId, reason,
+            auctionIds: auctions?.map((a) => a.auctionId),
+          });
         }
 
         return reply.send(buildReservationResponse(result.orderId, result.success));
@@ -200,10 +189,9 @@ export async function sellerWebhookRoutes(app: FastifyInstance) {
         });
 
         if (!result.success || !result.auctions) {
-          // The use case already logged at the appropriate severity (warn for expected
-          // replacement-RESERVE-failed cases, error for genuine delivery failures).
-          // Log info here to record the outbound response without double-counting in Sentry.
-          logger.info('Eneba PROVIDE responding success:false', { orderId, originalOrderId });
+          // Always warn to Sentry — a failed PROVIDE means the buyer paid but we
+          // couldn't deliver. Eneba counts these against the listing failure threshold.
+          logger.warn('Eneba PROVIDE responding success:false', { orderId, originalOrderId });
           return reply.send(buildProvisionResponse(result.orderId, result.success));
         }
 
