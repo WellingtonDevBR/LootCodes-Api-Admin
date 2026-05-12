@@ -256,12 +256,10 @@ export class SellerAutoPricingService implements ISellerAutoPricingService {
         let avgUsdCents = costEntry?.avg_cost_cents ?? 0;
 
         // JIT / declared_stock fallback: no physical keys → use buyer offer price.
-        // Skip for internal-stock-only listings (disable_jit_on_stockout=true): when
-        // their keys are temporarily all seller_reserved, we must not inflate cost_basis
-        // with provider offer prices — that would trigger a floor-correction price raise
-        // on the very next pricing tick, undoing the user's intentional below-JIT price.
-        const isInternalStockOnly = listing.pricing_overrides?.disable_jit_on_stockout === true;
-        if (avgUsdCents === 0 && listing.listing_type === 'declared_stock' && !isInternalStockOnly) {
+        // The pricing cron owns profitability — if JIT offer cost is available, use it
+        // so the price floor is computed correctly and the price is raised before the
+        // stock cron runs.
+        if (avgUsdCents === 0 && listing.listing_type === 'declared_stock') {
           avgUsdCents = offerCostMap.get(listing.variant_id) ?? 0;
         }
 
