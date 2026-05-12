@@ -86,20 +86,28 @@ export class ListingHealthService implements IListingHealthPort {
       const currentSuccess = (listing[successCol] as number) ?? 0;
       const currentFailure = (listing[failureCol] as number) ?? 0;
 
+      // out_of_stock is a transient market event (JIT above margin gate, provider no stock).
+      // These are pricing-level events, not listing health issues — smart pricing handles
+      // repricing when costs exceed the margin gate. Counting them in health metrics causes:
+      //   1. Circuit breaker: auto-pause after 2 consecutive market-price spikes
+      //   2. Log-ratio monitor: spurious warnings/pauses for perfectly healthy listings
+      // Solution: skip all counter increments for out_of_stock. Successes and genuine errors
+      // (listing_not_found, listing_misconfigured, unexpected_error) are still tracked.
+      const isTransientOutOfStock = !success && failureReason === 'out_of_stock';
+      if (isTransientOutOfStock) {
+        // Only reset the consecutive counter on explicit success; leave unchanged for
+        // out_of_stock so a burst of market failures doesn't mask a later genuine error.
+        return;
+      }
+
       const newSuccess = success ? currentSuccess + 1 : currentSuccess;
       const newFailure = success ? currentFailure : currentFailure + 1;
 
       const prevConsecutive = listing.reservation_consecutive_failures ?? 0;
-
-      // out_of_stock is a transient market event (JIT above margin gate, provider no stock).
-      // It must NOT increment the consecutive-failure counter — doing so causes listings to
-      // auto-pause on perfectly normal price fluctuations. Success resets the counter; all
-      // other genuine errors (listing_not_found, unexpected_error, etc.) increment it.
-      const isTransientOutOfStock =
-        callbackType === 'reservation' && !success && failureReason === 'out_of_stock';
+      // Success resets the consecutive counter; genuine errors increment it.
       const newReservationConsecutive =
         callbackType === 'reservation'
-          ? (success ? 0 : isTransientOutOfStock ? prevConsecutive : prevConsecutive + 1)
+          ? (success ? 0 : prevConsecutive + 1)
           : prevConsecutive;
 
       const updatePayload: Record<string, unknown> = {
