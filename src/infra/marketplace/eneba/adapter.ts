@@ -650,6 +650,27 @@ export class EnebaAdapter
         });
         failed += numericStatuses.length;
       }
+
+      // Re-enable auctions after setting stock. P_updateDeclaredStock sets the
+      // quantity but does NOT toggle the enabled flag — so auctions that were
+      // previously disabled (qty=0 run set enabled:false) stay invisible on Eneba
+      // until explicitly re-enabled. Mirror the batchUpdatePrices pattern which
+      // always includes enabled:true for the same reason.
+      try {
+        const enableItems = numericStatuses.map((s) => ({
+          auctionId: s.auctionId,
+          enabled: true,
+        }));
+        await this.gqlClient.execute<EnebaUpdateAuctionPriceData>(
+          UPDATE_AUCTION_PRICE_MUTATION,
+          { items: enableItems },
+        );
+      } catch (err) {
+        logger.warn('Batch P_updateAuctionPrice(enabled:true) failed after stock declaration', {
+          count: numericStatuses.length,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
 
     return { updated, failed };
