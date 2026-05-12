@@ -210,7 +210,7 @@ export class HandleDigisellerDeliveryUseCase {
           externalListingId, invoiceId, variantId: listing.variant_id,
           error: claimErr instanceof Error ? claimErr.message : String(claimErr),
         });
-        this.health.updateHealthCounters(externalListingId, 'reservation', false).catch((err: unknown) => {
+        this.health.updateHealthCounters(externalListingId, 'reservation', false, 'out_of_stock').catch((err: unknown) => {
           logger.warn('Digiseller updateHealthCounters failed (out-of-stock path)', err as Error, {
             externalListingId,
           });

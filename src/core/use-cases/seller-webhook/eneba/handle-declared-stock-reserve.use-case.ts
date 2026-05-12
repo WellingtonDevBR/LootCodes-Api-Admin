@@ -176,7 +176,10 @@ export class HandleDeclaredStockReserveUseCase {
             });
           }
 
-          await this.healthPort.updateHealthCounters(auctionId, 'reservation', false);
+          await this.healthPort.updateHealthCounters(
+            auctionId, 'reservation', false,
+            isExpectedNoStock ? 'out_of_stock' : undefined,
+          );
 
           await this.unavailability.propagateVariantUnavailable(
             listing.variant_id,

@@ -61,6 +61,7 @@ export class ListingHealthService implements IListingHealthPort {
     externalListingId: string,
     callbackType: CallbackType,
     success: boolean,
+    failureReason?: string,
   ): Promise<void> {
     try {
       const listing = await this.db.queryOne<ListingHealthRow>('seller_listings', {
@@ -89,8 +90,17 @@ export class ListingHealthService implements IListingHealthPort {
       const newFailure = success ? currentFailure : currentFailure + 1;
 
       const prevConsecutive = listing.reservation_consecutive_failures ?? 0;
+
+      // out_of_stock is a transient market event (JIT above margin gate, provider no stock).
+      // It must NOT increment the consecutive-failure counter — doing so causes listings to
+      // auto-pause on perfectly normal price fluctuations. Success resets the counter; all
+      // other genuine errors (listing_not_found, unexpected_error, etc.) increment it.
+      const isTransientOutOfStock =
+        callbackType === 'reservation' && !success && failureReason === 'out_of_stock';
       const newReservationConsecutive =
-        callbackType === 'reservation' ? (success ? 0 : prevConsecutive + 1) : prevConsecutive;
+        callbackType === 'reservation'
+          ? (success ? 0 : isTransientOutOfStock ? prevConsecutive : prevConsecutive + 1)
+          : prevConsecutive;
 
       const updatePayload: Record<string, unknown> = {
         [`${callbackType}_success_count`]: newSuccess,
