@@ -190,10 +190,12 @@ export class SupabaseAdminOrderRepository implements IAdminOrderRepository {
     const limit = dto.limit ?? DEFAULT_PAGE_LIMIT;
     const offset = (page - 1) * limit;
 
-    const queryOpts: import('../../core/ports/database.port.js').QueryOptions = {
+    // Build filter options without a hard limit so queryAll can page through
+    // all matching rows in 1000-row chunks. We apply limit/offset in-memory
+    // afterwards so the caller receives the expected slice.
+    const queryOpts: Omit<import('../../core/ports/database.port.js').QueryOptions, 'range' | 'limit'> = {
       select: 'id, order_number, status, total_amount, currency, delivery_email, contact_email, guest_email, created_at, updated_at, order_channel, payment_provider, provider_fee, net_amount, marketplace_pricing, quantity, order_items(product_id, variant_id, quantity, unit_price, total_price, products(name), product_variants(face_value, sku, product_regions(name)))',
       order: { column: 'created_at', ascending: false },
-      limit,
     };
 
     const eqFilters: Array<[string, unknown]> = [];
@@ -205,7 +207,9 @@ export class SupabaseAdminOrderRepository implements IAdminOrderRepository {
       queryOpts.lt = [...(queryOpts.lt ?? []), ['created_at', dto.to]];
     }
 
-    const allOrders = await this.db.query<Record<string, unknown>>('orders', queryOpts);
+    // queryAll paginates through PostgREST in 1000-row chunks automatically,
+    // ensuring we never hit the server-side row cap when querying a date range.
+    const allOrders = await this.db.queryAll<Record<string, unknown>>('orders', queryOpts);
     const sliced = allOrders.slice(offset, offset + limit);
 
     const orderIds = sliced.map(o => o.id as string);
