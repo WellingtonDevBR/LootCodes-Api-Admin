@@ -343,24 +343,37 @@ export class SellerAutoPricingService implements ISellerAutoPricingService {
       const providerAccountId = providerListings[0].provider_account_id;
       const baseConfig = await this.pricingService.getProviderConfig(providerAccountId);
 
-      // For Eneba, pull real priceUpdateQuota.quota per auction from S_stock.
-      // This gives us the authoritative free-slot count — more reliable than our
-      // local price_change_timestamps counter which resets on server restarts.
-      // Map: externalListingId → free changes remaining this window.
+      // For Eneba, pull real priceUpdateQuota.quota and the authoritative GROSS price
+      // per auction from S_stock. Quota gives us the authoritative free-slot count.
+      // Gross price is needed for NET pricing model ratio computation — especially for
+      // declared_stock listings with 0 stock, which Eneba hides from S_competition
+      // results (so our own offer won't appear in the competitor list).
+      // Maps: externalListingId → value
       const realQuotaByListing = new Map<string, number>();
+      const grossPriceByListing = new Map<string, number>();
       const adapterAsUnknown = listingAdapter as unknown as Record<string, unknown>;
       if (typeof adapterAsUnknown?.fetchAllStock === 'function') {
         try {
-          const stockNodes = await (adapterAsUnknown as unknown as { fetchAllStock(): Promise<Array<{ id: string; priceUpdateQuota?: { quota: number } | null }>> }).fetchAllStock();
+          const stockNodes = await (adapterAsUnknown as unknown as {
+            fetchAllStock(): Promise<Array<{
+              id: string;
+              price?: { amount: number; currency: string } | null;
+              priceUpdateQuota?: { quota: number } | null;
+            }>>;
+          }).fetchAllStock();
           for (const node of stockNodes) {
             const quota = node.priceUpdateQuota?.quota;
             if (quota != null) realQuotaByListing.set(node.id, quota);
+            const grossCents = node.price?.amount;
+            if (grossCents != null && grossCents > 0) grossPriceByListing.set(node.id, grossCents);
           }
-          logger.info('Synced real price quota from S_stock', {
-            requestId, providerCode, listingCount: realQuotaByListing.size,
+          logger.info('Synced real price quota and gross prices from S_stock', {
+            requestId, providerCode,
+            quotaCount: realQuotaByListing.size,
+            grossPriceCount: grossPriceByListing.size,
           });
         } catch (err) {
-          logger.warn('Failed to fetch S_stock for quota sync; falling back to timestamp counter', {
+          logger.warn('Failed to fetch S_stock for quota/gross-price sync; falling back to timestamp counter', {
             requestId, providerCode, error: err instanceof Error ? err.message : String(err),
           });
         }
@@ -628,22 +641,39 @@ export class SellerAutoPricingService implements ISellerAutoPricingService {
           }
 
           // For NET pricing models, derive the GROSS/NET ratio from our own offer in
-          // the competitor list. This is more accurate than any formula because it
-          // uses the marketplace's own computed buyer price for our listing.
+          // the competitor list. This is the most accurate source because it uses
+          // the marketplace's own computed buyer price for our listing.
+          //
+          // Fallback (no formula): use the gross price from S_stock (fetchAllStock).
+          // This handles declared_stock=0 listings which Eneba hides from S_competition
+          // results — they still appear in S_stock with the correct GROSS price.
           let netModelGrossNetRatio: number | null = null;
           if (isNetPricingModel && listing.external_listing_id && config.smart_pricing_enabled) {
             const ownOffer = competitors.find((c) => c.isOwnOffer === true);
             if (ownOffer && ownOffer.priceCents > 0 && listing.price_cents > 0) {
               netModelGrossNetRatio = ownOffer.priceCents / listing.price_cents;
             } else {
-              logger.error('smart-pricing: own offer absent from competitor list for NET pricing model — skipping listing', {
-                requestId,
-                listingId: listing.id,
-                providerCode,
-                externalListingId: listing.external_listing_id,
-              });
-              result.errors++;
-              continue;
+              // Own offer absent from competition (e.g. declared_stock=0 listings are hidden
+              // by the marketplace). Use the authoritative gross price from S_stock instead.
+              const stockGross = grossPriceByListing.get(listing.external_listing_id);
+              if (stockGross && stockGross > 0 && listing.price_cents > 0) {
+                netModelGrossNetRatio = stockGross / listing.price_cents;
+                logger.info('smart-pricing: using S_stock gross price for NET ratio (own offer absent from competition)', {
+                  requestId, listingId: listing.id, providerCode,
+                  externalListingId: listing.external_listing_id,
+                  stockGross, storedNet: listing.price_cents,
+                  ratio: netModelGrossNetRatio,
+                });
+              } else {
+                logger.error('smart-pricing: own offer absent from competition and no S_stock gross price available — skipping listing', {
+                  requestId, listingId: listing.id, providerCode,
+                  externalListingId: listing.external_listing_id,
+                  hasStockGross: Boolean(stockGross),
+                  storedNet: listing.price_cents,
+                });
+                result.errors++;
+                continue;
+              }
             }
           }
 
