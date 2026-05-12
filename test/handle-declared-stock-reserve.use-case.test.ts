@@ -191,7 +191,7 @@ describe('HandleDeclaredStockReserveUseCase — Sentry-noise regressions', () =>
   });
 
   it(
-    'returns reason=listing_inactive WITHOUT paging Sentry when an Eneba RESERVE arrives '
+    'returns reason=listing_inactive AND pages Sentry (warn) when an Eneba RESERVE arrives '
       + 'for a listing with status="paused" (production payload b1259882…)',
     async () => {
       const listing = makeListing({ status: 'paused' });
@@ -214,11 +214,13 @@ describe('HandleDeclaredStockReserveUseCase — Sentry-noise regressions', () =>
       expect(keyOps.claimCalls).toHaveLength(0);
       expect(unavailability.calls).toHaveLength(0);
       expect(captureException).not.toHaveBeenCalled();
-      expect(captureMessage).not.toHaveBeenCalled();
+      // listing_inactive is now intentionally surfaced in Sentry at warning level
+      // so ops can see when Eneba keeps reserving against a paused listing.
+      expect(captureMessage).toHaveBeenCalledOnce();
     },
   );
 
-  it('returns reason=out_of_stock WITHOUT paging Sentry when the claim raises INSUFFICIENT_STOCK', async () => {
+  it('returns reason=out_of_stock AND pages Sentry (warn) when the claim raises INSUFFICIENT_STOCK', async () => {
     const db = new StubDatabase(makeListing({ status: 'active' }));
     const keyOps = new StubKeyOps();
     keyOps.claimResult = new Error(
@@ -239,7 +241,9 @@ describe('HandleDeclaredStockReserveUseCase — Sentry-noise regressions', () =>
       { variantId: listingVariantId(), reason: 'jit_failed' },
     ]);
     expect(captureException).not.toHaveBeenCalled();
-    expect(captureMessage).not.toHaveBeenCalled();
+    // out_of_stock is now intentionally surfaced in Sentry at warning level
+    // so ops can see when Eneba reserves against a listing that has no keys.
+    expect(captureMessage).toHaveBeenCalledOnce();
   });
 
   it('returns reason=unexpected_error AND pages Sentry when the claim raises something not stock-related', async () => {

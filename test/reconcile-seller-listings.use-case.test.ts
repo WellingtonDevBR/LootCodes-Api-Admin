@@ -11,6 +11,10 @@ import type {
   ProcurementDeclaredStockReconcileDto,
   ProcurementDeclaredStockReconcileResult,
 } from '../src/core/ports/procurement-declared-stock-reconcile.port.js';
+import type {
+  EnebaKeyReconcileResult,
+  IEnebaKeyReconcileService,
+} from '../src/core/ports/eneba-key-reconcile.port.js';
 import type { ExpireReservationsUseCase } from '../src/core/use-cases/seller/expire-reservations.use-case.js';
 import { ReconcileSellerListingsUseCase } from '../src/core/use-cases/seller/reconcile-seller-listings.use-case.js';
 import type { ReconcilePhase } from '../src/core/use-cases/seller/reconcile-seller-listings.types.js';
@@ -25,6 +29,7 @@ const ALL_PHASES: ReconcilePhase[] = [
   'pricing',
   'declared-stock',
   'remote-stock',
+  'eneba-key-reconcile',
   'paused-listing-alerts',
 ];
 
@@ -64,6 +69,16 @@ function emptyDeclaredStockResult(dryRun = false): ProcurementDeclaredStockRecon
   return { dry_run: dryRun, scanned: 0, updated: 0, skipped: 0, failures: [] };
 }
 
+function emptyEnebaKeyReconcileResult(): EnebaKeyReconcileResult {
+  return {
+    listings_checked: 0,
+    reported_keys_found: 0,
+    reported_keys_marked_faulty: 0,
+    orphaned_provisions_found: 0,
+    orphaned_provisions_restocked: 0,
+  };
+}
+
 function emptyPausedAlertsResult(): SyncSellerListingPausedAlertsResult {
   return { alertsCreated: 0, alertsResolved: 0, pausedListingCount: 0 };
 }
@@ -73,6 +88,7 @@ interface FakeSetup {
   readonly autoPricing: ISellerAutoPricingService;
   readonly declaredStock: IProcurementDeclaredStockReconcileService;
   readonly stockSync: ISellerStockSyncService;
+  readonly enebaKeyReconcile: Pick<IEnebaKeyReconcileService, 'execute'>;
   readonly expireReservations: Pick<ExpireReservationsUseCase, 'execute'>;
   readonly syncPausedAlerts: Pick<SyncSellerListingPausedAlertsUseCase, 'execute'>;
 }
@@ -108,6 +124,9 @@ function setup(options: SetupOptions = {}): FakeSetup {
     stockSync: {
       refreshAllStock: vi.fn().mockImplementation(async () => record('remote-stock', emptyStockResult())),
     },
+    enebaKeyReconcile: {
+      execute: vi.fn().mockImplementation(async () => record('eneba-key-reconcile', emptyEnebaKeyReconcileResult())),
+    },
     expireReservations: {
       execute: vi.fn().mockImplementation(async () => record('expire-reservations', emptyExpireResult())),
     },
@@ -122,6 +141,7 @@ function build(s: FakeSetup): ReconcileSellerListingsUseCase {
     s.autoPricing,
     s.declaredStock,
     s.stockSync,
+    s.enebaKeyReconcile as unknown as IEnebaKeyReconcileService,
     s.expireReservations as unknown as ExpireReservationsUseCase,
     s.syncPausedAlerts as unknown as SyncSellerListingPausedAlertsUseCase,
   );
