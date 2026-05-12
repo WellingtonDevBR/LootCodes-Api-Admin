@@ -200,21 +200,10 @@ export async function sellerWebhookRoutes(app: FastifyInstance) {
         });
 
         if (!result.success || !result.auctions) {
-          if (originalOrderId) {
-            // Replacement PROVIDE (originalOrderId present): the preceding replacement
-            // RESERVE likely returned success:false (e.g. out of stock), so no pending
-            // reservation was created. Eneba sends the PROVIDE anyway — our success:false
-            // response is correct. Log at warn, not error, to avoid Sentry noise.
-            logger.warn('Eneba replacement PROVIDE returned failure — responding success:false', {
-              orderId, originalOrderId,
-            });
-          } else {
-            // Regular PROVIDE failure: we explicitly told Eneba success:true on the
-            // RESERVE but now cannot deliver. Genuine error — auto-forwards to Sentry.
-            logger.error('Eneba PROVIDE returned failure — responding success:false', {
-              orderId, originalOrderId,
-            });
-          }
+          // The use case already logged at the appropriate severity (warn for expected
+          // replacement-RESERVE-failed cases, error for genuine delivery failures).
+          // Log info here to record the outbound response without double-counting in Sentry.
+          logger.info('Eneba PROVIDE responding success:false', { orderId, originalOrderId });
           return reply.send(buildProvisionResponse(result.orderId, result.success));
         }
 

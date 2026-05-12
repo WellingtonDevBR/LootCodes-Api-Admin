@@ -51,7 +51,16 @@ export class HandleDeclaredStockProvideUseCase {
 
       const reservation = this.pickReservation(rows, orderId);
       if (!reservation) {
-        logger.error('Reservation not found for PROVIDE', { orderId, originalOrderId, candidates });
+        if (originalOrderId) {
+          // Replacement PROVIDE: the preceding replacement RESERVE returned success:false
+          // (e.g. no keys for replacement), so no reservation was created for the new orderId.
+          // Eneba sends the PROVIDE regardless — our success:false response is correct.
+          logger.warn('Replacement PROVIDE: no reservation found — replacement RESERVE likely failed', {
+            orderId, originalOrderId, candidates,
+          });
+        } else {
+          logger.error('Reservation not found for PROVIDE', { orderId, originalOrderId, candidates });
+        }
         return { success: false, orderId };
       }
 
@@ -208,11 +217,20 @@ export class HandleDeclaredStockProvideUseCase {
     // Prefer an exact match on the new orderId (direct PROVIDE or idempotent replay).
     const exact = rows.find((r) => r.external_order_id === preferredOrderId);
     if (exact) return exact;
-    // Substitute-buyer PROVIDE: multiple rows share the originalOrderId (e.g. a
-    // multi-item Eneba cart order each with its own RESERVE callback, some of which
-    // may have been cancelled). Pick the pending row so we don't attempt to
-    // provision against an already-cancelled reservation.
-    return rows.find((r) => r.status === 'pending') ?? rows[0];
+    // No exact match: two possible scenarios.
+    //
+    // (a) Substitute-buyer PROVIDE: the RESERVE used originalOrderId; the PROVIDE
+    //     comes with a different orderId. The reservation under originalOrderId is
+    //     still pending — pick it.
+    //
+    // (b) Replacement PROVIDE where the replacement RESERVE returned success:false:
+    //     no reservation was created for the new orderId. The only rows we found are
+    //     from the original order and are already provisioned or cancelled.
+    //     Return undefined — caller will handle this as "replacement RESERVE failed".
+    //
+    // Distinguishing rule: only use a non-exact row if it is actually pending.
+    // A provisioned/cancelled row from the original order is case (b) — don't touch it.
+    return rows.find((r) => r.status === 'pending');
   }
 
   private parseMetadata(raw: Record<string, unknown>): {
