@@ -196,9 +196,9 @@ export class BuyerOfferSnapshotSyncService implements IBuyerOfferSnapshotSyncSer
         // Catalog v2 allows 1 req/s — enforce it client-side so we never
         // trigger a 429 from rapid sequential calls during bulk sync.
         catalogRateLimiter: BAMBOO_BULK_RATE_LIMITER,
-        // Allow one retry on 429 with a 2.5s floor. Bamboo's "wait 0 seconds"
-        // message means the window has already reset — a single retry succeeds
-        // without cascading. Eliminates spurious Sentry warnings for transient 429s.
+        // No retries on 429: retrying a rate-limited request sends another call
+        // into a saturated window and makes cascading 429s worse. The per-offer
+        // loop handles recovery via BAMBOO_429_EXTRA_COOLDOWN_MS instead.
         catalogRetry: BAMBOO_BULK_RETRY,
       });
       if (!buyer) {
@@ -252,18 +252,23 @@ export class BuyerOfferSnapshotSyncService implements IBuyerOfferSnapshotSyncSer
           const errMsg = err instanceof Error ? err.message : String(err);
           const is429 = errMsg.includes('429');
 
-          logger.warn('Bamboo live quote failed for offer', {
-            requestId,
-            offerRowId: offer.id,
-            externalOfferId: offerId,
-            error: errMsg,
-          });
-
           if (is429) {
-            // Schedule extra cooldown before the next offer so the rate-limit
-            // window fully resets. Not applied here but deferred to the top of
-            // the next iteration so it stacks correctly with the base delay.
+            // 429 is an expected rate-limit response — already handled by the
+            // extraCooldownNeeded flag below. Log at info so it doesn't create
+            // Sentry noise; every genuine failure is still logged at warn.
+            logger.info('Bamboo live quote rate-limited (429) — cooldown will apply before next offer', {
+              requestId,
+              offerRowId: offer.id,
+              externalOfferId: offerId,
+            });
             extraCooldownNeeded = true;
+          } else {
+            logger.warn('Bamboo live quote failed for offer', {
+              requestId,
+              offerRowId: offer.id,
+              externalOfferId: offerId,
+              error: errMsg,
+            });
           }
 
           failed++;
