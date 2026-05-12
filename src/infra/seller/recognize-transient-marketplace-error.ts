@@ -28,6 +28,13 @@ const TRANSIENT_MESSAGE_PATTERNS: readonly RegExp[] = [
   // Digiseller's auth backend ("apilogin") flakes routinely and is recovered
   // on the next cron run.
   /^Digiseller apilogin (?:failed|error)/,
+  // Standard HTTP upstream errors — temporary server-side issues that resolve
+  // on the next cron tick. 502/503/504 all indicate the upstream gateway or
+  // service is momentarily unavailable (e.g. Digiseller deployment, overload).
+  /\b50[234]\b/,
+  /Bad Gateway/i,
+  /Service Unavailable/i,
+  /Gateway Timeout/i,
 ];
 
 export function isTransientMarketplaceError(err: unknown): boolean {
