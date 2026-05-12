@@ -111,6 +111,7 @@ Seller-side maintenance (cost basis, pricing + marketplace push, declared-stock 
 4. `pricing` — recompute prices honouring manual overrides + `pricing_overrides` + per-listing strategy, then push via marketplace adapters
 5. `declared-stock` — reconcile declared-stock target via `computeDeclaredStockTarget` and push to marketplaces
 6. `remote-stock` — pull remote stock for `auto_sync_stock=true` listings
+7. `eneba-key-reconcile` — cross-check internal key provisions against Eneba `S_keys` API: REPORTED keys → mark `faulty`; orphaned provisions (delivered on our side but not SOLD on Eneba) → restock key to `available`, cancel reservation
 
 ### Request body (strict — validated by Zod)
 

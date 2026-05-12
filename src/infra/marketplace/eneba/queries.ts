@@ -322,6 +322,34 @@ export const UPDATE_STOCK_STATUS_MUTATION = `
   }
 `;
 
+// ─── Key Query (S_keys) ─────────────────────────────────────────────
+
+/**
+ * Query keys for a given stock/auction by stockId.
+ * Use `state` to filter: ACTIVE (unsold), SOLD, REPORTED.
+ * Paginate via `first` + `after` cursor.
+ * Either `stockId`, `ids`, `orderNumber`, or `ordersNumbers` is required by Eneba.
+ */
+export const GET_STOCK_KEYS_QUERY = `
+  query GetStockKeys($stockId: S_Uuid, $state: S_KeyState, $ordersNumbers: [String!], $first: Int, $after: String) {
+    S_keys(stockId: $stockId, state: $state, ordersNumbers: $ordersNumbers, first: $first, after: $after) {
+      edges {
+        node {
+          id
+          value
+          state
+          reportReason
+        }
+        cursor
+      }
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+    }
+  }
+`;
+
 // ─── Key Replacement Setup ──────────────────────────────────────────
 
 export const ENABLE_KEY_REPLACEMENTS_MUTATION = `

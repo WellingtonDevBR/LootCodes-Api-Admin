@@ -72,6 +72,26 @@ export interface EnebaGetProductData {
   S_product: EnebaProduct | null;
 }
 
+// ─── Keys (from S_keys) ─────────────────────────────────────────────
+
+export type EnebaKeyState = 'ACTIVE' | 'SOLD' | 'REPORTED';
+
+export interface EnebaKeyNode {
+  id: string;
+  value: string;
+  state: EnebaKeyState;
+  reportReason?: string | null;
+}
+
+export interface EnebaKeyConnection {
+  edges: Array<{ node: EnebaKeyNode; cursor?: string }>;
+  pageInfo: EnebaPageInfo;
+}
+
+export interface EnebaGetKeysData {
+  S_keys: EnebaKeyConnection;
+}
+
 // ─── Competition (from S_competition) ───────────────────────────────
 
 export interface EnebaCompetitor {

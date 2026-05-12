@@ -63,6 +63,7 @@ import { SellerCostBasisService } from '../infra/seller/pricing/seller-cost-basi
 import { SellerStockSyncService } from '../infra/seller/pricing/seller-stock-sync.service.js';
 import { ProcurementDeclaredStockReconcileService } from '../infra/seller/procurement-declared-stock-reconcile.service.js';
 import { BuyerOfferSnapshotSyncService } from '../infra/procurement/buyer-offer-snapshot-sync.service.js';
+import { EnebaKeyReconcileService } from '../infra/seller/eneba-key-reconcile.service.js';
 import { SupabasePlatformSettingsRepository } from '../infra/platform-settings/supabase-platform-settings.repository.js';
 import { SupabaseAdminOpportunitiesRepository } from '../infra/opportunities/supabase-admin-opportunities.repository.js';
 import { SupabaseAdminAlertsRepository } from '../infra/alerts/supabase-admin-alerts.repository.js';
@@ -742,6 +743,7 @@ container.register(TOKENS.ProcurementDeclaredStockReconcileService, {
 container.register(TOKENS.BuyerOfferSnapshotSyncService, {
   useClass: BuyerOfferSnapshotSyncService,
 });
+container.register(TOKENS.EnebaKeyReconcileService, { useClass: EnebaKeyReconcileService });
 container.register(TOKENS.PlatformSettingsRepository, { useClass: SupabasePlatformSettingsRepository });
 
 // Use cases — Seller Webhooks

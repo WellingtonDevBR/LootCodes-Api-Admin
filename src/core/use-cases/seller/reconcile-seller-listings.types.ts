@@ -20,6 +20,14 @@ export const RECONCILE_PHASES = [
   'declared-stock',
   'remote-stock',
   /**
+   * Cross-check our internal key provisions against Eneba's live S_keys data.
+   * - REPORTED keys → mark `faulty` in product_keys.
+   * - Orphaned provisions (delivered on our side but not SOLD on Eneba) →
+   *   restock key to `available`, mark provision `refunded`, cancel reservation.
+   * Runs after remote-stock so declared-stock quantities are already up-to-date.
+   */
+  'eneba-key-reconcile',
+  /**
    * Idempotent reconciliation of `admin_alerts` of type `seller_listing_paused`. Runs last so
    * earlier phases (which may pause a listing they could not heal) are reflected in the
    * alerts surface within the same cron tick.

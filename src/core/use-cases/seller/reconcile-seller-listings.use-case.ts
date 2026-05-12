@@ -35,6 +35,7 @@ import type {
   ISellerStockSyncService,
 } from '../../ports/seller-pricing.port.js';
 import type { IProcurementDeclaredStockReconcileService } from '../../ports/procurement-declared-stock-reconcile.port.js';
+import type { IEnebaKeyReconcileService } from '../../ports/eneba-key-reconcile.port.js';
 import { ExpireReservationsUseCase } from './expire-reservations.use-case.js';
 import { SyncSellerListingPausedAlertsUseCase } from './sync-seller-listing-paused-alerts.use-case.js';
 import {
@@ -57,6 +58,8 @@ export class ReconcileSellerListingsUseCase {
     private readonly declaredStock: IProcurementDeclaredStockReconcileService,
     @inject(TOKENS.SellerStockSyncService)
     private readonly stockSync: ISellerStockSyncService,
+    @inject(TOKENS.EnebaKeyReconcileService)
+    private readonly enebaKeyReconcile: IEnebaKeyReconcileService,
     @inject(UC_TOKENS.ExpireReservations)
     private readonly expireReservations: ExpireReservationsUseCase,
     @inject(UC_TOKENS.SyncSellerListingPausedAlerts)
@@ -128,6 +131,8 @@ export class ReconcileSellerListingsUseCase {
         });
       case 'remote-stock':
         return this.stockSync.refreshAllStock(requestId);
+      case 'eneba-key-reconcile':
+        return this.enebaKeyReconcile.execute(requestId);
       case 'paused-listing-alerts':
         return this.syncPausedAlerts.execute();
     }

@@ -70,6 +70,7 @@ export const TOKENS = {
   SellerStockSyncService: Symbol.for('ISellerStockSyncService'),
   ProcurementDeclaredStockReconcileService: Symbol.for('IProcurementDeclaredStockReconcileService'),
   BuyerOfferSnapshotSyncService: Symbol.for('IBuyerOfferSnapshotSyncService'),
+  EnebaKeyReconcileService: Symbol.for('IEnebaKeyReconcileService'),
 
   // Platform-wide runtime settings (read by orchestrators / cron)
   PlatformSettingsRepository: Symbol.for('IPlatformSettingsPort'),

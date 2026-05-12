@@ -206,6 +206,44 @@ export interface ISellerGlobalStockAdapter {
   updateAllStockStatus(enabled: boolean): Promise<{ success: boolean }>;
 }
 
+// ─── Key Reconciliation (Eneba S_keys) ───────────────────────────────
+
+export type SellerKeyState = 'ACTIVE' | 'SOLD' | 'REPORTED';
+
+export interface MarketplaceKeyEntry {
+  /** Marketplace-internal key ID. */
+  id: string;
+  /** Plaintext key value as stored/delivered by the marketplace. */
+  value: string;
+  state: SellerKeyState;
+  reportReason?: string | null;
+}
+
+export interface GetStockKeysResult {
+  keys: MarketplaceKeyEntry[];
+}
+
+/**
+ * Capability for querying keys stored in a marketplace listing.
+ * Currently implemented by Eneba (S_keys endpoint).
+ * Enables inventory reconciliation: reported keys → mark faulty;
+ * provisions not appearing as SOLD → restock.
+ */
+export interface ISellerKeyReconcileAdapter {
+  /**
+   * Fetch all keys for a listing (auction/stock) in the given state.
+   * Handles pagination internally and returns all pages.
+   * @param stockId   Marketplace listing / auction / stock ID.
+   * @param state     Key state filter. Null/undefined = all states.
+   */
+  getAllStockKeys(stockId: string, state?: SellerKeyState | null): Promise<GetStockKeysResult>;
+  /**
+   * Fetch keys associated with specific order numbers.
+   * Returns only keys whose order number is in the supplied list.
+   */
+  getKeysByOrders(ordersNumbers: string[]): Promise<GetStockKeysResult>;
+}
+
 // ─── Product Search ──────────────────────────────────────────────────
 
 export interface ProductSearchResult {
@@ -235,7 +273,8 @@ export type MarketplaceCapability =
   | 'batch_price'
   | 'batch_declared_stock'
   | 'global_stock'
-  | 'product_search';
+  | 'product_search'
+  | 'key_reconcile';
 
 export interface IMarketplaceAdapterRegistry {
   registerAdapter(providerCode: string, adapter: unknown): void;
@@ -250,6 +289,7 @@ export interface IMarketplaceAdapterRegistry {
   getBatchDeclaredStockAdapter(providerCode: string): ISellerBatchDeclaredStockAdapter | null;
   getGlobalStockAdapter(providerCode: string): ISellerGlobalStockAdapter | null;
   getProductSearchAdapter(providerCode: string): IProductSearchAdapter | null;
+  getKeyReconcileAdapter(providerCode: string): ISellerKeyReconcileAdapter | null;
   hasCapability(providerCode: string, capability: MarketplaceCapability): boolean;
   getSupportedProviders(): string[];
 }

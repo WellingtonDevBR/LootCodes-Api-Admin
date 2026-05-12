@@ -19,6 +19,7 @@ import type {
   ISellerBatchDeclaredStockAdapter,
   ISellerGlobalStockAdapter,
   IProductSearchAdapter,
+  ISellerKeyReconcileAdapter,
   MarketplaceCapability,
 } from '../../core/ports/marketplace-adapter.port.js';
 import { createLogger } from '../../shared/logger.js';
@@ -36,7 +37,8 @@ export type AnyMarketplaceAdapter = Partial<
   ISellerBatchPriceAdapter &
   ISellerBatchDeclaredStockAdapter &
   ISellerGlobalStockAdapter &
-  IProductSearchAdapter
+  IProductSearchAdapter &
+  ISellerKeyReconcileAdapter
 >;
 
 type CapabilityCheckFn = (adapter: AnyMarketplaceAdapter) => boolean;
@@ -53,6 +55,7 @@ const CAPABILITY_CHECKS: Record<MarketplaceCapability, CapabilityCheckFn> = {
   batch_declared_stock: (a) => typeof a.batchUpdateDeclaredStock === 'function',
   global_stock: (a) => typeof a.updateAllStockStatus === 'function',
   product_search: (a) => typeof a.searchProducts === 'function',
+  key_reconcile: (a) => typeof a.getAllStockKeys === 'function' && typeof a.getKeysByOrders === 'function',
 };
 
 @injectable()
@@ -106,6 +109,10 @@ export class MarketplaceAdapterRegistry implements IMarketplaceAdapterRegistry {
 
   getProductSearchAdapter(providerCode: string): IProductSearchAdapter | null {
     return this.getTypedAdapter<IProductSearchAdapter>(providerCode, 'product_search');
+  }
+
+  getKeyReconcileAdapter(providerCode: string): ISellerKeyReconcileAdapter | null {
+    return this.getTypedAdapter<ISellerKeyReconcileAdapter>(providerCode, 'key_reconcile');
   }
 
   hasCapability(providerCode: string, capability: MarketplaceCapability): boolean {

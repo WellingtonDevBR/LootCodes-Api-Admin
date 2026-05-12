@@ -24,6 +24,7 @@ import type {
   ISellerBatchPriceAdapter,
   ISellerBatchDeclaredStockAdapter,
   ISellerGlobalStockAdapter,
+  ISellerKeyReconcileAdapter,
   CreateListingParams,
   CreateListingResult,
   UpdateListingParams,
@@ -42,6 +43,8 @@ import type {
   BatchPriceUpdateResult,
   BatchDeclaredStockUpdate,
   ProductSearchResult,
+  GetStockKeysResult,
+  SellerKeyState,
 } from '../../../core/ports/marketplace-adapter.port.js';
 import type { EnebaGraphQLClient } from './graphql-client.js';
 import type {
@@ -59,11 +62,13 @@ import type {
   EnebaUpdateAuctionPriceData,
   EnebaUpdateStockStatusData,
   EnebaCalculatePriceData,
+  EnebaGetKeysData,
 } from './types.js';
 import {
   SEARCH_PRODUCTS_QUERY,
   GET_COMPETITION_QUERY,
   GET_STOCK_QUERY,
+  GET_STOCK_KEYS_QUERY,
   CALCULATE_PRICE_QUERY,
   buildCreateAuctionMutation,
   REMOVE_AUCTION_MUTATION,
@@ -90,7 +95,8 @@ export class EnebaAdapter
     ISellerCallbackSetupAdapter,
     ISellerBatchPriceAdapter,
     ISellerBatchDeclaredStockAdapter,
-    ISellerGlobalStockAdapter
+    ISellerGlobalStockAdapter,
+    ISellerKeyReconcileAdapter
 {
   /**
    * Eneba pricing model: the auto-pricing cron computes prices in NET terms
@@ -751,6 +757,71 @@ export class EnebaAdapter
       GET_STOCK_QUERY,
       variables,
     );
+  }
+
+  // ─── ISellerKeyReconcileAdapter ──────────────────────────────────────
+
+  /**
+   * Fetch all keys for a listing by stockId with optional state filter.
+   * Paginates automatically (100 per page).
+   */
+  async getAllStockKeys(stockId: string, state?: SellerKeyState | null): Promise<GetStockKeysResult> {
+    const keys: GetStockKeysResult['keys'] = [];
+    let after: string | null = null;
+
+    do {
+      const variables: Record<string, unknown> = { stockId, first: 100 };
+      if (state) variables.state = state;
+      if (after) variables.after = after;
+
+      const data = await this.gqlClient.execute<EnebaGetKeysData>(GET_STOCK_KEYS_QUERY, variables);
+      const connection = data.S_keys;
+
+      for (const edge of connection.edges) {
+        keys.push({
+          id: edge.node.id,
+          value: edge.node.value,
+          state: edge.node.state as SellerKeyState,
+          reportReason: edge.node.reportReason ?? null,
+        });
+      }
+
+      after = connection.pageInfo?.hasNextPage ? (connection.pageInfo.endCursor ?? null) : null;
+    } while (after !== null);
+
+    return { keys };
+  }
+
+  /**
+   * Fetch keys for a batch of Eneba order numbers.
+   * Handles pagination automatically.
+   */
+  async getKeysByOrders(ordersNumbers: string[]): Promise<GetStockKeysResult> {
+    if (ordersNumbers.length === 0) return { keys: [] };
+
+    const keys: GetStockKeysResult['keys'] = [];
+    let after: string | null = null;
+
+    do {
+      const variables: Record<string, unknown> = { ordersNumbers, first: 100 };
+      if (after) variables.after = after;
+
+      const data = await this.gqlClient.execute<EnebaGetKeysData>(GET_STOCK_KEYS_QUERY, variables);
+      const connection = data.S_keys;
+
+      for (const edge of connection.edges) {
+        keys.push({
+          id: edge.node.id,
+          value: edge.node.value,
+          state: edge.node.state as SellerKeyState,
+          reportReason: edge.node.reportReason ?? null,
+        });
+      }
+
+      after = connection.pageInfo?.hasNextPage ? (connection.pageInfo.endCursor ?? null) : null;
+    } while (after !== null);
+
+    return { keys };
   }
 
   /**
