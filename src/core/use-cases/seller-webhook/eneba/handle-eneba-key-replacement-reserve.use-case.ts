@@ -228,19 +228,25 @@ export class HandleEnebaKeyReplacementReserveUseCase {
     try {
       // Look for 'delivered' (still provisioned) or 'refunded' (restocked by handlePostProvisionReturn
       // after a CANCEL — the key is back in available inventory but was the one originally delivered).
-      const provision = await this.db.queryOne<OriginalProvisionRow>(
+      // Multi-key orders have one provision row per key delivered, so we use query (not queryOne)
+      // and pick the first eligible row. We cannot map Eneba's keyId to our product_key_id since
+      // we do not store that cross-reference during PROVIDE.
+      const provisions = await this.db.query<OriginalProvisionRow>(
         'seller_key_provisions',
         {
           select: 'id, product_key_id, status',
           eq: [['reservation_id', originalReservation.id]],
           in: [['status', ['delivered', 'refunded']]],
-          single: true,
+          order: { column: 'id', ascending: true },
         },
       );
+
+      const provision = provisions[0] ?? null;
 
       if (!provision) {
         logger.warn('Replacement RESERVE: no delivered provision found for original reservation', {
           reservationId: originalReservation.id, orderId,
+          provisionCount: provisions.length,
         });
         return;
       }
@@ -252,14 +258,19 @@ export class HandleEnebaKeyReplacementReserveUseCase {
         single: true,
       });
 
-      // Extract original gross amount from reservation metadata for write-off
+      // Extract original per-unit gross amount from reservation metadata for write-off.
+      // Use gross_cents_per_unit (not total_gross_cents) — for multi-key orders total_gross_cents
+      // covers all keys; we are only writing off the single faulty key.
       const meta = originalReservation.provider_metadata;
       const financials = meta.marketplaceFinancials as Record<string, unknown> | undefined;
-      const originalGrossCents = typeof financials?.total_gross_cents === 'number'
-        ? financials.total_gross_cents
-        : (typeof (meta.price as Record<string, unknown> | undefined)?.amount === 'number'
-          ? (meta.price as Record<string, unknown>).amount as number
-          : 0);
+      const originalGrossCents =
+        typeof financials?.gross_cents_per_unit === 'number'
+          ? financials.gross_cents_per_unit
+          : typeof financials?.total_gross_cents === 'number' && typeof financials?.key_count === 'number' && financials.key_count > 0
+            ? Math.round((financials.total_gross_cents as number) / (financials.key_count as number))
+            : (typeof (meta.price as Record<string, unknown> | undefined)?.amount === 'number'
+              ? (meta.price as Record<string, unknown>).amount as number
+              : 0);
       const originalCurrency = typeof financials?.currency === 'string'
         ? financials.currency
         : typeof (meta.price as Record<string, unknown> | undefined)?.currency === 'string'
