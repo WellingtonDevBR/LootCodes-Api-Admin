@@ -647,12 +647,8 @@ export async function adminSellerRoutes(app: FastifyInstance) {
 
   app.post('/expire-reservations', { preHandler: [adminGuard] }, async (request, reply) => {
     const uc = container.resolve<ExpireReservationsUseCase>(UC_TOKENS.ExpireReservations);
-    const body = (request.body ?? {}) as Record<string, unknown>;
     const admin_id = (request as unknown as Record<string, unknown>).adminId as string;
-    const result = await uc.execute({
-      admin_id,
-      max_age_minutes: body.max_age_minutes as number | undefined,
-    });
+    const result = await uc.execute({ admin_id });
     return reply.send(result);
   });
 }

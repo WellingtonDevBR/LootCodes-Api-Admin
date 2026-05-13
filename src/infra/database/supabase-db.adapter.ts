@@ -24,6 +24,7 @@ export class SupabaseDbAdapter implements IDatabase {
     if (options?.or) query = query.or(options.or);
     if (options?.ilike) for (const [col, pattern] of options.ilike) query = query.ilike(col, pattern);
     if (options?.lt) for (const [col, val] of options.lt) query = query.lt(col, val as string);
+    if (options?.lte) for (const [col, val] of options.lte) query = query.lte(col, val as string);
     if (options?.gt) for (const [col, val] of options.gt) query = query.gt(col, val as string);
     if (options?.gte) for (const [col, val] of options.gte) query = query.gte(col, val as string);
     if (options?.order) query = query.order(options.order.column, { ascending: options.order.ascending ?? true });
@@ -105,6 +106,22 @@ export class SupabaseDbAdapter implements IDatabase {
     }
     const { data: result, error } = await query.select('*');
     if (error) throw new InternalError(`Update failed on ${table}: ${error.message}`);
+    return (result ?? []) as T[];
+  }
+
+  async updateIn<T = unknown>(
+    table: string,
+    column: string,
+    values: unknown[],
+    data: Record<string, unknown>,
+  ): Promise<T[]> {
+    if (values.length === 0) return [];
+    const { data: result, error } = await this.getClient()
+      .from(table)
+      .update(data)
+      .in(column, values as string[])
+      .select('*');
+    if (error) throw new InternalError(`UpdateIn failed on ${table}: ${error.message}`);
     return (result ?? []) as T[];
   }
 

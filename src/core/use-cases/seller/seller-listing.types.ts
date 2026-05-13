@@ -365,7 +365,6 @@ export interface RemoveCallbackResult {
 
 export interface ExpireReservationsDto {
   admin_id: string;
-  max_age_minutes?: number;
 }
 
 export interface ExpireReservationsResult {

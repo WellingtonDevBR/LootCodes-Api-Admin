@@ -11,6 +11,7 @@ export interface QueryOptions {
   or?: string;
   ilike?: Array<[string, string]>;
   lt?: Array<[string, unknown]>;
+  lte?: Array<[string, unknown]>;
   gt?: Array<[string, unknown]>;
   gte?: Array<[string, unknown]>;
   order?: { column: string; ascending?: boolean };
@@ -38,6 +39,11 @@ export interface IDatabase {
   insert<T = unknown>(table: string, data: Record<string, unknown>): Promise<T>;
   insertMany(table: string, rows: Record<string, unknown>[]): Promise<number>;
   update<T = unknown>(table: string, filter: Record<string, unknown>, data: Record<string, unknown>): Promise<T[]>;
+  /**
+   * UPDATE rows matching an IN filter. Replaces N sequential `update()` calls
+   * when the same `data` should be applied to multiple rows identified by ID.
+   */
+  updateIn<T = unknown>(table: string, column: string, values: unknown[], data: Record<string, unknown>): Promise<T[]>;
   upsert<T = unknown>(table: string, data: Record<string, unknown>, onConflict?: string): Promise<T>;
   /** Batch upsert (PostgREST). `onConflict` is comma-separated columns, e.g. `provider_account_id,external_product_id`. */
   upsertMany(table: string, rows: Record<string, unknown>[], onConflict: string): Promise<void>;

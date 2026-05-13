@@ -59,7 +59,7 @@ export class SupabaseAdminAnalyticsRepository implements IAdminAnalyticsReposito
     const queryOpts: import('../../core/ports/database.port.js').QueryOptions = {
       select: 'id, type, status, amount, currency, description, created_at, order_id',
       order: { column: 'created_at', ascending: false },
-      limit: limit + offset,
+      range: [offset, offset + limit - 1],
     };
 
     const eqFilters: Array<[string, unknown]> = [];
@@ -67,11 +67,14 @@ export class SupabaseAdminAnalyticsRepository implements IAdminAnalyticsReposito
     if (dto.status) eqFilters.push(['status', dto.status]);
     if (eqFilters.length > 0) queryOpts.eq = eqFilters;
 
-    const transactions = await this.db.query<Record<string, unknown>>('transactions', queryOpts);
+    if (dto.from) queryOpts.gte = [['created_at', dto.from]];
+    if (dto.to) queryOpts.lte = [['created_at', dto.to]];
+
+    const result = await this.db.queryPaginated<Record<string, unknown>>('transactions', queryOpts);
 
     return {
-      transactions: transactions.slice(offset, offset + limit),
-      total: transactions.length,
+      transactions: result.data,
+      total: result.total,
     };
   }
 

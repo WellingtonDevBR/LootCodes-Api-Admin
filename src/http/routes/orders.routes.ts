@@ -240,6 +240,7 @@ export async function adminOrderRoutes(app: FastifyInstance) {
       orders: (result.orders as Record<string, unknown>[]).map(o => toSerializedOrder(o, rates)),
       total: result.total,
     };
+    reply.header('Cache-Control', 'private, max-age=15, stale-while-revalidate=30');
     return reply.send(shaped);
   });
 

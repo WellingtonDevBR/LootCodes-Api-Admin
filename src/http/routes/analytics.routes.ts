@@ -38,7 +38,8 @@ export async function adminAnalyticsRoutes(app: FastifyInstance) {
     const result = await uc.execute({
       page: Math.floor(offset / limit) + 1,
       limit,
-      search: query.from && query.to ? `${query.from}..${query.to}` : undefined,
+      from: query.from,
+      to: query.to,
     });
     return reply.send(result);
   });

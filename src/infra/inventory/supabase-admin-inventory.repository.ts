@@ -102,21 +102,14 @@ export class SupabaseAdminInventoryRepository implements IAdminInventoryReposito
   }
 
   async setKeysSalesBlocked(dto: SetKeysSalesBlockedDto): Promise<SetKeysSalesBlockedResult> {
-    const updated = await this.db.update('product_keys',
-      { id: dto.key_ids[0] },
+    if (dto.key_ids.length === 0) return { success: true, keys_updated: 0 };
+    const updated = await this.db.updateIn(
+      'product_keys',
+      'id',
+      dto.key_ids,
       { sales_blocked: dto.blocked, updated_at: new Date().toISOString() },
     );
-
-    let keysUpdated = updated.length;
-    for (let i = 1; i < dto.key_ids.length; i++) {
-      const result = await this.db.update('product_keys',
-        { id: dto.key_ids[i] },
-        { sales_blocked: dto.blocked, updated_at: new Date().toISOString() },
-      );
-      keysUpdated += result.length;
-    }
-
-    return { success: true, keys_updated: keysUpdated };
+    return { success: true, keys_updated: updated.length };
   }
 
   async setVariantSalesBlocked(dto: SetVariantSalesBlockedDto): Promise<SetVariantSalesBlockedResult> {

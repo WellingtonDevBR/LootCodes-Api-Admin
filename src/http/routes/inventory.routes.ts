@@ -25,23 +25,25 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
       TOKENS.Database,
     );
 
-    const countResult = await db.queryPaginated<Record<string, unknown>>('product_keys', {
-      select: 'id',
-      eq: [['key_state', 'available']],
-      limit: 1,
-    });
+    // Parallelise: count, cost rows, and currency rates are independent.
+    // Use queryAll for cost rows to avoid the previous 10k hard cap.
+    const [countResult, costRows, rates] = await Promise.all([
+      db.queryPaginated<Record<string, unknown>>('product_keys', {
+        select: 'id',
+        eq: [['key_state', 'available']],
+        limit: 1,
+      }),
+      db.queryAll<{
+        purchase_cost: string | number | null;
+        purchase_currency: string | null;
+      }>('product_keys', {
+        select: 'purchase_cost, purchase_currency',
+        eq: [['key_state', 'available']],
+      }),
+      loadCurrencyRates(db),
+    ]);
+
     const availableKeyCount = countResult.total;
-
-    const costRows = await db.query<{
-      purchase_cost: string | number | null;
-      purchase_currency: string | null;
-    }>('product_keys', {
-      select: 'purchase_cost, purchase_currency',
-      eq: [['key_state', 'available']],
-      limit: 10000,
-    });
-
-    const rates = await loadCurrencyRates(db);
 
     let totalCostUsdCents = 0;
     for (const row of costRows) {
@@ -52,6 +54,7 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
       totalCostUsdCents += convertCentsToUsd(cost, currency, rates);
     }
 
+    reply.header('Cache-Control', 'private, max-age=30, stale-while-revalidate=60');
     return reply.send({
       availableKeyCount,
       purchaseCostUsdTotal: totalCostUsdCents / 100,

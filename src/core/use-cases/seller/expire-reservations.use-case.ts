@@ -8,29 +8,16 @@ import { createLogger } from '../../../shared/logger.js';
 const logger = createLogger('expire-reservations');
 
 /**
- * Default expiry window for pending reservations.
+ * Hard ceiling backstop: a pending reservation with no expires_at (legacy row),
+ * or one whose expires_at is in the future but has been pending for an
+ * implausibly long time (cron was down for days), is swept here.
  *
- * WHY 72 HOURS:
- * For Eneba declared_stock the buyer's payment window can extend well beyond
- * 24 hours — Eneba may send PROVIDE up to ~48 hours after RESERVE (empirically
- * observed: 22-hour gap for a Discord Nitro order). A 60-minute default caused
- * us to expire the reservation and reject the late PROVIDE, leaving the buyer
- * without their key.
- *
- * We should NEVER expire a reservation ourselves unless Eneba's window has
- * definitively passed — Eneba sends CANCEL when a buyer doesn't pay, which is
- * the authoritative signal to release the key.  72 hours gives sufficient
- * buffer for any realistic Eneba payment window while still cleaning up truly
- * abandoned reservations.
+ * All new reservations set expires_at = now + 3 calendar days in the RESERVE
+ * handler — those are handled by the primary expires_at sweep, not this.
+ * If this backstop fires it means the housekeeping cron was broken for 5+ days
+ * — logged at warn so it surfaces in Sentry.
  */
-const DEFAULT_MAX_AGE_MINUTES = 72 * 60; // 72 hours
-
-/**
- * Hard ceiling: any pending reservation older than this is stuck by definition.
- * If this sweep finds anything it means the housekeeping cron was broken for 5+
- * days — logged at warn so it surfaces in Sentry.
- */
-const HARD_MAX_AGE_HOURS = 120; // 5 days
+const BACKSTOP_AGE_HOURS = 120; // 5 days
 
 @injectable()
 export class ExpireReservationsUseCase {
@@ -40,41 +27,29 @@ export class ExpireReservationsUseCase {
   ) {}
 
   async execute(dto: ExpireReservationsDto): Promise<ExpireReservationsResult> {
-    const maxAge = dto.max_age_minutes ?? DEFAULT_MAX_AGE_MINUTES;
+    // Primary sweep: respect the per-reservation expires_at set during RESERVE
+    // (currently 3 calendar days). This is the authoritative expiry signal —
+    // Eneba can send PROVIDE well after 24 hours so we must never expire sooner
+    // than the marketplace's own payment window.
+    const expired = await this.releaseByExpiresAt();
 
-    const expired = await this.releaseStale(maxAge, false);
-
-    // Safety backstop: sweep everything older than HARD_MAX_AGE_HOURS that the
-    // normal sweep somehow missed (e.g. cron was down for an extended period).
-    // Excludes rows already released by the normal sweep above.
-    const hardMaxMinutes = HARD_MAX_AGE_HOURS * 60;
-    if (maxAge < hardMaxMinutes) {
-      await this.releaseStale(hardMaxMinutes, true);
-    }
+    // Backstop: catch legacy rows with no expires_at or any reservation that
+    // somehow survived past BACKSTOP_AGE_HOURS (e.g. cron was down for days).
+    await this.releaseBackstop();
 
     return { expired };
   }
 
-  private async releaseStale(maxAgeMinutes: number, isBackstop: boolean): Promise<number> {
-    const cutoff = new Date(Date.now() - maxAgeMinutes * 60 * 1000).toISOString();
+  private async releaseByExpiresAt(): Promise<number> {
+    const now = new Date().toISOString();
 
-    const stale = await this.db.query<{ id: string; created_at: string }>('seller_stock_reservations', {
-      select: 'id, created_at',
+    const stale = await this.db.query<{ id: string; expires_at: string }>('seller_stock_reservations', {
+      select: 'id, expires_at',
       eq: [['status', 'pending']],
-      lt: [['created_at', cutoff]],
+      lt: [['expires_at', now]],
     });
 
     if (stale.length === 0) return 0;
-
-    if (isBackstop) {
-      // This should never fire in normal operation — escalate so it reaches Sentry.
-      logger.warn('Stuck pending reservations found by hard-ceiling sweep — keys locked for 2+ days', {
-        count: stale.length,
-        reservationIds: stale.map((r) => r.id),
-        oldestCreatedAt: stale[0]?.created_at,
-        maxAgeHours: HARD_MAX_AGE_HOURS,
-      });
-    }
 
     let released = 0;
     for (const reservation of stale) {
@@ -89,16 +64,47 @@ export class ExpireReservationsUseCase {
       }
     }
 
-    if (isBackstop) {
-      logger.warn('Hard-ceiling sweep released stuck reservations', {
-        released,
-        total: stale.length,
-        maxAgeHours: HARD_MAX_AGE_HOURS,
-      });
-    } else {
-      logger.info('Expired stale reservations', { expired: released, total: stale.length, maxAgeMinutes });
+    logger.info('Expired stale reservations (expires_at sweep)', { expired: released, total: stale.length });
+    return released;
+  }
+
+  private async releaseBackstop(): Promise<void> {
+    const cutoff = new Date(Date.now() - BACKSTOP_AGE_HOURS * 60 * 60 * 1000).toISOString();
+
+    // Catch rows with NULL expires_at (pre-dates the expires_at column) OR rows
+    // that slipped through the primary sweep for any reason.
+    const stuck = await this.db.query<{ id: string; created_at: string; expires_at: string | null }>(
+      'seller_stock_reservations',
+      {
+        select: 'id, created_at, expires_at',
+        eq: [['status', 'pending']],
+        lt: [['created_at', cutoff]],
+      },
+    );
+
+    if (stuck.length === 0) return;
+
+    logger.warn('Stuck pending reservations found by hard-ceiling backstop — cron likely broken for 5+ days', {
+      count: stuck.length,
+      reservationIds: stuck.map((r) => r.id),
+      oldestCreatedAt: stuck[0]?.created_at,
+      backstopAgeHours: BACKSTOP_AGE_HOURS,
+    });
+
+    for (const reservation of stuck) {
+      try {
+        await this.keyOps.releaseReservationKeys(reservation.id, 'expired');
+      } catch (err) {
+        logger.warn('Backstop: failed to expire reservation', {
+          reservationId: reservation.id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
 
-    return released;
+    logger.warn('Hard-ceiling backstop released stuck reservations', {
+      total: stuck.length,
+      backstopAgeHours: BACKSTOP_AGE_HOURS,
+    });
   }
 }

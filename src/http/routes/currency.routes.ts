@@ -19,6 +19,8 @@ export async function adminCurrencyRoutes(app: FastifyInstance) {
   app.get('/rates', { preHandler: [employeeGuard] }, async (_request, reply) => {
     const uc = container.resolve<GetCurrencyRatesUseCase>(UC_TOKENS.GetCurrencyRates);
     const rates = await uc.execute();
+    // Rates change infrequently; 60s is acceptable staleness for the CRM.
+    reply.header('Cache-Control', 'private, max-age=60, stale-while-revalidate=120');
     return reply.send({ rates });
   });
 

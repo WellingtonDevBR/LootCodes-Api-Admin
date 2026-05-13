@@ -85,13 +85,12 @@ export class SupabaseAdminUserRepository implements IAdminUserRepository {
     const limit = dto.limit ?? 25;
     const offset = dto.offset ?? 0;
 
-    const profiles = await this.db.query<Record<string, unknown>>('profiles', {
+    const { data: sliced, total } = await this.db.queryPaginated<Record<string, unknown>>('profiles', {
       select: 'id, user_id, full_name, username, created_at, account_status',
       order: { column: 'created_at', ascending: false },
-      limit: limit + offset,
+      range: [offset, offset + limit - 1],
     });
 
-    const sliced = profiles.slice(offset, offset + limit);
     const userIds = sliced.map(p => p.user_id as string).filter(Boolean);
 
     const orderStats: Record<string, { count: number; spent: number; last: string | null }> = {};
@@ -144,7 +143,7 @@ export class SupabaseAdminUserRepository implements IAdminUserRepository {
 
     return {
       customers,
-      total: profiles.length,
+      total,
     };
   }
 }
