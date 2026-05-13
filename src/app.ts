@@ -153,12 +153,22 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   await registerCronJobs(app);
 
-  app.addHook('onReady', async () => {
-    const { container } = await import('./di/container.js');
-    const { TOKENS } = await import('./di/tokens.js');
-    const db = container.resolve(TOKENS.Database) as import('./core/ports/database.port.js').IDatabase;
-    const registry = container.resolve(TOKENS.MarketplaceAdapterRegistry) as import('./core/ports/marketplace-adapter.port.js').IMarketplaceAdapterRegistry;
-    await bootstrapMarketplaceAdapters(db, registry);
+  // Bootstrap marketplace adapters after the server is ready.
+  // Intentionally fire-and-forget so a slow or unavailable marketplace API
+  // (e.g. Eneba during startup) never blocks the process from becoming ready
+  // and serving traffic. Bootstrap failures are logged but do not crash the server.
+  app.addHook('onReady', (_done) => {
+    const done = _done as () => void;
+    import('./di/container.js').then(({ container }) =>
+      import('./di/tokens.js').then(({ TOKENS }) => {
+        const db = container.resolve(TOKENS.Database) as import('./core/ports/database.port.js').IDatabase;
+        const registry = container.resolve(TOKENS.MarketplaceAdapterRegistry) as import('./core/ports/marketplace-adapter.port.js').IMarketplaceAdapterRegistry;
+        return bootstrapMarketplaceAdapters(db, registry);
+      }),
+    ).catch((err: unknown) => {
+      app.log.error({ err }, 'Marketplace adapter bootstrap failed — adapters may be unavailable until next restart');
+    });
+    done();
   });
 
   return app;
