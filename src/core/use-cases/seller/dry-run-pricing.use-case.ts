@@ -9,6 +9,7 @@ import type { SellerCostBasisService } from '../../../infra/seller/pricing/selle
 import { mergeSellerListingPricingOverrides } from './listing-pricing-overrides-merge.js';
 import {
   readsBypassProfitabilityGuard,
+  readsBypassFloorPct,
   computeRelaxedEffectiveMinCentsForAutoPricing,
 } from './auto-pricing-profitability-guard.js';
 
@@ -52,6 +53,7 @@ export class DryRunPricingUseCase {
     }
 
     const bypass = readsBypassProfitabilityGuard(overrides);
+    const bypassFloorPct = readsBypassFloorPct(overrides);
     const effectiveFloor = bypass
       ? computeRelaxedEffectiveMinCentsForAutoPricing(
           {
@@ -59,6 +61,8 @@ export class DryRunPricingUseCase {
             min_price_override_cents: Number(listing.min_price_override_cents ?? 0),
           },
           mergedConfig.min_price_floor_cents,
+          costBasisCents ?? 0,
+          bypassFloorPct,
         )
       : ((listing.min_price_cents as number) || costBasisCents || 0);
 

@@ -28,6 +28,7 @@ import {
 import { SellerCostBasisService } from './seller-cost-basis.service.js';
 import {
   readsBypassProfitabilityGuard,
+  readsBypassFloorPct,
   shouldSkipForProfitabilityNoCost,
   computeRelaxedEffectiveMinCentsForAutoPricing,
 } from '../../../core/use-cases/seller/auto-pricing-profitability-guard.js';
@@ -467,6 +468,7 @@ export class SellerAutoPricingService implements ISellerAutoPricingService {
               ? listing.pricing_overrides
               : undefined;
           const bypassProfitabilityGuard = readsBypassProfitabilityGuard(rawOverrides);
+          const bypassFloorPct = readsBypassFloorPct(rawOverrides);
 
           // Profitability floor (read bypass from raw pricing_overrides JSON, not merged config)
           const hasProfitTarget = config.min_profit_margin_pct > 0;
@@ -533,7 +535,7 @@ export class SellerAutoPricingService implements ISellerAutoPricingService {
           }
 
           const effectiveMin = bypassProfitabilityGuard
-            ? computeRelaxedEffectiveMinCentsForAutoPricing(listing, config.min_price_floor_cents)
+            ? computeRelaxedEffectiveMinCentsForAutoPricing(listing, config.min_price_floor_cents, effectiveCostCents, bypassFloorPct)
             : this.costBasisService.getEffectiveMinPrice(
               { ...listing, cost_basis_cents: effectiveCostCents },
               config.min_price_floor_cents,

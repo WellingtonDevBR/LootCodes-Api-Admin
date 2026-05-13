@@ -25,6 +25,7 @@ import { parseSellerConfig } from '../../core/use-cases/seller/seller.types.js';
 import { mergeSellerListingPricingOverrides } from '../../core/use-cases/seller/listing-pricing-overrides-merge.js';
 import {
   readsBypassProfitabilityGuard,
+  readsBypassFloorPct,
   computeRelaxedEffectiveMinCentsForAutoPricing,
 } from '../../core/use-cases/seller/auto-pricing-profitability-guard.js';
 import { createLogger } from '../../shared/logger.js';
@@ -233,6 +234,7 @@ export class SupabaseAdminSellerPricingRepository implements IAdminSellerPricing
 
     const currentPriceCents = (listing.price_cents as number) ?? 0;
     const bypassDryRun = readsBypassProfitabilityGuard(overrides);
+    const bypassFloorPctDryRun = readsBypassFloorPct(overrides);
     const effectiveFloor = bypassDryRun
       ? computeRelaxedEffectiveMinCentsForAutoPricing(
           {
@@ -240,6 +242,8 @@ export class SupabaseAdminSellerPricingRepository implements IAdminSellerPricing
             min_price_override_cents: Number(listing.min_price_override_cents ?? 0),
           },
           mergedConfig.min_price_floor_cents,
+          costBasis ?? 0,
+          bypassFloorPctDryRun,
         )
       : ((listing.min_price_cents as number) || costBasis || 0);
 
