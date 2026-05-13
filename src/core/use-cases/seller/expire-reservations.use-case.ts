@@ -7,15 +7,30 @@ import { createLogger } from '../../../shared/logger.js';
 
 const logger = createLogger('expire-reservations');
 
-const DEFAULT_MAX_AGE_MINUTES = 60;
+/**
+ * Default expiry window for pending reservations.
+ *
+ * WHY 72 HOURS:
+ * For Eneba declared_stock the buyer's payment window can extend well beyond
+ * 24 hours — Eneba may send PROVIDE up to ~48 hours after RESERVE (empirically
+ * observed: 22-hour gap for a Discord Nitro order). A 60-minute default caused
+ * us to expire the reservation and reject the late PROVIDE, leaving the buyer
+ * without their key.
+ *
+ * We should NEVER expire a reservation ourselves unless Eneba's window has
+ * definitively passed — Eneba sends CANCEL when a buyer doesn't pay, which is
+ * the authoritative signal to release the key.  72 hours gives sufficient
+ * buffer for any realistic Eneba payment window while still cleaning up truly
+ * abandoned reservations.
+ */
+const DEFAULT_MAX_AGE_MINUTES = 72 * 60; // 72 hours
 
 /**
  * Hard ceiling: any pending reservation older than this is stuck by definition.
- * The normal 60-minute sweep should catch everything long before this triggers.
- * If this sweep finds anything it means the housekeeping cron was broken for 2+
+ * If this sweep finds anything it means the housekeeping cron was broken for 5+
  * days — logged at warn so it surfaces in Sentry.
  */
-const HARD_MAX_AGE_HOURS = 48;
+const HARD_MAX_AGE_HOURS = 120; // 5 days
 
 @injectable()
 export class ExpireReservationsUseCase {
