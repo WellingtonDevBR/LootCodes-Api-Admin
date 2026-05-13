@@ -1,6 +1,6 @@
 import { injectable, inject } from 'tsyringe';
 import { TOKENS } from '../../di/tokens.js';
-import type { IDatabase, PaginatedResult, QueryOptions } from '../../core/ports/database.port.js';
+import type { IDatabase, QueryOptions } from '../../core/ports/database.port.js';
 import { sanitizeIlikeTerm } from '../../shared/sanitize-ilike.js';
 import type { IAdminInventoryRepository } from '../../core/ports/admin-inventory-repository.port.js';
 import type {
@@ -184,17 +184,17 @@ export class SupabaseAdminInventoryRepository implements IAdminInventoryReposito
   }
 
   async getInventoryCatalog(dto: GetInventoryCatalogDto): Promise<GetInventoryCatalogResult> {
-    const limit = Math.min(Math.max(dto.limit ?? 5000, 1), 10_000);
-    const offset = Math.max(dto.offset ?? 0, 0);
-    const range: [number, number] = [offset, offset + limit - 1];
-
     const selectVariants =
       'id, sku, price_usd, is_active, product_id, region_id, default_cost_cents, default_cost_currency, face_value';
 
     const rawSearch = dto.search?.trim() ?? '';
     const searchTerm = rawSearch.length > 0 ? sanitizeIlikeTerm(rawSearch) : '';
 
-    let paginated: PaginatedResult<Record<string, unknown>>;
+    // Use queryAll (auto-paginating in 1 000-row chunks) instead of a single
+    // queryPaginated call.  Supabase hosted PostgREST enforces max-rows = 1 000
+    // per request: a Range: 0-4999 header is silently truncated to 1 000 rows,
+    // which was causing the "1 000 SKUs" display bug when we have 1 719 variants.
+    let sliced: Record<string, unknown>[];
     if (searchTerm.length > 0) {
       const pattern = `%${searchTerm}%`;
       const matchingProducts = await this.db.query<{ id: string }>('products', {
@@ -208,21 +208,17 @@ export class SupabaseAdminInventoryRepository implements IAdminInventoryReposito
         const inList = pidList.map(id => `"${id}"`).join(',');
         orParts.push(`product_id.in.(${inList})`);
       }
-      paginated = await this.db.queryPaginated<Record<string, unknown>>('product_variants', {
+      sliced = await this.db.queryAll<Record<string, unknown>>('product_variants', {
         select: selectVariants,
         or: orParts.join(','),
         order: { column: 'created_at', ascending: false },
-        range,
       });
     } else {
-      paginated = await this.db.queryPaginated<Record<string, unknown>>('product_variants', {
+      sliced = await this.db.queryAll<Record<string, unknown>>('product_variants', {
         select: selectVariants,
         order: { column: 'created_at', ascending: false },
-        range,
       });
     }
-
-    const sliced = paginated.data;
     const variantIds = sliced.map(v => v.id as string);
     const productIds = [...new Set(sliced.map(v => v.product_id as string))];
     const regionIds = [...new Set(sliced.map(v => v.region_id as string).filter(Boolean))];
