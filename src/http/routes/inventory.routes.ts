@@ -100,7 +100,7 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
       TOKENS.Database,
     );
 
-    const selectCols = 'id, variant_id, key_state, is_used, created_at, used_at, supplier_reference, order_id, purchase_cost, purchase_currency, orders(order_number, order_channel, delivery_email, guest_email, contact_email, customer_full_name)';
+    const selectCols = 'id, variant_id, key_state, is_used, created_at, used_at, supplier_reference, order_id, purchase_cost, purchase_currency, orders(order_number, order_channel, marketplace_pricing, delivery_email, guest_email, contact_email, customer_full_name)';
 
     const eqFilters: Array<[string, unknown]> = [];
     const inFilters: Array<[string, unknown[]]> = [];
@@ -193,7 +193,7 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
       const productName = productMap.get(productId) ?? '';
       const meta = variantMetaMap.get(vid);
       const regionName = meta?.region_id ? regionNameMap.get(meta.region_id) ?? null : null;
-      const order = k.orders as { order_number?: string; order_channel?: string; delivery_email?: string; guest_email?: string; contact_email?: string; customer_full_name?: string } | null;
+      const order = k.orders as { order_number?: string; order_channel?: string; marketplace_pricing?: { provider?: string } | null; delivery_email?: string; guest_email?: string; contact_email?: string; customer_full_name?: string } | null;
 
       let soldTo: string | null = null;
       if (order) {
@@ -221,6 +221,7 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
         orderId: (k.order_id as string) || null,
         orderNumber: order?.order_number || null,
         orderChannel: order?.order_channel || null,
+        marketplaceName: order?.marketplace_pricing?.provider ?? null,
         soldTo,
         purchaseCost: typeof k.purchase_cost === 'number' ? k.purchase_cost
           : typeof k.purchase_cost === 'string' ? Number(k.purchase_cost) : null,
