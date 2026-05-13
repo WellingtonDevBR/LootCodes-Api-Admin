@@ -5,6 +5,7 @@ import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import multipart from '@fastify/multipart';
 import sensible from '@fastify/sensible';
+import compress from '@fastify/compress';
 import crypto from 'node:crypto';
 import { loadEnv } from './config/env.js';
 import { buildCorsOrigins, corsOriginValidator } from './config/cors.js';
@@ -83,6 +84,17 @@ export async function buildApp(): Promise<FastifyInstance> {
   });
 
   await app.register(sensible);
+
+  // gzip / brotli compression for JSON responses.
+  // The /orders and /inventory list endpoints can ship multi-megabyte
+  // payloads of nested order_items + products + variants — uncompressed
+  // they dominate the response budget on every dashboard navigation.
+  // `threshold: 1024` skips tiny responses where compression isn't worth it.
+  await app.register(compress, {
+    global: true,
+    threshold: 1024,
+    encodings: ['br', 'gzip'],
+  });
 
   // Callback-style hook (not async) so done() runs inside requestContextStore.run(),
   // keeping the AsyncLocalStorage context alive for the full async request chain.

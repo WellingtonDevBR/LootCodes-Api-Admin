@@ -21,6 +21,7 @@ export class SupabaseDbAdapter implements IDatabase {
     if (options?.eq) for (const [col, val] of options.eq) query = query.eq(col, val as string);
     if (options?.neq) for (const [col, val] of options.neq) query = query.neq(col, val as string);
     if (options?.in) for (const [col, vals] of options.in) query = query.in(col, vals as string[]);
+    if (options?.or) query = query.or(options.or);
     if (options?.ilike) for (const [col, pattern] of options.ilike) query = query.ilike(col, pattern);
     if (options?.lt) for (const [col, val] of options.lt) query = query.lt(col, val as string);
     if (options?.gt) for (const [col, val] of options.gt) query = query.gt(col, val as string);

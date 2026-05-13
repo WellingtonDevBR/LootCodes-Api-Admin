@@ -4,6 +4,11 @@ export interface QueryOptions {
   eq?: Array<[string, unknown]>;
   neq?: Array<[string, unknown]>;
   in?: Array<[string, unknown[]]>;
+  /**
+   * PostgREST `.or()` filter string, e.g.
+   * `name.ilike.%foo%,slug.ilike.%foo%`. Combined with other predicates via AND.
+   */
+  or?: string;
   ilike?: Array<[string, string]>;
   lt?: Array<[string, unknown]>;
   gt?: Array<[string, unknown]>;

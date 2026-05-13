@@ -172,6 +172,9 @@ export interface InventoryCatalogRow {
   /** Sum of `declared_stock` across all active seller listings for this variant.
    *  Zero when the variant has no active marketplace listings. */
   total_declared_stock: number;
+  /** Count of seller listings in `status = 'paused'` for this variant.
+   *  Zero when none exist. Shown in the CRM as a warning badge. */
+  paused_listing_count: number;
 }
 
 export interface ProviderAccountInfo {

@@ -24,6 +24,38 @@ interface DbFixtures {
 }
 
 function makeDb(fixtures: DbFixtures): IDatabase {
+  const filterVariants = (opts?: Record<string, unknown>): Row[] => {
+    let rows: Row[] = [...fixtures.product_variants];
+    const eqFilters: Array<[string, unknown]> = (opts?.eq as Array<[string, unknown]>) ?? [];
+    const inFilters: Array<[string, unknown[]]> = (opts?.in as Array<[string, unknown[]]>) ?? [];
+    for (const [col, vals] of inFilters) {
+      rows = rows.filter(r => (vals as unknown[]).includes(r[col]));
+    }
+    for (const [col, val] of eqFilters) {
+      rows = rows.filter(r => r[col] === val);
+    }
+    const rawOr = opts?.or as string | undefined;
+    if (rawOr && typeof rawOr === 'string') {
+      const skuMatch = rawOr.match(/sku\.ilike\.([^,]+)/);
+      const pattern = skuMatch?.[1]?.toLowerCase() ?? '';
+      const pidMatch = rawOr.match(/product_id\.in\.\(([^)]*)\)/);
+      const inRaw = pidMatch?.[1] ?? '';
+      const quotedIds = inRaw.match(/"([^"]+)"/g)?.map(s => s.replace(/"/g, '')) ?? [];
+      rows = rows.filter((r) => {
+        const sku = String(r.sku ?? '').toLowerCase();
+        const matchSku = pattern.length > 0 && sku.includes(pattern.replace(/%/g, ''));
+        const matchPid = quotedIds.length > 0 && quotedIds.includes(String(r.product_id));
+        return matchSku || matchPid;
+      });
+    }
+    rows.sort((a, b) => {
+      const ac = String(a.created_at ?? '');
+      const bc = String(b.created_at ?? '');
+      return bc.localeCompare(ac);
+    });
+    return rows;
+  };
+
   const db = {
     queryAll: vi.fn((table: string, opts?: Record<string, unknown>) => {
       const eqFilters: Array<[string, unknown]> = (opts?.eq as Array<[string, unknown]>) ?? [];
@@ -39,7 +71,6 @@ function makeDb(fixtures: DbFixtures): IDatabase {
       else if (table === 'seller_listings') rows = fixtures.seller_listings;
       else if (table === 'provider_variant_offers') rows = fixtures.provider_variant_offers;
       else if (table === 'product_keys') {
-        // Distinguish available vs sold queries via eq filters
         const keyStateFilter = eqFilters.find(([k]) => k === 'key_state');
         const isUsedFilter = eqFilters.find(([k]) => k === 'is_used');
         if (keyStateFilter?.[1] === 'available') rows = fixtures.product_keys_available;
@@ -49,11 +80,9 @@ function makeDb(fixtures: DbFixtures): IDatabase {
         rows = [];
       }
 
-      // Apply in[] filter
       for (const [col, vals] of inFilters) {
         rows = rows.filter(r => (vals as unknown[]).includes(r[col]));
       }
-      // Apply eq[] filter
       for (const [col, val] of eqFilters) {
         if (col !== 'key_state' && col !== 'is_used') {
           rows = rows.filter(r => r[col] === val);
@@ -63,16 +92,42 @@ function makeDb(fixtures: DbFixtures): IDatabase {
       return Promise.resolve(rows);
     }),
 
+    queryPaginated: vi.fn((table: string, opts?: Record<string, unknown>) => {
+      if (table === 'product_variants') {
+        const all = filterVariants(opts);
+        const total = all.length;
+        const range = opts?.range as [number, number] | undefined;
+        let data = all;
+        if (range) {
+          const [from, to] = range;
+          data = all.slice(from, to + 1);
+        }
+        return Promise.resolve({ data, total });
+      }
+      return Promise.resolve({ data: [], total: 0 });
+    }),
+
     // query is used for product_platforms lookup in catalog
     query: vi.fn((table: string, opts?: Record<string, unknown>) => {
       const inFilters: Array<[string, unknown[]]> = (opts?.in as Array<[string, unknown[]]>) ?? [];
+      const ilikeFilters: Array<[string, string]> = (opts?.ilike as Array<[string, string]>) ?? [];
       let rows: Row[];
       if (table === 'product_platforms') rows = fixtures.product_platforms;
       else if (table === 'provider_accounts') rows = fixtures.provider_accounts;
+      else if (table === 'products') rows = fixtures.products;
       else rows = [];
       for (const [col, vals] of inFilters) {
         rows = rows.filter(r => (vals as unknown[]).includes(r[col]));
       }
+      for (const [col, pat] of ilikeFilters) {
+        const needle = pat.replace(/%/g, '').toLowerCase();
+        rows = rows.filter((r) => {
+          const v = String(r[col] ?? '').toLowerCase();
+          return v.includes(needle);
+        });
+      }
+      const lim = opts?.limit as number | undefined;
+      if (typeof lim === 'number' && lim > 0) rows = rows.slice(0, lim);
       return Promise.resolve(rows);
     }),
   };
@@ -81,7 +136,6 @@ function makeDb(fixtures: DbFixtures): IDatabase {
   return {
     ...db,
     queryOne: vi.fn().mockResolvedValue(null),
-    queryPaginated: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     insert: vi.fn().mockResolvedValue({}),
     insertMany: vi.fn().mockResolvedValue(0),
     update: vi.fn().mockResolvedValue([]),

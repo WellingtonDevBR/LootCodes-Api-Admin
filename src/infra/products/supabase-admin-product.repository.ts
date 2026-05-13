@@ -3,6 +3,7 @@ import { injectable, inject } from 'tsyringe';
 import { TOKENS } from '../../di/tokens.js';
 import { InternalError } from '../../core/errors/domain-errors.js';
 import type { IDatabase, QueryOptions } from '../../core/ports/database.port.js';
+import { sanitizeIlikeTerm } from '../../shared/sanitize-ilike.js';
 import type { IAdminProductRepository } from '../../core/ports/admin-product-repository.port.js';
 import type {
   ListProductsDto, ListProductsResult,
@@ -112,28 +113,34 @@ export class SupabaseAdminProductRepository implements IAdminProductRepository {
   }
 
   async listProducts(dto: ListProductsDto): Promise<ListProductsResult> {
-    const limit = dto.limit ?? 50;
-    const offset = dto.offset ?? 0;
+    const limit = Math.min(Math.max(dto.limit ?? 50, 1), 200);
+    const offset = Math.max(dto.offset ?? 0, 0);
+    const range: [number, number] = [offset, offset + limit - 1];
 
     const eq: Array<[string, unknown]> = [];
     if (dto.product_type) eq.push(['product_type', dto.product_type]);
     if (dto.is_active !== undefined) eq.push(['is_active', dto.is_active]);
 
-    const allProducts = await this.db.queryAll<Record<string, unknown>>('products', {
-      eq,
+    const rawSearch = dto.search?.trim() ?? '';
+    const searchTerm = rawSearch.length > 0 ? sanitizeIlikeTerm(rawSearch) : '';
+
+    const listQuery: QueryOptions = {
+      select: '*',
       order: { column: 'name', ascending: true },
-    });
+      range,
+    };
+    if (eq.length > 0) listQuery.eq = eq;
+    if (searchTerm.length > 0) {
+      const pattern = `%${searchTerm}%`;
+      listQuery.or = `name.ilike.${pattern},slug.ilike.${pattern}`;
+    }
 
-    const filtered = dto.search
-      ? allProducts.filter((p) => {
-          const name = typeof p.name === 'string' ? p.name : '';
-          const slug = typeof p.slug === 'string' ? p.slug : '';
-          const q = dto.search!.toLowerCase();
-          return name.toLowerCase().includes(q) || slug.toLowerCase().includes(q);
-        })
-      : allProducts;
+    const { data: pageRows, total } = await this.db.queryPaginated<Record<string, unknown>>('products', listQuery);
 
-    const productIds = filtered.map(p => p.id as string);
+    const productIds = pageRows.map(p => p.id as string);
+    if (productIds.length === 0) {
+      return { products: [], total };
+    }
 
     const allVariants = await this.batchedQuery<{ id: string; product_id: string }>(
       'product_variants', 'product_id', productIds, { select: 'id, product_id' },
@@ -166,7 +173,7 @@ export class SupabaseAdminProductRepository implements IAdminProductRepository {
       linked_channel_count: number;
     };
 
-    const enriched: EnrichedProduct[] = filtered.map(p => {
+    const enriched: EnrichedProduct[] = pageRows.map(p => {
       const pid = p.id as string;
       const variantIds = variantsByProduct.get(pid) ?? [];
       let totalStock = 0;
@@ -185,10 +192,7 @@ export class SupabaseAdminProductRepository implements IAdminProductRepository {
       return ((a.name as string) ?? '').localeCompare((b.name as string) ?? '');
     });
 
-    const total = enriched.length;
-    const paginated = enriched.slice(offset, offset + limit);
-
-    return { products: paginated, total };
+    return { products: enriched, total };
   }
 
   async getProduct(dto: GetProductDto): Promise<GetProductResult> {

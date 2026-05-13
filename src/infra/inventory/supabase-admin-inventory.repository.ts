@@ -1,6 +1,7 @@
 import { injectable, inject } from 'tsyringe';
 import { TOKENS } from '../../di/tokens.js';
-import type { IDatabase, QueryOptions } from '../../core/ports/database.port.js';
+import type { IDatabase, PaginatedResult, QueryOptions } from '../../core/ports/database.port.js';
+import { sanitizeIlikeTerm } from '../../shared/sanitize-ilike.js';
 import type { IAdminInventoryRepository } from '../../core/ports/admin-inventory-repository.port.js';
 import type {
   EmitInventoryStockChangedDto,
@@ -183,20 +184,50 @@ export class SupabaseAdminInventoryRepository implements IAdminInventoryReposito
   }
 
   async getInventoryCatalog(dto: GetInventoryCatalogDto): Promise<GetInventoryCatalogResult> {
-    const limit = dto.limit ?? 5000;
-    const offset = dto.offset ?? 0;
+    const limit = Math.min(Math.max(dto.limit ?? 5000, 1), 10_000);
+    const offset = Math.max(dto.offset ?? 0, 0);
+    const range: [number, number] = [offset, offset + limit - 1];
 
-    const variants = await this.db.queryAll<Record<string, unknown>>('product_variants', {
-      select: 'id, sku, price_usd, is_active, product_id, region_id, default_cost_cents, default_cost_currency, face_value',
-      order: { column: 'created_at', ascending: false },
-    });
+    const selectVariants =
+      'id, sku, price_usd, is_active, product_id, region_id, default_cost_cents, default_cost_currency, face_value';
 
-    const sliced = variants.slice(offset, offset + limit);
+    const rawSearch = dto.search?.trim() ?? '';
+    const searchTerm = rawSearch.length > 0 ? sanitizeIlikeTerm(rawSearch) : '';
+
+    let paginated: PaginatedResult<Record<string, unknown>>;
+    if (searchTerm.length > 0) {
+      const pattern = `%${searchTerm}%`;
+      const matchingProducts = await this.db.query<{ id: string }>('products', {
+        select: 'id',
+        ilike: [['name', pattern]],
+        limit: 100,
+      });
+      const pidList = matchingProducts.map(p => p.id);
+      const orParts: string[] = [`sku.ilike.${pattern}`];
+      if (pidList.length > 0) {
+        const inList = pidList.map(id => `"${id}"`).join(',');
+        orParts.push(`product_id.in.(${inList})`);
+      }
+      paginated = await this.db.queryPaginated<Record<string, unknown>>('product_variants', {
+        select: selectVariants,
+        or: orParts.join(','),
+        order: { column: 'created_at', ascending: false },
+        range,
+      });
+    } else {
+      paginated = await this.db.queryPaginated<Record<string, unknown>>('product_variants', {
+        select: selectVariants,
+        order: { column: 'created_at', ascending: false },
+        range,
+      });
+    }
+
+    const sliced = paginated.data;
     const variantIds = sliced.map(v => v.id as string);
     const productIds = [...new Set(sliced.map(v => v.product_id as string))];
     const regionIds = [...new Set(sliced.map(v => v.region_id as string).filter(Boolean))];
 
-    const [products, regions, availableKeys, soldKeys, variantPlatforms, providerOffers, providerAccounts, sellerListings] = await Promise.all([
+    const [products, regions, availableKeys, soldKeys, variantPlatforms, providerOffers, providerAccounts, sellerListings, pausedListings] = await Promise.all([
       productIds.length
         ? this.batchedQuery<Record<string, unknown>>('products', 'id', productIds, { select: 'id, name, category' })
         : [],
@@ -219,12 +250,16 @@ export class SupabaseAdminInventoryRepository implements IAdminInventoryReposito
         'provider_variant_offers', 'variant_id', variantIds,
         { select: 'variant_id, provider_account_id, is_active, last_price_cents, currency' },
       ),
-      this.db.queryAll<Record<string, unknown>>('provider_accounts', {
+      this.db.query<Record<string, unknown>>('provider_accounts', {
         select: 'id, display_name, supports_seller',
       }),
       this.batchedQuery<Record<string, unknown>>(
         'seller_listings', 'variant_id', variantIds,
         { select: 'variant_id, declared_stock, provider_account_id', eq: [['status', 'active']] },
+      ),
+      this.batchedQuery<Record<string, unknown>>(
+        'seller_listings', 'variant_id', variantIds,
+        { select: 'variant_id', eq: [['status', 'paused']] },
       ),
     ]);
 
@@ -250,6 +285,12 @@ export class SupabaseAdminInventoryRepository implements IAdminInventoryReposito
       if (ds > 0) {
         declaredStockMap.set(vid, (declaredStockMap.get(vid) ?? 0) + ds);
       }
+    }
+
+    const pausedListingCountMap = new Map<string, number>();
+    for (const pl of pausedListings) {
+      const vid = pl.variant_id as string;
+      pausedListingCountMap.set(vid, (pausedListingCountMap.get(vid) ?? 0) + 1);
     }
 
     // Platform names per variant
@@ -334,6 +375,7 @@ export class SupabaseAdminInventoryRepository implements IAdminInventoryReposito
         best_provider_cost_cents: bestCost?.cents ?? null,
         best_provider_cost_currency: bestCost?.currency ?? null,
         total_declared_stock: declaredStockMap.get(vid) ?? 0,
+        paused_listing_count: pausedListingCountMap.get(vid) ?? 0,
       };
     });
 
