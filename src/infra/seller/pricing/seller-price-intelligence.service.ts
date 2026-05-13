@@ -461,7 +461,16 @@ export class SellerPriceIntelligenceService {
     requiredSnapshots: number,
   ): Promise<{ confirmed: boolean; count: number }> {
     try {
-      const rows = await this.db.query<{ price_cents: number; recorded_at: string }>(
+      // Two-query approach: fetch only `recorded_at` to get the last N distinct
+      // snapshot timestamps (avoids a large LIMIT that breaks when a product has
+      // many competitors per batch). Then resolve the per-cycle minimum price.
+      //
+      // A naive single-query approach using `limit: requiredSnapshots * 10` breaks
+      // for popular products that have more than 10 competitors per batch — the limit
+      // is exhausted by a single cycle and dampening never confirms.
+
+      // Step 1 — get distinct timestamps (fetch timestamps only, deduplicate in JS)
+      const timestampRows = await this.db.query<{ recorded_at: string }>(
         'seller_competitor_snapshots',
         {
           eq: [
@@ -469,26 +478,59 @@ export class SellerPriceIntelligenceService {
             ['is_own_offer', false],
             ['in_stock', true],
           ],
+          select: 'recorded_at',
           order: { column: 'recorded_at', ascending: false },
-          limit: requiredSnapshots * 10,
+          // Generous upper bound: even if 1000 competitors per batch it only fetches
+          // timestamps (1 column), so memory/latency is still negligible.
+          limit: requiredSnapshots * 1000,
         },
       );
 
-      if (!rows || rows.length === 0) {
+      if (!timestampRows || timestampRows.length === 0) {
         return { confirmed: false, count: 0 };
       }
 
+      // Deduplicate and keep only the N most recent distinct timestamps.
+      const distinctTimestamps: string[] = [];
+      const seen = new Set<string>();
+      for (const row of timestampRows) {
+        if (!seen.has(row.recorded_at)) {
+          seen.add(row.recorded_at);
+          distinctTimestamps.push(row.recorded_at);
+          if (distinctTimestamps.length >= requiredSnapshots) break;
+        }
+      }
+
+      if (distinctTimestamps.length < requiredSnapshots) {
+        return { confirmed: false, count: distinctTimestamps.length };
+      }
+
+      // Step 2 — fetch all competitor prices within those N timestamps in one query,
+      // then compute the per-cycle minimum in JS.
+      const priceRows = await this.db.query<{ price_cents: number; recorded_at: string }>(
+        'seller_competitor_snapshots',
+        {
+          eq: [
+            ['seller_listing_id', listingId],
+            ['is_own_offer', false],
+            ['in_stock', true],
+          ],
+          in: [['recorded_at', distinctTimestamps]],
+          order: { column: 'recorded_at', ascending: false },
+        },
+      );
+
       const cycleMap = new Map<string, number>();
-      for (const row of rows) {
+      for (const row of priceRows) {
         const existing = cycleMap.get(row.recorded_at);
         if (existing === undefined || row.price_cents < existing) {
           cycleMap.set(row.recorded_at, row.price_cents);
         }
       }
 
-      const cycleMinimums = [...cycleMap.entries()]
-        .sort((a, b) => b[0].localeCompare(a[0]))
-        .map(([, min]) => min);
+      const cycleMinimums = distinctTimestamps
+        .map((ts) => cycleMap.get(ts))
+        .filter((v): v is number => v !== undefined);
 
       let confirmedCount = 0;
       for (const cycleMin of cycleMinimums) {
