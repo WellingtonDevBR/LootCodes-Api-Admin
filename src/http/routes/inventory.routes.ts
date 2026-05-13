@@ -313,6 +313,7 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
       supplier_reference?: string;
       marketplace_eligible?: boolean;
       allowed_seller_provider_account_ids?: string[];
+      allow_duplicates?: boolean;
     };
 
     if (!body.variant_id || !UUID_RE.test(body.variant_id)) {
@@ -373,24 +374,28 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
 
     const hashes = await Promise.all(rawKeys.map(k => hashFn(k)));
 
+    const allowDuplicates = body.allow_duplicates === true;
+
     // Chunk hash lookups: each SHA-256 hash is 64 chars; sending all at once in a GET URL
     // would exceed the ~8 KB PostgREST URL limit for large batches.
     const HASH_LOOKUP_CHUNK = 100;
     const existingHashes = new Set<string>();
-    for (let c = 0; c < hashes.length; c += HASH_LOOKUP_CHUNK) {
-      const chunk = hashes.slice(c, c + HASH_LOOKUP_CHUNK);
-      const rows = await db.query<{ raw_key_hash: string }>(
-        'product_keys',
-        { select: 'raw_key_hash', in: [['raw_key_hash', chunk]] },
-      );
-      for (const r of rows) existingHashes.add(r.raw_key_hash);
+    if (!allowDuplicates) {
+      for (let c = 0; c < hashes.length; c += HASH_LOOKUP_CHUNK) {
+        const chunk = hashes.slice(c, c + HASH_LOOKUP_CHUNK);
+        const rows = await db.query<{ raw_key_hash: string }>(
+          'product_keys',
+          { select: 'raw_key_hash', in: [['raw_key_hash', chunk]] },
+        );
+        for (const r of rows) existingHashes.add(r.raw_key_hash);
+      }
     }
 
-    // Separate new keys from duplicates
+    // Separate new keys from duplicates (skipped when allow_duplicates is true)
     const newEntries: Array<{ key: string; hash: string }> = [];
     let duplicates = 0;
     for (let i = 0; i < rawKeys.length; i++) {
-      if (existingHashes.has(hashes[i])) {
+      if (!allowDuplicates && existingHashes.has(hashes[i])) {
         duplicates++;
       } else {
         newEntries.push({ key: rawKeys[i], hash: hashes[i] });
@@ -454,6 +459,7 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
           uploaded,
           duplicates,
           total_submitted: rawKeys.length,
+          allow_duplicates: allowDuplicates,
           purchase_cost: body.purchase_cost ?? 0,
           purchase_currency: body.purchase_currency ?? 'USD',
           supplier_reference: body.supplier_reference ?? null,
