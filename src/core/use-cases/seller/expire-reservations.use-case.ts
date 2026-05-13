@@ -26,7 +26,7 @@ export class ExpireReservationsUseCase {
     @inject(TOKENS.SellerKeyOperations) private keyOps: ISellerKeyOperationsPort,
   ) {}
 
-  async execute(dto: ExpireReservationsDto): Promise<ExpireReservationsResult> {
+  async execute(_dto: ExpireReservationsDto): Promise<ExpireReservationsResult> {
     // Primary sweep: respect the per-reservation expires_at set during RESERVE
     // (currently 3 calendar days). This is the authoritative expiry signal —
     // Eneba can send PROVIDE well after 24 hours so we must never expire sooner
