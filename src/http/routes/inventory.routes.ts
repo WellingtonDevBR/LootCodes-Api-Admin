@@ -66,6 +66,10 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
       offset: query.offset ? Number(query.offset) : 0,
       search: query.search,
     });
+    // Short shared-cache TTL: stale inventory for up to 30 s is acceptable for a CRM
+    // operator; it dramatically cuts repeat navigations back to the page.
+    // `private` keeps it out of shared CDN caches (responses are user-scoped via auth).
+    reply.header('Cache-Control', 'private, max-age=30, stale-while-revalidate=60');
     return reply.send(result);
   });
 
