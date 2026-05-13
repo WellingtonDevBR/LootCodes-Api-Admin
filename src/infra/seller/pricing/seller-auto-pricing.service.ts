@@ -905,6 +905,7 @@ export class SellerAutoPricingService implements ISellerAutoPricingService {
               {
                 priceCents: gross,
                 currency: listing.currency,
+                listingType: listing.listing_type,
                 externalListingId: listing.external_listing_id,
                 externalProductId: listing.external_product_id,
               },
