@@ -1,0 +1,186 @@
+The profitability floor = €14.66 × 1.01 + €0.25 = ~€15.07 minimum NET
+
+This doesnt make sense. 
+
+in today exchange rate 16.42 EUR TO USD = 13.99 EUR 
+
+it means this is the cost. so we want to profit currently at least 1% which means 14.13 EUR should be the set amount we want to receive. but that it is not 
+
+based on this the minimum we would set price after comission is 1530 cents which will make us receive 1413 cents eur
+
+query {
+    S_calculatePrice(input: {
+        price: {
+            amount: 1530,
+            currency: "EUR"
+        },
+        productId: "78086f2a-d485-11ee-aead-b2de3de418b4"
+    }) {
+        priceWithCommission { amount currency }
+        priceWithoutCommission { amount currency }
+        commission {
+            label
+            rate { amount currency }
+        }
+    }
+}
+
+{
+    "data": {
+        "S_calculatePrice": {
+            "priceWithCommission": {
+                "amount": 1654,
+                "currency": "EUR"
+            },
+            "priceWithoutCommission": {
+                "amount": 1413,
+                "currency": "EUR"
+            },
+            "commission": {
+                "label": "Games, DLCs equal to and above 5 EUR (6% + €0.25)",
+                "rate": {
+                    "amount": 117,
+                    "currency": "EUR"
+                }
+            }
+        }
+    },
+    "extensions": {}
+}
+
+but in can set price want to get
+
+P_updateAuctionPrice
+Updates multiple auctions' prices and key acquisition costs.
+
+Supported arguments
+The following arguments are supported by P_updateAuctionPrice mutation:
+
+Field	Type	Description
+input	P_API_UpdateAuctionPriceInput!	
+Return type
+The mutation returns the P_API_UpdateAuctionPriceResponse type.
+This mutation allows for maximum 200 price updates in a single mutation.
+Given that you can make 100 mutations with a single request, you can update up to 20 000 auctions prices in a single request.
+
+Example usage
+Mutation
+Here we are updating multiple auctions' prices.
+
+mutation UpdateManyAuctions {
+    update1: P_updateAuctionPrice(input: {
+        items: [ # Up to 200 items (price changes) per 1 mutation
+            {
+                auctionId: "00000000-0000-0000-0000-000000000000",
+                enabled: false, # You can also toggle auctions' enabled state
+                price: { # You can pass price or priceIWantToGet
+                    amount: 100,
+                    currency: "EUR"
+                },
+                acquisitionPrice: { # You can also update key cost
+                    amount: 40,
+                    currency: "EUR"
+                },
+                preventPaidPriceChange: false
+            },
+            {
+                auctionId: "00000000-0000-0000-0000-000000000000",
+                price: { # You can pass price or priceIWantToGet
+                    amount: 101,
+                    currency: "EUR"
+                },
+            },
+            {
+                auctionId: "00000000-0000-0000-0000-000000000000",
+                priceIWantToGet: {
+                    amount: 100,
+                    currency: "EUR"
+                },
+                preventPaidPriceChange: true # Its possible to prevent price change if you exceeded the update quota and do not want to pay for the price update
+            },
+            {
+                auctionId: "00000000-0000-0000-0000-000000000000",
+                wholesale: true, # You can toggle auctions' wholesale status
+                acquisitionPrice: { # Acquisition price can also be updated without changing price
+                    amount: 60,
+                    currency: "EUR"
+                },
+                wholesalePrice: {
+                    amount: 100,
+                    currency: "EUR"
+                }
+            },
+        ]
+    }) {
+        items {
+            auctionId # Auction ID
+            price {amount currency} # Final auction price that is set
+            priceIWantToGet {amount currency} # Auction net price (price without commission)
+            success # Bool: Whether auction is updated successfully
+            paidForPriceChange # Bool
+            error # String: Error message (If any)
+        }
+    }
+    update2: P_updateAuctionPrice(input: {
+        items: [ # Up to 200 items (price changes) per 1 mutation
+            {
+                auctionId: "00000000-0000-0000-0000-000000000000",
+                price: { # You can pass price or priceIWantToGet
+                    amount: 100,
+                    currency: "EUR"
+                },
+                preventPaidPriceChange: false
+            },
+            {
+                auctionId: "00000000-0000-0000-0000-000000000000",
+                price: { # You can pass price or priceIWantToGet
+                    amount: 101,
+                    currency: "EUR"
+                },
+            },
+            {
+                auctionId: "00000000-0000-0000-0000-000000000000",
+                priceIWantToGet: {
+                    amount: 100,
+                    currency: "EUR"
+                },
+                preventPaidPriceChange: true # Its possible to prevent price change if you exceeded the update quota and do not want to pay for the price update
+            },
+        ]
+    }) {
+        items {
+            auctionId # Auction ID
+            price {amount currency} # Final auction price that is set
+            priceIWantToGet {amount currency} # Auction net price (price without commission)
+            success # Bool: Whether auction is updated successfully
+            paidForPriceChange # Bool
+            error # String: Error message (If any)
+        }
+    }
+
+    # You can add more mutations in this request for more price updates in a single request
+}
+Result
+{
+  "data": {
+    "update1": {
+      "items": [
+        { "auctionId": "00000000-0000-0000-0000-000000000000", "price": { "amount": 100, "currency": "EUR" }, "priceIWantToGet": { "amount": 94, "currency": "EUR" }, "paidForPriceChange": false, "success": true, "error": null },
+        { "auctionId": "00000000-0000-0000-0000-000000000000", "price": { "amount": 101, "currency": "EUR" }, "priceIWantToGet": { "amount": 95, "currency": "EUR" }, "paidForPriceChange": true, "success": true, "error": null },
+        { "auctionId": "00000000-0000-0000-0000-000000000000", "price": null, "priceIWantToGet": null, "paidForPriceChange": false, "success": false, "error": "Paid price change is restricted by preventPaidPriceChange flag." },
+        { "auctionId": "00000000-0000-0000-0000-000000000000", "price": { "amount": 100, "currency": "EUR" }, "priceIWantToGet": { "amount": 94, "currency": "EUR" }, "paidForPriceChange": false, "success": true, "error": null }
+      ]
+    },
+    "update2": {
+      "items": [
+        { "auctionId": "00000000-0000-0000-0000-000000000000", "price": { "amount": 100, "currency": "EUR" }, "priceIWantToGet": { "amount": 94, "currency": "EUR" }, "paidForPriceChange": false, "success": true, "error": null },
+        { "auctionId": "00000000-0000-0000-0000-000000000000", "price": { "amount": 101, "currency": "EUR" }, "priceIWantToGet": { "amount": 95, "currency": "EUR" }, "paidForPriceChange": true, "success": true, "error": null },
+        { "auctionId": "00000000-0000-0000-0000-000000000000", "price": null, "priceIWantToGet": null, "paidForPriceChange": false, "success": false, "error": "Paid price change is restricted by preventPaidPriceChange flag." }
+      ]
+    }
+  }
+}
+
+Please check what you doing wrong, but doing this doesnt guarantee you add a good price.
+
+look the second image the minecraft competitors, the final price would be 15.30 eur right? but since the next is 15.45 we should set it to 15.44 always stay under 1 cent of the next inline
