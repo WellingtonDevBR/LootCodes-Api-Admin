@@ -113,6 +113,25 @@ export function computeUndampenedOptimalTarget(
 
   targetPrice = Math.max(targetPrice, effectiveMinPrice);
 
+  // When P1 is below the profitability floor we cannot match the cheapest
+  // sellers. Instead of sitting at the bare floor, scan upward for the first
+  // competitor priced ABOVE the floor and position 1 cent below them — this
+  // captures the revenue gap between our floor and the next profitable slot.
+  //
+  // Example: floor=€15.30, competitors=[€15.09, €15.12, €15.20, €15.45, €15.57]
+  //   P1=€15.09 < floor → firstAboveFloor=€15.45 → target=€15.44 (not €15.30)
+  if (p1 < effectiveMinPrice) {
+    const firstAboveFloor = nonOwn.find((c) => c.priceCents > effectiveMinPrice);
+    if (firstAboveFloor) {
+      const gapTarget = firstAboveFloor.priceCents - 1;
+      if (gapTarget > effectiveMinPrice) {
+        targetPrice = gapTarget;
+        reasonCode = 'gap_above_floor';
+        reason = `P1=${p1} below floor=${effectiveMinPrice}; first above=${firstAboveFloor.priceCents} — targeting ${gapTarget}`;
+      }
+    }
+  }
+
   return { targetPrice, reasonCode, reason, p1, p2, gapPct };
 }
 
