@@ -723,20 +723,35 @@ export class ProcurementDeclaredStockReconcileService implements IProcurementDec
     const stockMap = new Map<string, number>();
     if (variantIds.length === 0) return stockMap;
 
+    let data: Array<{ variant_id: string; available_count: number }>;
     try {
-      const data = await this.db.rpc<Array<{ variant_id: string; available_count: number }>>(
+      data = await this.db.rpc<Array<{ variant_id: string; available_count: number }>>(
         'get_batch_available_keys_count',
         { variant_uuids: variantIds },
       );
-
-      for (const row of data ?? []) {
-        stockMap.set(row.variant_id, row.available_count);
-      }
     } catch (err) {
-      logger.error('Failed to compute available stock', {
-        variantCount: variantIds.length,
-        error: err instanceof Error ? err.message : String(err),
-      });
+      // Re-throw so the entire reconcile run aborts. Swallowing this error and
+      // returning an empty map would cause every listing to appear as having 0
+      // internal stock, incorrectly routing them all through JIT procurement.
+      const msg = err instanceof Error ? err.message : String(err);
+      const isTransient = /fetch failed|ECONNRESET|ETIMEDOUT|ENOTFOUND|socket hang up/i.test(msg);
+      if (isTransient) {
+        logger.warn('Failed to compute available stock (transient) — aborting reconcile run', {
+          variantCount: variantIds.length,
+          error: msg,
+          transient: true,
+        });
+      } else {
+        logger.error('Failed to compute available stock — aborting reconcile run', err instanceof Error ? err : undefined, {
+          variantCount: variantIds.length,
+          error: msg,
+        });
+      }
+      throw err;
+    }
+
+    for (const row of data ?? []) {
+      stockMap.set(row.variant_id, row.available_count);
     }
 
     return stockMap;
