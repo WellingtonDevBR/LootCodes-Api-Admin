@@ -885,67 +885,39 @@ export class SellerAutoPricingService implements ISellerAutoPricingService {
         listingCompareGross,
       );
 
-      // Ratio-only conversion for cheap "would this even change?" pre-check.
-      // Avoids calling S_calculatePrice on every listing every tick.
-      const approxNetFromGross = (gross: number): number => {
+      // Gross→NET conversion via the observed gross/NET ratio.
+      //
+      // WHY NOT S_calculatePrice:
+      // S_calculatePrice(gross) returns the NET the seller receives when the buyer
+      // pays `gross`. However, priceIWantToGet works in the OPPOSITE direction —
+      // Eneba adds its commission ON TOP of the supplied NET to produce the buyer
+      // price. Due to Eneba's asymmetric fee application (commission computed on
+      // gross in S_calculatePrice but on NET when deriving the buyer price from
+      // priceIWantToGet), the round-trip is not exact and produces a buyer price
+      // ~1% lower than intended. Example: S_calculatePrice(1007) → NET=947; pushing
+      // priceIWantToGet=947 results in buyer seeing 997, not 1007.
+      //
+      // The ratio (observed GROSS / stored NET from our own offer in S_competition)
+      // IS derived from Eneba's own published prices, so it already encodes Eneba's
+      // exact fee structure for priceIWantToGet at the current price point.
+      const convertGross = (gross: number): number => {
         if (isNetPricingModel && netModelGrossNetRatio !== null && netModelGrossNetRatio > 0) {
           return Math.round(gross / netModelGrossNetRatio);
         }
-        return gross;
-      };
-
-      // Accurate gross→NET via S_calculatePrice (provider's own fee calculator).
-      // Only called when we're actually planning to push a price change.
-      // Different product categories (game keys vs subscriptions) have different
-      // Eneba commission tiers — the ratio approximation is wrong for non-standard products.
-      const exactNetFromGross = async (gross: number): Promise<number> => {
-        if (isNetPricingModel && listing.external_product_id && listing.external_listing_id) {
-          try {
-            const payout = await this.pricingService.calculatePayout(
-              {
-                priceCents: gross,
-                currency: listing.currency,
-                listingType: listing.listing_type,
-                externalListingId: listing.external_listing_id,
-                externalProductId: listing.external_product_id,
-              },
-              providerCode,
-              providerAccountId,
-            );
-            return payout.netPayoutCents;
-          } catch (err) {
-            logger.warn(
-              'S_calculatePrice failed for gross→NET — using ratio fallback',
-              err instanceof Error ? err : undefined,
-              { listingId: listing.id, gross, providerCode },
-            );
-          }
-        }
         if (!isNetPricingModel) return gross;
-        if (netModelGrossNetRatio !== null && netModelGrossNetRatio > 0) {
-          return Math.round(gross / netModelGrossNetRatio);
-        }
         throw new Error(`NET pricing model gross→net conversion has no ratio for listing ${listing.id}`);
       };
 
-      const approxTargetNet = approxNetFromGross(analysis.suggestedPriceCents);
-      const netMightChange = analysis.shouldChange && approxTargetNet !== listing.price_cents;
-
-      // Only invoke S_calculatePrice when we expect a price change — minimises API calls.
-      const targetCentsNet = netMightChange
-        ? await exactNetFromGross(analysis.suggestedPriceCents)
-        : approxTargetNet;
-
-      // proposedPriceCents is display/logging only — ratio is accurate enough.
+      const targetCentsNet = convertGross(analysis.suggestedPriceCents);
       const proposedCentsNet = analysis.proposedPriceCents != null
-        ? approxNetFromGross(analysis.proposedPriceCents)
+        ? convertGross(analysis.proposedPriceCents)
         : null;
 
       // For NET pricing models (e.g. Eneba), converting NET→GROSS→NET introduces
       // rounding drift. The GROSS comparison in analyzeOptimalPosition may flag a
       // change even when the computed NET target equals the current stored NET price.
       // Suppress the push to avoid burning free quota every tick with no-op updates.
-      const netShouldChange = netMightChange && targetCentsNet !== listing.price_cents;
+      const netShouldChange = analysis.shouldChange && targetCentsNet !== listing.price_cents;
 
       return {
         targetCents: targetCentsNet,
