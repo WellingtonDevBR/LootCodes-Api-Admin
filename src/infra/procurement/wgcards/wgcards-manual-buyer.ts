@@ -24,6 +24,7 @@ import {
   type WgcardsAccountData,
   type WgcardsBuyCardData,
   type WgcardsPlaceOrderRequest,
+  type WgcardsSkuInfo,
 } from './wgcards-http-client.js';
 
 const logger = createLogger('wgcards-manual-buyer');
@@ -59,6 +60,14 @@ export interface WgcardsPurchaseResult {
   readonly recoverable?: boolean;
 }
 
+/** Resolved from `getItemAndStock` — required so `placeOrder` uses the same pay currency / face value as pricing. */
+export interface WgcardsSkuCheckoutMeta {
+  /** ISO 4217 pay currency (`skuPriceCurrency` from WGCards). */
+  readonly payCurrency: string;
+  /** Present when the SKU is a fixed-denomination product (`minFaceValue === maxFaceValue`). */
+  readonly faceValue?: number;
+}
+
 export class WgcardsManualBuyer {
   constructor(
     private readonly client: WgcardsHttpClient,
@@ -84,7 +93,7 @@ export class WgcardsManualBuyer {
   async getItemAndStockByParent(
     itemId: string,
     currencyCode = 'USD',
-  ): Promise<readonly import('./wgcards-http-client.js').WgcardsSkuInfo[]> {
+  ): Promise<readonly WgcardsSkuInfo[]> {
     const page = await this.client.getItemAndStock({
       appId: this.appId,
       itemId,
@@ -94,6 +103,51 @@ export class WgcardsManualBuyer {
     });
     const record = page.records.find((r) => r.itemId === itemId);
     return record?.skuInfos ?? [];
+  }
+
+  /**
+   * Looks up live SKU metadata for `placeOrder`.
+   * WGCards rejects orders when `currency` does not match the wallet / quote currency for that SKU (often CNY).
+   */
+  async getSkuCheckoutMeta(
+    parentItemId: string,
+    skuId: string,
+    currencyHint: string,
+  ): Promise<WgcardsSkuCheckoutMeta | null> {
+    const hint = /^[A-Za-z]{3}$/.test(currencyHint.trim()) ? currencyHint.trim().toUpperCase() : 'USD';
+
+    let skus = await this.getItemAndStockByParent(parentItemId, hint);
+    let sku = skus.find((s) => s.skuId === skuId) ?? null;
+
+    if (!sku) {
+      skus = await this.getItemAndStockByParent(parentItemId, 'USD');
+      sku = skus.find((s) => s.skuId === skuId) ?? null;
+    }
+    if (!sku) {
+      return null;
+    }
+
+    let payCurrency = (sku.skuPriceCurrency || hint).trim().toUpperCase();
+    if (!/^[A-Z]{3}$/.test(payCurrency)) {
+      payCurrency = hint;
+    }
+
+    if (payCurrency !== hint) {
+      skus = await this.getItemAndStockByParent(parentItemId, payCurrency);
+      sku = skus.find((s) => s.skuId === skuId) ?? sku;
+    }
+
+    const faceValue =
+      sku.minFaceValue != null &&
+      sku.maxFaceValue != null &&
+      sku.minFaceValue === sku.maxFaceValue
+        ? sku.minFaceValue
+        : undefined;
+
+    return {
+      payCurrency,
+      ...(faceValue !== undefined ? { faceValue } : {}),
+    };
   }
 
   async quote(skuId: string): Promise<WgcardsQuoteResult> {

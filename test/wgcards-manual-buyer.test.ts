@@ -133,6 +133,122 @@ describe('WgcardsManualBuyer.quote', () => {
   });
 });
 
+// ─── WgcardsManualBuyer.getSkuCheckoutMeta ────────────────────────────────────
+
+describe('WgcardsManualBuyer.getSkuCheckoutMeta', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function stubSequentialItemAndStockPages(pages: unknown[]) {
+    const crypto = new WgcardsAesCrypto('2025112058411324');
+    let callIndex = 0;
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(() => {
+      const data = pages[callIndex++] ?? pages[pages.length - 1];
+      const envelope = { appId: '2025112058411324', code: 200, msg: 'success', data };
+      const ct = crypto.encrypt(JSON.stringify(envelope));
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        text: () => Promise.resolve(ct),
+      } as Response);
+    }));
+  }
+
+  function itemPageForParent(
+    parentId: string,
+    skus: Array<{
+      skuId: string;
+      skuPriceCurrency: string;
+      minFaceValue: number;
+      maxFaceValue: number;
+    }>,
+  ) {
+    return {
+      current: 1,
+      pages: 1,
+      size: 200,
+      total: 1,
+      records: [
+        {
+          itemId: parentId,
+          itemName: 'Test item',
+          itemTitle: 'Test item',
+          itemBrandName: 'Brand',
+          currencyCode: 'USD',
+          spuImage: null,
+          spuType: 2,
+          skuInfos: skus.map((s) => ({
+            skuId: s.skuId,
+            skuName: 'SKU',
+            skuPrice: 100,
+            skuPriceCurrency: s.skuPriceCurrency,
+            maxFaceValue: s.maxFaceValue,
+            minFaceValue: s.minFaceValue,
+            maxPrice: 0,
+            minPrice: 0,
+            stock: 10,
+          })),
+        },
+      ],
+    };
+  }
+
+  it('uses skuPriceCurrency as payCurrency and re-queries getItemAndStock when it differs from the hint', async () => {
+    const pageUsd = itemPageForParent('parent-1', [
+      { skuId: 'sku-fixed', skuPriceCurrency: 'CNY', minFaceValue: 10, maxFaceValue: 10 },
+    ]);
+    const pageCny = itemPageForParent('parent-1', [
+      { skuId: 'sku-fixed', skuPriceCurrency: 'CNY', minFaceValue: 10, maxFaceValue: 10 },
+    ]);
+    stubSequentialItemAndStockPages([pageUsd, pageCny]);
+
+    const buyer = createWgcardsManualBuyer({
+      secrets: VALID_SECRETS,
+      profile: VALID_PROFILE,
+      initialTokenCache: { accessToken: 'tok', expiresAt: Date.now() + 3_600_000 },
+    })!;
+
+    const meta = await buyer.getSkuCheckoutMeta('parent-1', 'sku-fixed', 'USD');
+    expect(meta).toEqual({ payCurrency: 'CNY', faceValue: 10 });
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('omits faceValue when minFaceValue and maxFaceValue differ (custom denomination)', async () => {
+    const page = itemPageForParent('parent-2', [
+      { skuId: 'sku-range', skuPriceCurrency: 'USD', minFaceValue: 5, maxFaceValue: 500 },
+    ]);
+    stubSequentialItemAndStockPages([page]);
+
+    const buyer = createWgcardsManualBuyer({
+      secrets: VALID_SECRETS,
+      profile: VALID_PROFILE,
+      initialTokenCache: { accessToken: 'tok', expiresAt: Date.now() + 3_600_000 },
+    })!;
+
+    const meta = await buyer.getSkuCheckoutMeta('parent-2', 'sku-range', 'USD');
+    expect(meta).toEqual({ payCurrency: 'USD' });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns null when the skuId is not present under the parent', async () => {
+    const page = itemPageForParent('parent-3', [
+      { skuId: 'other', skuPriceCurrency: 'USD', minFaceValue: 1, maxFaceValue: 1 },
+    ]);
+    stubSequentialItemAndStockPages([page, page]); // retry with USD after hint path
+
+    const buyer = createWgcardsManualBuyer({
+      secrets: VALID_SECRETS,
+      profile: VALID_PROFILE,
+      initialTokenCache: { accessToken: 'tok', expiresAt: Date.now() + 3_600_000 },
+    })!;
+
+    const meta = await buyer.getSkuCheckoutMeta('parent-3', 'missing-sku', 'USD');
+    expect(meta).toBeNull();
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+});
+
 // ─── WgcardsManualBuyer.purchase — polling ────────────────────────────────────
 
 describe('WgcardsManualBuyer.purchase', () => {

@@ -151,6 +151,7 @@ export class BuyerManualPurchaseService {
         providerAccountId,
         wgcardsBuyer,
         apiProfile,
+        walletCurrencyHint: dto.wallet_currency,
         attemptSource: 'manual',
       });
     }
@@ -318,6 +319,7 @@ export class BuyerManualPurchaseService {
         providerAccountId,
         wgcardsBuyer,
         apiProfile,
+        walletCurrencyHint: dto.wallet_currency,
         attemptSource: 'seller_jit',
       });
     }
@@ -884,6 +886,8 @@ export class BuyerManualPurchaseService {
     readonly providerAccountId: string;
     readonly wgcardsBuyer: WgcardsManualBuyer;
     readonly apiProfile: Record<string, unknown>;
+    /** Bamboo-style ISO hint; merged with `api_profile.checkout_wallet_currency` like other buyers. */
+    readonly walletCurrencyHint: string | undefined;
     readonly attemptSource: 'manual' | 'seller_jit';
   }): Promise<ManualProviderPurchaseResult> {
     const {
@@ -897,6 +901,7 @@ export class BuyerManualPurchaseService {
       providerAccountId,
       wgcardsBuyer,
       apiProfile,
+      walletCurrencyHint,
       attemptSource,
     } = params;
 
@@ -918,17 +923,37 @@ export class BuyerManualPurchaseService {
       };
     }
 
-    // Resolve purchase currency: api_profile.checkout_wallet_currency → 'USD'.
-    const rawCurrency = typeof apiProfile['checkout_wallet_currency'] === 'string'
-      ? apiProfile['checkout_wallet_currency'].trim().toUpperCase()
-      : 'USD';
-    const currency = /^[A-Z]{3}$/.test(rawCurrency) ? rawCurrency : 'USD';
+    // Resolve pay currency: live SKU metadata beats profile (API often prices in CNY while face value is USD).
+    const walletHint =
+      resolveCheckoutWalletCurrency(walletCurrencyHint, apiProfile) ?? 'USD';
 
-    // WGCards serviceOrder must be short (≤ 36 chars) — the API example uses a
-    // UUID-like string. Using just the requestId UUID keeps it within bounds.
-    // The full idempotencyKey is still recorded in provider_purchase_attempts
-    // (provider_request_id) for our duplicate-check and audit trail.
-    const wgcardsServiceOrder = requestId;
+    const offerLinkRow = await this.db.queryOne<{
+      external_parent_product_id: string | null;
+    }>('provider_variant_offers', {
+      filter: {
+        provider_account_id: providerAccountId,
+        variant_id: variantId,
+        external_offer_id: offerId,
+      },
+    });
+    const parentId = offerLinkRow?.external_parent_product_id?.trim() ?? '';
+
+    let payCurrency = walletHint;
+    let faceValue: number | undefined;
+    if (parentId) {
+      const meta = await wgcardsBuyer.getSkuCheckoutMeta(parentId, offerId, walletHint);
+      if (meta) {
+        payCurrency = meta.payCurrency;
+        faceValue = meta.faceValue;
+      }
+    } else {
+      logger.warn('WGCards manual purchase — missing external_parent_product_id on provider_variant_offers; placeOrder uses wallet hint only', {
+        requestId,
+        variantId,
+        offerId,
+        providerAccountId,
+      });
+    }
 
     // Resolve unit cost from catalog snapshot for audit/reporting (best-effort).
     const estimate = await this.resolveAppRoutePurchaseEstimate({
@@ -966,9 +991,9 @@ export class BuyerManualPurchaseService {
 
     try {
       const result = await wgcardsBuyer.purchase({
-        serviceOrder: wgcardsServiceOrder,
-        currency,
-        items: [{ skuId: offerId, buyNum: quantity }],
+        serviceOrder: idempotencyKey,
+        currency: payCurrency,
+        items: [{ skuId: offerId, buyNum: quantity, ...(faceValue !== undefined ? { faceValue } : {}) }],
       });
 
       if (!result.success && result.recoverable && result.orderId) {
@@ -1007,6 +1032,7 @@ export class BuyerManualPurchaseService {
 
       const providerRef = result.orderId ?? idempotencyKey;
       const costCents = estimate?.totalCents ?? null;
+      const ingestCurrency = payCurrency;
       const ingestedKeyIds: string[] = [];
       const failedIngestions: ManualPurchaseFailedIngestion[] = [];
 
@@ -1019,7 +1045,7 @@ export class BuyerManualPurchaseService {
               variant_id: variantId,
               plaintext_key: key,
               purchase_cost_cents: costCents,
-              purchase_currency: currency,
+              purchase_currency: ingestCurrency,
               supplier_reference: `${providerCode}:${providerRef}`,
               created_by: adminUserId ?? undefined,
             },
@@ -1041,7 +1067,7 @@ export class BuyerManualPurchaseService {
           keys_received: result.keys.length,
           keys_ingested: ingestedKeyIds.length,
           cost_cents: costCents,
-          currency,
+          currency: ingestCurrency,
           ...(attemptSource === 'seller_jit' ? { procurement_trigger: 'seller_reserve_jit' as const } : {}),
         },
       });
@@ -1212,6 +1238,52 @@ export class BuyerManualPurchaseService {
 
     try {
       const wallets = await approuteBuyer.fetchLiveWalletSummaries();
+      return { success: true, wallets };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { success: false, error: msg };
+    }
+  }
+
+  async listWgcardsLiveWallets(): Promise<{
+    success: boolean;
+    wallets?: ReadonlyArray<{
+      walletId: string;
+      currency: string;
+      balance: number;
+      effective: boolean;
+    }>;
+    error?: string;
+  }> {
+    const providerAccountId = await this.getEnabledProviderAccountId('wgcards');
+    if (!providerAccountId) {
+      return { success: false, error: 'WGCards provider is not enabled or not found' };
+    }
+
+    const accountRow = await this.db.queryOne<{ api_profile: unknown }>('provider_accounts', {
+      select: 'api_profile',
+      filter: { id: providerAccountId },
+    });
+    const apiProfile = asApiProfile(accountRow?.api_profile);
+
+    const secrets = await resolveProviderSecrets(this.db, providerAccountId);
+    const wgcardsBuyer = createWgcardsManualBuyer({ secrets, profile: apiProfile });
+    if (!wgcardsBuyer) {
+      return {
+        success: false,
+        error:
+          'WGCards credentials (WGCARDS_APP_ID, WGCARDS_APP_KEY, WGCARDS_ACCOUNT_ID) are not configured for this provider account',
+      };
+    }
+
+    try {
+      const account = await wgcardsBuyer.getAccount();
+      const wallets = account.accounts.map((a) => ({
+        walletId: a.walletId,
+        currency: a.currency,
+        balance: a.balance,
+        effective: a.effective,
+      }));
       return { success: true, wallets };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
