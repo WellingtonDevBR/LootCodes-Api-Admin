@@ -50,6 +50,7 @@ import {
 import { refreshBambooOfferSnapshotsForVariant } from './bamboo-variant-offer-quote-refresh.js';
 import { refreshAppRouteOfferSnapshotsForVariant } from './approute-variant-offer-quote-refresh.js';
 import { syncAppRouteProductCatalog } from './approute-catalog-sync.js';
+import { syncWgcardsProductCatalog } from './wgcards-catalog-sync.js';
 import { catalogProductNameIlikeClauses } from './catalog-product-name-search.js';
 import { randomUUID } from 'node:crypto';
 import { InternalError, NotFoundError } from '../../core/errors/domain-errors.js';
@@ -214,24 +215,28 @@ export class SupabaseAdminProcurementRepository implements IAdminProcurementRepo
     logger.info('Starting provider catalog ingestion', { provider: dto.provider_code, adminId: dto.admin_id });
 
     const code = dto.provider_code.trim().toLowerCase();
-    if (code === 'approute') {
+
+    if (code === 'approute' || code === 'wgcards') {
       const rows = await this.db.query<{ id: string }>('provider_accounts', {
         select: 'id',
-        eq: [['provider_code', 'approute']],
+        eq: [['provider_code', code]],
         limit: 1,
       });
       const accountId = rows[0]?.id;
       if (!accountId) {
-        throw new NotFoundError('No provider_accounts row with provider_code approute');
+        throw new NotFoundError(`No provider_accounts row with provider_code ${code}`);
       }
 
-      const syncResult = await syncAppRouteProductCatalog(this.db, accountId);
+      const syncResult = code === 'wgcards'
+        ? await syncWgcardsProductCatalog(this.db, accountId)
+        : await syncAppRouteProductCatalog(this.db, accountId);
+
       if (!syncResult.success) {
         throw new InternalError(syncResult.error);
       }
 
       return {
-        job_id: `inline-sync-approute-${randomUUID()}`,
+        job_id: `inline-sync-${code}-${randomUUID()}`,
         status: 'completed',
       };
     }
@@ -245,7 +250,7 @@ export class SupabaseAdminProcurementRepository implements IAdminProcurementRepo
   }
 
   async ingestProviderCatalogStatus(dto: IngestProviderCatalogStatusDto): Promise<IngestProviderCatalogStatusResult> {
-    if (dto.job_id.startsWith('inline-sync-approute-')) {
+    if (dto.job_id.startsWith('inline-sync-')) {
       return {
         job_id: dto.job_id,
         status: 'completed',

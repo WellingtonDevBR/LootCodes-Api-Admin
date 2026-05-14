@@ -20,6 +20,8 @@ import { DigisellerMarketplaceAdapter } from './digiseller/adapter.js';
 import { DigisellerTokenManager, type DigisellerCachedToken } from './digiseller/token-manager.js';
 import { BambooMarketplaceAdapter } from './bamboo/adapter.js';
 import { resolveAppRouteBaseUrlFromApiProfile } from './approute/resolve-app-route-base-url.js';
+import { WgcardsMarketplaceAdapter } from './wgcards/wgcards-marketplace-adapter.js';
+import { createWgcardsHttpClient } from '../procurement/wgcards/wgcards-manual-buyer.js';
 import type { AnyMarketplaceAdapter } from './marketplace-adapter-registry.js';
 import { resolveProviderSecrets } from './resolve-provider-secrets.js';
 import { kinguinBuyerApiKeyFromSecrets } from './kinguin-buyer-api-key.js';
@@ -137,7 +139,7 @@ async function buildAdapter(
     case 'approute':
       return buildApprouteCatalogOnlyMarker(secrets, profile);
     case 'wgcards':
-      return buildWgcardsCatalogOnlyMarker(secrets);
+      return buildWgcardsAdapter(secrets, profile);
     default:
       logger.warn(`Unknown provider code — no adapter factory`, { providerCode: account.provider_code });
       return null;
@@ -482,19 +484,20 @@ function catalogTargetCurrency(profile: Record<string, unknown>): string {
 }
 
 /**
- * WGCards does not expose a product-search or catalog-listing API — `getStock` requires
- * known SKU IDs, so live search is not possible. Registering a no-capability marker lets
- * the live-search panel show WGCards in the provider list and return any hits from the
- * locally ingested `provider_product_catalog` table.
+ * WGCards live-search adapter.
+ *
+ * Uses `/api/getItemAndStock` for live product search by `itemName`.
+ * Implements `IProductSearchAdapter` so WGCards appears in the live-search
+ * panel alongside other providers.
  */
-function buildWgcardsCatalogOnlyMarker(
+function buildWgcardsAdapter(
   secrets: Record<string, string>,
+  profile: Record<string, unknown>,
 ): AnyMarketplaceAdapter | null {
-  const appId = secrets['WGCARDS_APP_ID'];
-  const appKey = secrets['WGCARDS_APP_KEY'];
-  if (!appId?.trim() || !appKey?.trim()) {
-    logger.warn('WGCards catalog-only registration skipped — need WGCARDS_APP_ID and WGCARDS_APP_KEY');
+  const bundle = createWgcardsHttpClient({ secrets, profile });
+  if (!bundle) {
+    logger.warn('WGCards adapter skipped — need WGCARDS_APP_ID, WGCARDS_APP_KEY and WGCARDS_ACCOUNT_ID');
     return null;
   }
-  return {};
+  return new WgcardsMarketplaceAdapter(bundle.client, bundle.appId);
 }

@@ -146,19 +146,32 @@ export class WgcardsManualBuyer {
 
 // ─── Factory ─────────────────────────────────────────────────────────────────
 
-export function createWgcardsManualBuyer(params: {
+/** Shared construction result used by both the buyer provider and the marketplace adapter. */
+export interface WgcardsClientBundle {
+  readonly client: WgcardsHttpClient;
+  readonly appId: string;
+}
+
+/**
+ * Builds the AES crypto + token manager + HTTP client triple from secrets/profile.
+ * Returns `null` (with a warn log) if any required credential is missing.
+ *
+ * Shared by `createWgcardsManualBuyer` (buyer flow) and the marketplace adapter
+ * bootstrap (live-search flow) so the construction logic lives in one place.
+ */
+export function createWgcardsHttpClient(params: {
   readonly secrets: Record<string, string>;
   readonly profile: Record<string, unknown>;
   readonly initialTokenCache?: WgcardsCachedToken | null;
   readonly onTokenRefreshed?: (entry: WgcardsCachedToken) => void;
-}): WgcardsManualBuyer | null {
+}): WgcardsClientBundle | null {
   const appId = params.secrets['WGCARDS_APP_ID'];
   const appKey = params.secrets['WGCARDS_APP_KEY'];
   const accountId = params.secrets['WGCARDS_ACCOUNT_ID'];
 
   if (!appId?.trim() || !appKey?.trim() || !accountId?.trim()) {
     logger.warn(
-      'WGCards manual buyer unavailable — missing WGCARDS_APP_ID, WGCARDS_APP_KEY, or WGCARDS_ACCOUNT_ID',
+      'WGCards client unavailable — missing WGCARDS_APP_ID, WGCARDS_APP_KEY, or WGCARDS_ACCOUNT_ID',
     );
     return null;
   }
@@ -168,7 +181,7 @@ export function createWgcardsManualBuyer(params: {
     crypto = new WgcardsAesCrypto(appId.trim());
   } catch (err) {
     logger.warn(
-      'WGCards manual buyer unavailable — AES key construction failed',
+      'WGCards client unavailable — AES key construction failed',
       err instanceof Error ? err : new Error(String(err)),
     );
     return null;
@@ -179,20 +192,12 @@ export function createWgcardsManualBuyer(params: {
     profileStr(params.profile, 'baseUrl') ??
     WGCARDS_DEFAULT_BASE_URL;
 
-  // Wire token manager — the `fetchToken` lambda closes over the HTTP client
-  // that the token manager itself is passed to. To avoid a circular dep, we
-  // create the client first with a placeholder, then set it up via a wrapper.
-  // Wire token manager — the `fetchToken` lambda closes over the HTTP client.
-  // We use a wrapper object so the reference can be updated after construction
-  // without triggering a circular-dependency or prefer-const violation.
   const clientRef: { instance: WgcardsHttpClient | null } = { instance: null };
 
   const tokenManager = new WgcardsTokenManager({
     initialCache: params.initialTokenCache ?? null,
     onTokenRefreshed: params.onTokenRefreshed,
-    fetchToken: async () => {
-      return clientRef.instance!.getToken(appKey.trim());
-    },
+    fetchToken: async () => clientRef.instance!.getToken(appKey.trim()),
   });
 
   const httpClient = new WgcardsHttpClient(
@@ -204,5 +209,16 @@ export function createWgcardsManualBuyer(params: {
   );
   clientRef.instance = httpClient;
 
-  return new WgcardsManualBuyer(httpClient, appId.trim());
+  return { client: httpClient, appId: appId.trim() };
+}
+
+export function createWgcardsManualBuyer(params: {
+  readonly secrets: Record<string, string>;
+  readonly profile: Record<string, unknown>;
+  readonly initialTokenCache?: WgcardsCachedToken | null;
+  readonly onTokenRefreshed?: (entry: WgcardsCachedToken) => void;
+}): WgcardsManualBuyer | null {
+  const bundle = createWgcardsHttpClient(params);
+  if (!bundle) return null;
+  return new WgcardsManualBuyer(bundle.client, bundle.appId);
 }

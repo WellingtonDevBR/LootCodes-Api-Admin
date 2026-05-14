@@ -84,6 +84,83 @@ export interface WgcardsPlaceOrderRequest {
   readonly items: readonly WgcardsPlaceOrderItem[];
 }
 
+export interface WgcardsSkuInfo {
+  readonly skuId: string;
+  readonly skuName: string;
+  /** Purchase price in `skuPriceCurrency`. 0 for custom face-value SKUs. */
+  readonly skuPrice: number;
+  readonly skuPriceCurrency: string;
+  readonly maxFaceValue: number;
+  readonly minFaceValue: number;
+  readonly maxPrice: number;
+  readonly minPrice: number;
+  /** Available stock. -1 = unlimited. */
+  readonly stock: number;
+}
+
+export interface WgcardsItemRecord {
+  readonly itemId: string;
+  readonly itemName: string;
+  readonly itemTitle: string;
+  readonly itemBrandName: string;
+  /** Face-value currency (e.g. "JPY" for a Nintendo JP card). */
+  readonly currencyCode: string;
+  readonly spuImage: string | null;
+  /** 1=game 2=giftcard 3=software 4=microsoft */
+  readonly spuType: number;
+  readonly skuInfos: readonly WgcardsSkuInfo[];
+}
+
+export interface WgcardsItemPage {
+  readonly current: number;
+  readonly pages: number;
+  readonly size: number;
+  readonly total: number;
+  readonly records: readonly WgcardsItemRecord[];
+}
+
+export interface WgcardsGetItemParams {
+  readonly appId: string;
+  readonly itemName?: string;
+  readonly itemId?: string;
+  readonly currencyCode?: string;
+  readonly current?: number;
+  readonly size?: number;
+}
+
+/**
+ * SKU shape returned by `/api/getAllItem`.
+ * Unlike `WgcardsSkuInfo` (from getItemAndStock), this has NO price and NO stock —
+ * only face-value ranges and the purchase-currency code.
+ */
+export interface WgcardsAllItemSku {
+  readonly skuId: string;
+  readonly skuName: string;
+  /** Currency the buyer pays in (purchase currency). */
+  readonly skuPriceCurrency: string;
+  readonly maxFaceValue: number;
+  readonly minFaceValue: number;
+}
+
+export interface WgcardsAllItemRecord {
+  readonly itemId: string;
+  readonly itemName: string;
+  readonly itemBrandName: string;
+  /** Face-value / transaction currency — used to infer region. */
+  readonly currencyCode: string;
+  /** 1=game 2=giftcard 3=software 4=microsoft */
+  readonly spuType: number;
+  readonly skuList: readonly WgcardsAllItemSku[];
+}
+
+export interface WgcardsGetAllItemParams {
+  readonly appId: string;
+  readonly itemName?: string;
+  readonly itemId?: string;
+  readonly currencyCode?: string;
+  readonly language?: string;
+}
+
 // ─── Client ──────────────────────────────────────────────────────────────────
 
 export class WgcardsHttpClient {
@@ -128,6 +205,43 @@ export class WgcardsHttpClient {
   async getStock(skuIds: readonly string[]): Promise<readonly WgcardsStockEntry[]> {
     const payload = { skuIds };
     return this.post<readonly WgcardsStockEntry[]>('/api/getStock', payload);
+  }
+
+  // ─── Product + Stock search ──────────────────────────────────────────────
+
+  /**
+   * `/api/getAllItem` — fetch the complete WGCards catalog in one call.
+   * Rate limit: 2 per hour. Use for catalog ingestion (background sync).
+   * Returns ALL items without pagination; does NOT include prices or stock.
+   * Optionally filter by `itemName` or `itemId` for targeted refreshes.
+   */
+  async getAllItem(params: WgcardsGetAllItemParams): Promise<readonly WgcardsAllItemRecord[]> {
+    const payload = {
+      appId: params.appId,
+      currencyCode: params.currencyCode ?? '',
+      language: params.language ?? 'en',
+      itemId: params.itemId ?? '',
+      itemName: params.itemName ?? '',
+    };
+    return this.post<readonly WgcardsAllItemRecord[]>('/api/getAllItem', payload);
+  }
+
+  /**
+   * `/api/getItemAndStock` — paginated product search.
+   * Pass `itemName` for text search, `itemId` to filter by known ID.
+   * Each item in `records` contains `skuInfos` with live `stock` counts.
+   * Rate limit: 5 per 60 seconds.
+   */
+  async getItemAndStock(params: WgcardsGetItemParams): Promise<WgcardsItemPage> {
+    const payload = {
+      appId: params.appId,
+      currencyCode: params.currencyCode ?? 'USD',
+      current: params.current ?? 1,
+      size: params.size ?? 15,
+      itemId: params.itemId ?? '',
+      itemName: params.itemName ?? '',
+    };
+    return this.post<WgcardsItemPage>('/api/getItemAndStock', payload);
   }
 
   // ─── Order placement ─────────────────────────────────────────────────────
