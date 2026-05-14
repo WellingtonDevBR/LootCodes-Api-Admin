@@ -150,7 +150,12 @@ export interface WgcardsAllItemRecord {
   readonly currencyCode: string;
   /** 1=game 2=giftcard 3=software 4=microsoft */
   readonly spuType: number;
-  readonly skuList: readonly WgcardsAllItemSku[];
+  /**
+   * PDF docs say `skuList`; the live API returns `skuInfos` (same as getItemAndStock).
+   * Both fields are typed as optional — the mapper resolves whichever is present.
+   */
+  readonly skuList?: readonly WgcardsAllItemSku[];
+  readonly skuInfos?: readonly WgcardsSkuInfo[];
 }
 
 export interface WgcardsGetAllItemParams {

@@ -6,11 +6,11 @@
  *   - SKUs differ in face value and purchase price — they are distinct purchasable products
  *   - The parent `itemId` is stored in `external_parent_product_id` for grouping
  *
- * Prices and stock are NOT available from `getAllItem` — those fields default to 0/false.
- * They are enriched automatically by subsequent live-search calls via
- * `scheduleLiveSearchCatalogUpsert` in the procurement repository.
+ * The PDF documents the SKU array as `skuList`; the live API returns `skuInfos`
+ * (same shape as `getItemAndStock`). The mapper handles both.
+ * When `skuInfos` is present, price and stock fields are populated immediately.
  */
-import type { WgcardsAllItemRecord } from '../../procurement/wgcards/wgcards-http-client.js';
+import type { WgcardsAllItemRecord, WgcardsSkuInfo } from '../../procurement/wgcards/wgcards-http-client.js';
 
 /** Infer platform from product/SKU name. Mirrors the logic in `WgcardsMarketplaceAdapter`. */
 function detectPlatform(name: string): string | null {
@@ -61,8 +61,18 @@ export function flattenWgcardsItemsToCatalogRows(
   for (const item of items) {
     const region = regionFromCurrencyCode(item.currencyCode);
 
-    for (const sku of item.skuList) {
+    // Live API returns `skuInfos`; PDF docs say `skuList`. Accept either.
+    const skus: readonly (WgcardsSkuInfo | { skuId: string; skuName: string; skuPriceCurrency: string; maxFaceValue: number; minFaceValue: number; skuPrice?: number; stock?: number })[] =
+      (item.skuInfos && item.skuInfos.length > 0)
+        ? item.skuInfos
+        : (item.skuList ?? []);
+
+    for (const sku of skus) {
       const productName = `${item.itemName} — ${sku.skuName}`;
+      const skuPrice = (sku as WgcardsSkuInfo).skuPrice ?? 0;
+      const stock = (sku as WgcardsSkuInfo).stock ?? 0;
+      const priceCents = skuPrice > 0 ? Math.round(skuPrice * 100) : 0;
+      const available = stock === -1 || stock > 0;
 
       rows.push({
         provider_account_id: providerAccountId,
@@ -72,16 +82,16 @@ export function flattenWgcardsItemsToCatalogRows(
         product_name: productName,
         platform: detectPlatform(productName),
         region,
-        min_price_cents: 0,
+        min_price_cents: priceCents,
         currency: sku.skuPriceCurrency || 'USD',
-        qty: 0,
-        available_to_buy: false,
-        thumbnail: null,
+        qty: stock === -1 ? 999 : Math.max(0, stock),
+        available_to_buy: available,
+        thumbnail: (item as { spuImage?: string | null }).spuImage ?? null,
         slug: item.itemId,
         developer: null,
         publisher: item.itemBrandName || null,
         release_date: null,
-        wholesale_price_cents: null,
+        wholesale_price_cents: priceCents > 0 ? priceCents : null,
         updated_at: updatedAtIso,
         raw_data: {
           itemId: item.itemId,
