@@ -924,6 +924,12 @@ export class BuyerManualPurchaseService {
       : 'USD';
     const currency = /^[A-Z]{3}$/.test(rawCurrency) ? rawCurrency : 'USD';
 
+    // WGCards serviceOrder must be short (≤ 36 chars) — the API example uses a
+    // UUID-like string. Using just the requestId UUID keeps it within bounds.
+    // The full idempotencyKey is still recorded in provider_purchase_attempts
+    // (provider_request_id) for our duplicate-check and audit trail.
+    const wgcardsServiceOrder = requestId;
+
     // Resolve unit cost from catalog snapshot for audit/reporting (best-effort).
     const estimate = await this.resolveAppRoutePurchaseEstimate({
       providerAccountId,
@@ -960,7 +966,7 @@ export class BuyerManualPurchaseService {
 
     try {
       const result = await wgcardsBuyer.purchase({
-        serviceOrder: idempotencyKey,
+        serviceOrder: wgcardsServiceOrder,
         currency,
         items: [{ skuId: offerId, buyNum: quantity }],
       });

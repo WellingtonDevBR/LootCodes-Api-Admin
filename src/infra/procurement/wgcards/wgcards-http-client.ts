@@ -343,24 +343,25 @@ export class WgcardsHttpClient {
 
     // The response body is the raw encrypted string (not wrapped in JSON on the outer level)
     const text = await response.text();
-    // Some endpoints return JSON with a `msg` key directly; others return raw Base64.
-    // Normalise: if it looks like a JSON object, try to extract the `msg` field.
+    // Some endpoints return unencrypted JSON on error. If it parses as a JSON
+    // object with a numeric `code` field, surface it directly — do NOT try to
+    // AES-decrypt it (decryption on plain JSON produces garbage).
     const trimmed = text.trim();
     if (trimmed.startsWith('{')) {
+      let parsed: Record<string, unknown> | undefined;
       try {
-        const parsed = JSON.parse(trimmed) as Record<string, unknown>;
-        if (typeof parsed['msg'] === 'string' && parsed['code'] !== undefined) {
-          // Unencrypted error response — surface it directly
-          throw new Error(
-            `WGCards API error at ${path}: code=${parsed['code']} msg=${parsed['msg']}`,
-          );
+        parsed = JSON.parse(trimmed) as Record<string, unknown>;
+      } catch {
+        // Not valid JSON — fall through to treat as raw ciphertext
+      }
+      if (parsed !== undefined && typeof parsed['code'] === 'number') {
+        const code = parsed['code'] as number;
+        if (code !== 200) {
+          const msg =
+            typeof parsed['msg'] === 'string' ? parsed['msg'] : '(no message)';
+          throw new Error(`WGCards API error at ${path}: code=${code} msg=${msg}`);
         }
-      } catch (err) {
-        if (err instanceof SyntaxError) {
-          // Not valid JSON — fall through to treat as raw ciphertext
-        } else {
-          throw err;
-        }
+        // code===200 unencrypted — unusual but fall through to decrypt (shouldn't happen)
       }
     }
 
@@ -372,8 +373,9 @@ export class WgcardsHttpClient {
 
 function assertOk(envelope: WgcardsEnvelope<unknown>, path: string): void {
   if (envelope.code !== 200) {
+    const msg = envelope.msg ?? '(no message)';
     throw new Error(
-      `WGCards API error at ${path}: code=${envelope.code} msg=${envelope.msg}`,
+      `WGCards API error at ${path}: code=${envelope.code} msg=${msg}`,
     );
   }
 }
