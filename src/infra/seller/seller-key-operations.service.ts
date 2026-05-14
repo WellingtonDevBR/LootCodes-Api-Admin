@@ -66,11 +66,97 @@ export class SellerKeyOperationsService implements ISellerKeyOperationsPort {
       const msg = err instanceof Error ? err.message : String(err);
 
       if (msg.includes('INSUFFICIENT_STOCK') || msg.includes('Key claim failed')) {
+        // Before spending money on JIT procurement, try to claim keys from the
+        // source variant declared in variant_inventory_sources (e.g. a Global
+        // key pool backing a region-specific declared-stock listing). These keys
+        // are cheaper (actual purchase cost) and already in inventory.
+        const sourceResult = await this.attemptSourceVariantClaim(params);
+        if (sourceResult) return sourceResult;
+
         const jitResult = await this.attemptJitProcurement(params);
         if (jitResult) return jitResult;
       }
 
       throw err;
+    }
+  }
+
+  /**
+   * Checks `variant_inventory_sources` for the consumer variant and attempts
+   * `claim_and_reserve_atomic` against each source variant's key pool in
+   * priority order. Returns on the first successful claim.
+   *
+   * This is the preferred path over JIT procurement — physical keys already
+   * held in inventory are cheaper (actual purchase cost) and avoid a live
+   * buy-side API call under the RESERVE latency budget.
+   */
+  private async attemptSourceVariantClaim(params: ClaimKeysParams): Promise<ClaimKeysResult | null> {
+    try {
+      const sources = await this.db.query<{ source_variant_id: string }>(
+        'variant_inventory_sources',
+        {
+          select: 'source_variant_id',
+          eq: [
+            ['consumer_variant_id', params.variantId],
+            ['source_kind', 'variant'],
+          ],
+          order: { column: 'priority', ascending: false },
+        },
+      );
+
+      if (sources.length === 0) return null;
+
+      for (const source of sources) {
+        try {
+          logger.info('Attempting key claim from source variant', {
+            consumerVariantId: params.variantId,
+            sourceVariantId: source.source_variant_id,
+            listingId: params.listingId,
+            quantity: params.quantity,
+          });
+
+          const result = await this.db.rpc<{
+            reservation_id: string;
+            key_ids: string[];
+          }>('claim_and_reserve_atomic', {
+            p_variant_id: source.source_variant_id,
+            p_listing_id: params.listingId,
+            p_provider_account_id: params.providerAccountId,
+            p_quantity: params.quantity,
+            p_external_reservation_id: params.externalReservationId,
+            p_external_order_id: params.externalOrderId,
+            p_expires_at: params.expiresAt,
+            p_provider_metadata: params.providerMetadata ?? {},
+          });
+
+          logger.info('Source variant key claim succeeded', {
+            consumerVariantId: params.variantId,
+            sourceVariantId: source.source_variant_id,
+            reservationId: result.reservation_id,
+            keysReserved: result.key_ids.length,
+          });
+
+          return {
+            reservationId: result.reservation_id,
+            keyIds: result.key_ids,
+            viaJit: false,
+          };
+        } catch (sourceErr) {
+          // This source has no available keys — try the next source if any.
+          logger.debug('Source variant claim failed, trying next', {
+            consumerVariantId: params.variantId,
+            sourceVariantId: source.source_variant_id,
+            error: sourceErr instanceof Error ? sourceErr.message : String(sourceErr),
+          });
+        }
+      }
+
+      return null;
+    } catch (err) {
+      logger.warn('Source variant inventory lookup failed', err as Error, {
+        variantId: params.variantId,
+      });
+      return null;
     }
   }
 
