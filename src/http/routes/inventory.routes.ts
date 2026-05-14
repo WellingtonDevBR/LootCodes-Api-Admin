@@ -418,7 +418,11 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
           encryption_salt: enc.salt,
           encryption_key_id: enc.keyId,
           encryption_version: 'aes-256-gcm',
-          raw_key_hash: chunk[j].hash,
+          // When allow_duplicates is true, omit the hash so the unique
+          // constraint (idx_product_keys_raw_key_hash) does not fire.
+          // PostgreSQL treats each NULL as distinct, so multiple NULL
+          // rows are permitted. The hash is only needed for dedup checks.
+          raw_key_hash: allowDuplicates ? null : chunk[j].hash,
           key_state: 'available',
           is_used: false,
           created_by: adminUserId,
