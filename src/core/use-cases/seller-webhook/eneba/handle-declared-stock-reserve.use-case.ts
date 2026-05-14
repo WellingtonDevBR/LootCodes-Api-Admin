@@ -203,6 +203,7 @@ export class HandleDeclaredStockReserveUseCase {
             quantity: keyCount,
             providerCode,
             viaJit: outcome.viaJit,
+            ...(outcome.sourceVariantId ? { sourceVariantId: outcome.sourceVariantId } : {}),
           },
         });
 
@@ -218,6 +219,24 @@ export class HandleDeclaredStockReserveUseCase {
             variantIds: [listing.variant_id],
             reason: 'seller_reserved',
           });
+        }
+
+        // When keys were drawn from a source variant pool (e.g. Global variant
+        // backing an EU declared-stock listing), also emit a stock-changed event
+        // for that source product so its Algolia listing reflects the reduced count.
+        if (outcome.sourceVariantId) {
+          const sourceVariantData = await this.db.queryOne<{ product_id: string }>('product_variants', {
+            select: 'product_id',
+            eq: [['id', outcome.sourceVariantId]],
+            single: true,
+          });
+          if (sourceVariantData?.product_id) {
+            await this.events.emitInventoryStockChanged({
+              productIds: [sourceVariantData.product_id],
+              variantIds: [outcome.sourceVariantId],
+              reason: 'seller_reserved',
+            });
+          }
         }
 
         logger.debug('Reservation completed', {

@@ -84,7 +84,9 @@ export class SellerKeyOperationsService implements ISellerKeyOperationsPort {
   /**
    * Checks `variant_inventory_sources` for the consumer variant and attempts
    * `claim_and_reserve_atomic` against each source variant's key pool in
-   * priority order. Returns on the first successful claim.
+   * priority order (highest priority first). Skips sources where
+   * `unviable_until` is set and still in the future. Returns on the first
+   * successful claim.
    *
    * This is the preferred path over JIT procurement — physical keys already
    * held in inventory are cheaper (actual purchase cost) and avoid a live
@@ -92,10 +94,13 @@ export class SellerKeyOperationsService implements ISellerKeyOperationsPort {
    */
   private async attemptSourceVariantClaim(params: ClaimKeysParams): Promise<ClaimKeysResult | null> {
     try {
-      const sources = await this.db.query<{ source_variant_id: string }>(
+      const rows = await this.db.query<{
+        source_variant_id: string;
+        unviable_until: string | null;
+      }>(
         'variant_inventory_sources',
         {
-          select: 'source_variant_id',
+          select: 'source_variant_id, unviable_until',
           eq: [
             ['consumer_variant_id', params.variantId],
             ['source_kind', 'variant'],
@@ -104,7 +109,20 @@ export class SellerKeyOperationsService implements ISellerKeyOperationsPort {
         },
       );
 
-      if (sources.length === 0) return null;
+      if (rows.length === 0) return null;
+
+      const now = new Date().toISOString();
+      const sources = rows.filter(
+        (r) => !r.unviable_until || r.unviable_until < now,
+      );
+
+      if (sources.length === 0) {
+        logger.debug('All source variants currently marked unviable', {
+          consumerVariantId: params.variantId,
+          skippedCount: rows.length,
+        });
+        return null;
+      }
 
       for (const source of sources) {
         try {
@@ -140,6 +158,7 @@ export class SellerKeyOperationsService implements ISellerKeyOperationsPort {
             reservationId: result.reservation_id,
             keyIds: result.key_ids,
             viaJit: false,
+            sourceVariantId: source.source_variant_id,
           };
         } catch (sourceErr) {
           // This source has no available keys — try the next source if any.
@@ -303,6 +322,40 @@ export class SellerKeyOperationsService implements ISellerKeyOperationsPort {
         variantIds: [variantId],
         reason: 'seller_provisioned',
       });
+    }
+
+    // When the provisioned keys belong to a different variant than the listing
+    // variant (source-variant key pool case), also emit for those source variants
+    // so their Algolia stock counts stay accurate.
+    if (keyIds.length > 0) {
+      try {
+        const keyRows = await this.db.query<{ variant_id: string }>('product_keys', {
+          select: 'variant_id',
+          in: [['id', keyIds]],
+        });
+        const sourceVariantIds = [
+          ...new Set(keyRows.map((r) => r.variant_id).filter((id) => id && id !== variantId)),
+        ];
+        for (const sourceId of sourceVariantIds) {
+          const sourceVariant = await this.db.queryOne<{ product_id: string }>('product_variants', {
+            select: 'product_id',
+            eq: [['id', sourceId]],
+            single: true,
+          });
+          if (sourceVariant?.product_id) {
+            await this.events.emitInventoryStockChanged({
+              productIds: [sourceVariant.product_id],
+              variantIds: [sourceId],
+              reason: 'seller_provisioned',
+            });
+          }
+        }
+      } catch (err) {
+        logger.warn('Failed to emit stock-changed for source variant keys', err as Error, {
+          variantId,
+          keyCount: keyIds.length,
+        });
+      }
     }
   }
 

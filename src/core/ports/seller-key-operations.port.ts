@@ -10,6 +10,12 @@ export interface ClaimKeysResult {
   reservationId: string;
   keyIds: string[];
   viaJit: boolean;
+  /**
+   * Set when keys were claimed from a linked source variant
+   * (variant_inventory_sources) rather than the consumer variant's own pool.
+   * Callers should emit inventory stock-changed for this variant too.
+   */
+  sourceVariantId?: string;
 }
 
 export interface ClaimKeysParams {
