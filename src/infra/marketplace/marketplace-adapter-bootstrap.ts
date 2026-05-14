@@ -136,6 +136,8 @@ async function buildAdapter(
       return buildBambooAdapter(secrets, profile);
     case 'approute':
       return buildApprouteCatalogOnlyMarker(secrets, profile);
+    case 'wgcards':
+      return buildWgcardsCatalogOnlyMarker(secrets);
     default:
       logger.warn(`Unknown provider code — no adapter factory`, { providerCode: account.provider_code });
       return null;
@@ -477,4 +479,22 @@ function catalogTargetCurrency(profile: Record<string, unknown>): string {
     profileStr(profile, 'catalog_target_currency')?.trim().toUpperCase() ??
     profileStr(profile, 'checkout_wallet_currency')?.trim().toUpperCase();
   return /^[A-Za-z]{3}$/.test(fromProfile ?? '') ? fromProfile! : 'USD';
+}
+
+/**
+ * WGCards does not expose a product-search or catalog-listing API — `getStock` requires
+ * known SKU IDs, so live search is not possible. Registering a no-capability marker lets
+ * the live-search panel show WGCards in the provider list and return any hits from the
+ * locally ingested `provider_product_catalog` table.
+ */
+function buildWgcardsCatalogOnlyMarker(
+  secrets: Record<string, string>,
+): AnyMarketplaceAdapter | null {
+  const appId = secrets['WGCARDS_APP_ID'];
+  const appKey = secrets['WGCARDS_APP_KEY'];
+  if (!appId?.trim() || !appKey?.trim()) {
+    logger.warn('WGCards catalog-only registration skipped — need WGCARDS_APP_ID and WGCARDS_APP_KEY');
+    return null;
+  }
+  return {};
 }
