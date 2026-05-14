@@ -23,8 +23,6 @@ import {
   WgcardsHttpClient,
   type WgcardsAccountData,
   type WgcardsBuyCardData,
-  type WgcardsItemPage,
-  type WgcardsStockEntry,
   type WgcardsPlaceOrderRequest,
 } from './wgcards-http-client.js';
 
@@ -71,6 +69,33 @@ export class WgcardsManualBuyer {
     return this.client.getAccount();
   }
 
+  /** Batch-fetch stock for up to ~100 skuIds in one API call (5/60s rate limit). */
+  async getStockBatch(skuIds: readonly string[]): Promise<ReadonlyArray<{ skuId: string; number: number }>> {
+    return this.client.getStock(skuIds);
+  }
+
+  /**
+   * Fetch live price + stock for all SKUs under a given parent itemId.
+   * Uses `getItemAndStock(itemId)` which returns `skuInfos` with both
+   * `skuPrice` and `stock` — the only WGCards endpoint that provides price
+   * data in addition to availability.
+   * Rate limit: 5/60s.
+   */
+  async getItemAndStockByParent(
+    itemId: string,
+    currencyCode = 'USD',
+  ): Promise<readonly import('./wgcards-http-client.js').WgcardsSkuInfo[]> {
+    const page = await this.client.getItemAndStock({
+      appId: this.appId,
+      itemId,
+      currencyCode,
+      current: 1,
+      size: 200,
+    });
+    const record = page.records.find((r) => r.itemId === itemId);
+    return record?.skuInfos ?? [];
+  }
+
   async quote(skuId: string): Promise<WgcardsQuoteResult> {
     const stocks = await this.client.getStock([skuId]);
     const entry = stocks.find((s) => s.skuId === skuId);
@@ -78,34 +103,20 @@ export class WgcardsManualBuyer {
       throw new Error(`WGCards getStock: skuId ${skuId} not found in response`);
     }
 
-    // WGCards getStock returns availability only — no prices. Price comes from
-    // the cached offer snapshot (last_price_cents populated by offer refresh).
+    // WGCards returns prices in the `skuPrice` field via getItemAndStock, but
+    // getStock only returns `number` (quantity). For quote pricing we use the
+    // stock check combined with the cached snapshot price. If stock is 0 we
+    // report unavailable.
     const availableQuantity = entry.number === -1 ? null : entry.number;
 
+    // Price cannot be obtained from getStock alone — we return 0 cents and
+    // let the provider snapshot supply the cost. The stock availability is
+    // the primary output of quote() from WGCards.
     return {
       price_cents: 0,
       currency: 'USD',
       available_quantity: availableQuantity,
     };
-  }
-
-  /**
-   * Batch stock check for up to N skuIds. Uses the same `getStock` endpoint that
-   * accepts an array of IDs (5 requests/60 s limit applies to the whole batch call).
-   * Returns only the entries present in the API response.
-   */
-  async getStockBatch(skuIds: readonly string[]): Promise<readonly WgcardsStockEntry[]> {
-    if (skuIds.length === 0) return [];
-    return this.client.getStock(skuIds);
-  }
-
-  /**
-   * Fetches product info + live prices and stock for a specific parent item (SPU).
-   * `currencyCode` should be 'USD' so the returned `skuPrice` is in USD.
-   * Rate limit: 5 requests / 60 seconds.
-   */
-  async fetchItemPricesAndStock(itemId: string, currencyCode = 'USD'): Promise<WgcardsItemPage> {
-    return this.client.getItemAndStock({ appId: this.appId, itemId, currencyCode });
   }
 
   async purchase(req: WgcardsPlaceOrderRequest): Promise<WgcardsPurchaseResult> {

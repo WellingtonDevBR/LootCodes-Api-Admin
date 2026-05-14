@@ -26,6 +26,10 @@ import {
   createAppRouteManualBuyer,
   type AppRouteManualBuyer,
 } from './approute-manual-buyer.js';
+import {
+  createWgcardsManualBuyer,
+  type WgcardsManualBuyer,
+} from './wgcards/wgcards-manual-buyer.js';
 import { ingestProviderPurchasedKey, KeyIngestionError } from './ingest-provider-key.js';
 
 const logger = createLogger('buyer-manual-purchase');
@@ -108,7 +112,7 @@ export class BuyerManualPurchaseService {
     const guardrailBlock = await this.checkSpendGuardrails(requestId, variantId);
     if (guardrailBlock) return guardrailBlock;
 
-    if (providerCode !== 'bamboo' && providerCode !== 'approute') {
+    if (providerCode !== 'bamboo' && providerCode !== 'approute' && providerCode !== 'wgcards') {
       return {
         success: false,
         error: `Provider ${dto.provider_code} does not support native manual purchasing yet`,
@@ -127,6 +131,29 @@ export class BuyerManualPurchaseService {
     const apiProfile = asApiProfile(accountRow?.api_profile);
 
     const secrets = await resolveProviderSecrets(this.db, providerAccountId);
+
+    if (providerCode === 'wgcards') {
+      const wgcardsBuyer = createWgcardsManualBuyer({ secrets, profile: apiProfile });
+      if (!wgcardsBuyer) {
+        return {
+          success: false,
+          error: 'WGCards credentials (WGCARDS_APP_ID, WGCARDS_APP_KEY, WGCARDS_ACCOUNT_ID) are not configured for this provider account',
+        };
+      }
+      return this.runWgcardsPurchaseAfterSetup({
+        requestId,
+        variantId,
+        providerCode,
+        offerId,
+        quantity,
+        adminUserId,
+        idempotencyKey: `manual-${variantId}-${requestId}`,
+        providerAccountId,
+        wgcardsBuyer,
+        apiProfile,
+        attemptSource: 'manual',
+      });
+    }
 
     if (providerCode === 'bamboo') {
       const bambooBuyer = createBambooManualBuyer({ secrets, profile: apiProfile });
@@ -262,7 +289,7 @@ export class BuyerManualPurchaseService {
       };
     }
 
-    if (providerCode !== 'bamboo' && providerCode !== 'approute') {
+    if (providerCode !== 'bamboo' && providerCode !== 'approute' && providerCode !== 'wgcards') {
       return {
         success: false,
         error: `JIT native purchase is not supported for provider '${providerCode}' yet`,
@@ -271,6 +298,29 @@ export class BuyerManualPurchaseService {
 
     const apiProfile = asApiProfile(accountRow.api_profile);
     const secrets = await resolveProviderSecrets(this.db, providerAccountId);
+
+    if (providerCode === 'wgcards') {
+      const wgcardsBuyer = createWgcardsManualBuyer({ secrets, profile: apiProfile });
+      if (!wgcardsBuyer) {
+        return {
+          success: false,
+          error: 'WGCards credentials (WGCARDS_APP_ID, WGCARDS_APP_KEY, WGCARDS_ACCOUNT_ID) are not configured',
+        };
+      }
+      return this.runWgcardsPurchaseAfterSetup({
+        requestId,
+        variantId,
+        providerCode,
+        offerId,
+        quantity,
+        adminUserId,
+        idempotencyKey,
+        providerAccountId,
+        wgcardsBuyer,
+        apiProfile,
+        attemptSource: 'seller_jit',
+      });
+    }
 
     if (providerCode === 'bamboo') {
       const bambooBuyer = createBambooManualBuyer({ secrets, profile: apiProfile });
@@ -819,6 +869,222 @@ export class BuyerManualPurchaseService {
       return {
         success: false,
         error: err instanceof Error ? err.message : 'Purchase request failed',
+      };
+    }
+  }
+
+  private async runWgcardsPurchaseAfterSetup(params: {
+    readonly requestId: string;
+    readonly variantId: string;
+    readonly providerCode: string;
+    readonly offerId: string;
+    readonly quantity: number;
+    readonly adminUserId: string | null;
+    readonly idempotencyKey: string;
+    readonly providerAccountId: string;
+    readonly wgcardsBuyer: WgcardsManualBuyer;
+    readonly apiProfile: Record<string, unknown>;
+    readonly attemptSource: 'manual' | 'seller_jit';
+  }): Promise<ManualProviderPurchaseResult> {
+    const {
+      requestId,
+      variantId,
+      providerCode,
+      offerId,
+      quantity,
+      adminUserId,
+      idempotencyKey,
+      providerAccountId,
+      wgcardsBuyer,
+      apiProfile,
+      attemptSource,
+    } = params;
+
+    // Stock check — WGCards getStock returns quantity but not price.
+    let quoteResult;
+    try {
+      quoteResult = await wgcardsBuyer.quote(offerId);
+    } catch (err) {
+      return {
+        success: false,
+        error: `WGCards stock check failed: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+
+    if (quoteResult.available_quantity !== null && quoteResult.available_quantity < quantity) {
+      return {
+        success: false,
+        error: `Insufficient WGCards stock: ${quoteResult.available_quantity} available, ${quantity} requested`,
+      };
+    }
+
+    // Resolve purchase currency: api_profile.checkout_wallet_currency → 'USD'.
+    const rawCurrency = typeof apiProfile['checkout_wallet_currency'] === 'string'
+      ? apiProfile['checkout_wallet_currency'].trim().toUpperCase()
+      : 'USD';
+    const currency = /^[A-Z]{3}$/.test(rawCurrency) ? rawCurrency : 'USD';
+
+    // Resolve unit cost from catalog snapshot for audit/reporting (best-effort).
+    const estimate = await this.resolveAppRoutePurchaseEstimate({
+      providerAccountId,
+      variantId,
+      offerId,
+      quantity,
+    });
+
+    let attemptId: string | null = null;
+    try {
+      const inserted = await this.db.insert<{ id: string }>('provider_purchase_attempts', {
+        provider_account_id: providerAccountId,
+        variant_id: variantId,
+        attempt_no: 1,
+        provider_request_id: idempotencyKey,
+        status: 'pending',
+        manual_admin_user_id: adminUserId,
+      });
+      attemptId = inserted.id;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('23505') || msg.toLowerCase().includes('duplicate')) {
+        return {
+          success: false,
+          error: 'Duplicate purchase idempotency key — wait for the in-flight attempt to finish or generate a new key.',
+        };
+      }
+      logger.error('Failed to insert pending provider_purchase_attempts row', err as Error, { variantId, providerAccountId });
+      return {
+        success: false,
+        error: 'Could not record purchase attempt (database error). Check provider_purchase_attempts constraints and retry.',
+      };
+    }
+
+    try {
+      const result = await wgcardsBuyer.purchase({
+        serviceOrder: idempotencyKey,
+        currency,
+        items: [{ skuId: offerId, buyNum: quantity }],
+      });
+
+      if (!result.success && result.recoverable && result.orderId) {
+        await this.finalizeAttempt(attemptId, {
+          status: 'timeout',
+          provider_order_ref: result.orderId,
+          error_code: 'ORDER_TIMEOUT',
+          error_message: result.error,
+        });
+        return {
+          success: false,
+          recoverable: true,
+          provider_order_ref: result.orderId,
+          purchase_id: result.orderId,
+          error:
+            `WGCards order ${result.orderId} placed — cards not yet delivered within poll window. ` +
+            `They will be automatically recovered when WGCards completes the order, ` +
+            `or you can click Recover to retry now.`,
+        };
+      }
+
+      if (!result.success || !result.keys || result.keys.length === 0) {
+        await this.finalizeAttempt(attemptId, {
+          status: 'failed',
+          provider_order_ref: result.orderId,
+          error_code: 'NO_KEYS_RETURNED',
+          error_message: result.error,
+        });
+        return {
+          success: false,
+          error: result.error ?? 'WGCards purchase returned no keys',
+          provider_order_ref: result.orderId,
+          purchase_id: result.orderId,
+        };
+      }
+
+      const providerRef = result.orderId ?? idempotencyKey;
+      const costCents = estimate?.totalCents ?? null;
+      const ingestedKeyIds: string[] = [];
+      const failedIngestions: ManualPurchaseFailedIngestion[] = [];
+
+      for (let i = 0; i < result.keys.length; i++) {
+        const key = result.keys[i]!;
+        try {
+          const keyId = await ingestProviderPurchasedKey(
+            this.db,
+            {
+              variant_id: variantId,
+              plaintext_key: key,
+              purchase_cost_cents: costCents,
+              purchase_currency: currency,
+              supplier_reference: `${providerCode}:${providerRef}`,
+              created_by: adminUserId ?? undefined,
+            },
+            requestId,
+          );
+          ingestedKeyIds.push(keyId);
+        } catch (ingestErr) {
+          const stage = ingestErr instanceof KeyIngestionError ? ingestErr.stage : 'unknown';
+          const message = ingestErr instanceof Error ? ingestErr.message : String(ingestErr);
+          logger.error('WGCards purchase key ingestion failed', ingestErr as Error, { requestId, providerCode, keyIndex: i, stage });
+          failedIngestions.push({ index: i, stage, error: message, plaintext_key: key });
+        }
+      }
+
+      await this.finalizeAttempt(attemptId, {
+        status: 'success',
+        provider_order_ref: providerRef,
+        response_snapshot: {
+          keys_received: result.keys.length,
+          keys_ingested: ingestedKeyIds.length,
+          cost_cents: costCents,
+          currency,
+          ...(attemptSource === 'seller_jit' ? { procurement_trigger: 'seller_reserve_jit' as const } : {}),
+        },
+      });
+
+      logger.info('WGCards purchase completed', {
+        requestId,
+        variantId,
+        providerCode,
+        keysReceived: result.keys.length,
+        keysIngested: ingestedKeyIds.length,
+        keysFailed: failedIngestions.length,
+      });
+
+      const allFailed = ingestedKeyIds.length === 0 && failedIngestions.length > 0;
+      if (allFailed) {
+        return {
+          success: false,
+          error:
+            `Provider charged us but ${failedIngestions.length} key(s) could not be saved — ` +
+            `copy the plaintext from \`failed_ingestions\` immediately and add them via Add Stock. ` +
+            `Underlying: ${failedIngestions[0]!.error}`,
+          purchase_id: providerRef,
+          provider_order_ref: providerRef,
+          keys_received: result.keys.length,
+          keys_ingested: 0,
+          failed_ingestions: failedIngestions,
+        };
+      }
+
+      return {
+        success: true,
+        purchase_id: providerRef,
+        provider_order_ref: providerRef,
+        key_ids: ingestedKeyIds,
+        partial_failure: failedIngestions.length > 0,
+        keys_received: result.keys.length,
+        keys_ingested: ingestedKeyIds.length,
+        ...(failedIngestions.length > 0 ? { failed_ingestions: failedIngestions } : {}),
+      };
+    } catch (err) {
+      await this.finalizeAttempt(attemptId, {
+        status: 'failed',
+        error_code: 'EXCEPTION',
+        error_message: err instanceof Error ? err.message : String(err),
+      });
+      logger.error('WGCards purchase threw', err as Error, { requestId, providerCode });
+      return {
+        success: false,
+        error: err instanceof Error ? err.message : 'WGCards purchase request failed',
       };
     }
   }

@@ -29,6 +29,11 @@ import {
   refreshAppRouteOfferSnapshotsForVariant,
   type AppRouteOfferSnapshotRow,
 } from './approute-variant-offer-quote-refresh.js';
+import {
+  refreshWgcardsOfferSnapshots,
+  type WgcardsOfferRefreshRow,
+} from './wgcards-variant-offer-quote-refresh.js';
+import { createWgcardsManualBuyer } from './wgcards/wgcards-manual-buyer.js';
 import { createLogger } from '../../shared/logger.js';
 
 const logger = createLogger('buyer-offer-snapshot-sync');
@@ -152,14 +157,25 @@ export class BuyerOfferSnapshotSyncService implements IBuyerOfferSnapshotSyncSer
       );
     });
 
+    const wgcardsOffers = offerRows.filter((o) => {
+      const acc = accountsById.get(o.provider_account_id);
+      return (
+        acc?.provider_code?.toLowerCase() === 'wgcards' &&
+        acc.is_enabled &&
+        acc.health_status === 'healthy' &&
+        Boolean(o.external_offer_id?.trim())
+      );
+    });
+
     const skipped =
-      offerRows.length - bambooOffers.length - approuteOffers.length;
+      offerRows.length - bambooOffers.length - approuteOffers.length - wgcardsOffers.length;
 
     logger.info('Buyer offer snapshot sync started', {
       requestId,
       totalOffers: offerRows.length,
       bambooOffers: bambooOffers.length,
       approuteOffers: approuteOffers.length,
+      wgcardsOffers: wgcardsOffers.length,
       skippedOffers: skipped,
     });
 
@@ -303,6 +319,57 @@ export class BuyerOfferSnapshotSyncService implements IBuyerOfferSnapshotSyncSer
         if (offer.last_price_cents !== pricesBefore.get(offer.id)) {
           updated++;
         }
+      }
+    }
+
+    // ── WGCards ───────────────────────────────────────────────────────────────
+    // Group by account so we create one buyer per credential set.
+    const wgcardsByAccount = new Map<string, OfferRow[]>();
+    for (const offer of wgcardsOffers) {
+      const existing = wgcardsByAccount.get(offer.provider_account_id) ?? [];
+      existing.push(offer);
+      wgcardsByAccount.set(offer.provider_account_id, existing);
+    }
+
+    for (const [accountId, offers] of wgcardsByAccount) {
+      const acc = accountsById.get(accountId)!;
+      let secrets: Record<string, string>;
+      try {
+        secrets = await resolveProviderSecrets(this.db, accountId);
+      } catch (err) {
+        logger.warn('Failed to resolve WGCards secrets — skipping account', {
+          requestId,
+          accountId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        failed += offers.length;
+        continue;
+      }
+
+      const buyer = createWgcardsManualBuyer({ secrets, profile: asProfile(acc.api_profile) });
+      if (!buyer) {
+        logger.warn('WGCards buyer could not be created — missing credentials', { requestId, accountId });
+        failed += offers.length;
+        continue;
+      }
+
+      try {
+        const result = await refreshWgcardsOfferSnapshots(
+          this.db,
+          buyer,
+          accountId,
+          offers as WgcardsOfferRefreshRow[],
+          requestId,
+        );
+        updated += result.updated;
+        failed += result.failed;
+      } catch (err) {
+        logger.error('WGCards offer snapshot refresh threw unexpectedly', err as Error, {
+          requestId,
+          accountId,
+          offerCount: offers.length,
+        });
+        failed += offers.length;
       }
     }
 

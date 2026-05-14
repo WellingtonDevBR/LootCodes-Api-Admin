@@ -1,21 +1,17 @@
 /**
  * WGCards offer snapshot refresh.
  *
- * `getItemAndStock` returns both live price and availability for all SKUs under
- * a parent item (SPU) in a single call. We group linked offers by their parent
- * item ID (`external_parent_product_id`) and call `getItemAndStock` once per
- * unique parent. Rate limit: 5 calls / 60 s (13 s inter-call gap → ≤4.6/60 s).
+ * Groups active offer rows by `external_parent_product_id` (WGCards itemId), then
+ * calls `getItemAndStock(itemId)` once per unique parent to get both live price
+ * (`skuPrice`) and stock in a single request. This is the ONLY WGCards endpoint
+ * that returns prices — `getStock` returns availability only.
  *
- * Side-effect: also refreshes `provider_product_catalog.min_price_cents`, `qty`,
- * and `available_to_buy` for each SKU that appears in the response — these rows
- * are seeded with 0 / null by `getAllItem` (which carries no price or stock data).
+ * Rate limit: 5 per 60 seconds. We pace at 14 s between parent-item calls.
  *
- * Flow per account:
- *   1. Gather active offer rows (external_offer_id = skuId, external_parent_product_id = itemId).
- *   2. For offers missing a parent ID, look it up from provider_product_catalog.
- *   3. Group offers by parent item ID; call getItemAndStock({ itemId, currencyCode: 'USD' }).
- *   4. Update provider_product_catalog rows with fresh price, qty, available_to_buy.
- *   5. Update provider_variant_offers rows with last_price_cents, available_quantity, last_checked_at.
+ * Side effects:
+ *   - Updates `provider_variant_offers.last_price_cents / available_quantity`
+ *   - Upserts `provider_product_catalog.min_price_cents / qty` as a by-product
+ *     so the catalog stays warm for cost-estimation queries.
  */
 import type { IDatabase } from '../../core/ports/database.port.js';
 import type { WgcardsManualBuyer } from './wgcards/wgcards-manual-buyer.js';
@@ -23,8 +19,8 @@ import { createLogger } from '../../shared/logger.js';
 
 const logger = createLogger('wgcards-offer-refresh');
 
-/** Keep well inside the 5 / 60 s rate limit (13 s gap → ≤ 4.6 calls / 60 s). */
-const INTER_ITEM_DELAY_MS = 13_000;
+/** 5/60s limit → 12 s/call minimum. 14 s gives comfortable headroom. */
+const INTER_PARENT_DELAY_MS = 14_000;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -34,9 +30,9 @@ export interface WgcardsOfferRefreshRow {
   readonly id: string;
   readonly provider_account_id: string;
   readonly external_offer_id: string;
+  /** WGCards itemId — parent of the SKU. Required to call getItemAndStock. */
+  readonly external_parent_product_id: string | null;
   readonly currency: string | null;
-  /** WGCards parent item (SPU) ID — the key for getItemAndStock. */
-  external_parent_product_id?: string | null;
 }
 
 export interface WgcardsOfferRefreshResult {
@@ -45,58 +41,9 @@ export interface WgcardsOfferRefreshResult {
 }
 
 /**
- * Resolves `external_parent_product_id` for offers that have it set to null/empty.
- * Falls back to `provider_product_catalog` via the skuId → external_parent_product_id link.
- */
-async function resolveParentIds(
-  db: IDatabase,
-  providerAccountId: string,
-  offers: readonly WgcardsOfferRefreshRow[],
-): Promise<Map<string, string>> {
-  const result = new Map<string, string>();
-  const needLookup: string[] = [];
-
-  for (const offer of offers) {
-    const parent = offer.external_parent_product_id?.trim();
-    if (parent) {
-      result.set(offer.external_offer_id.trim(), parent);
-    } else {
-      needLookup.push(offer.external_offer_id.trim());
-    }
-  }
-
-  if (needLookup.length === 0) return result;
-
-  try {
-    const catalogRows = await db.queryAll<{
-      external_product_id: string;
-      external_parent_product_id: string | null;
-    }>('provider_product_catalog', {
-      select: 'external_product_id, external_parent_product_id',
-      filter: { provider_account_id: providerAccountId },
-      in: [['external_product_id', needLookup]],
-    });
-
-    for (const row of catalogRows) {
-      const parent = row.external_parent_product_id?.trim();
-      if (parent) result.set(row.external_product_id.trim(), parent);
-    }
-  } catch (err) {
-    logger.warn('WGCards offer refresh: catalog parent ID lookup failed', err instanceof Error ? err : new Error(String(err)), {
-      providerAccountId,
-      needLookupCount: needLookup.length,
-    });
-  }
-
-  return result;
-}
-
-/**
  * Refreshes `provider_variant_offers` rows for a single WGCards account.
- *
- * Calls `getItemAndStock` per unique parent item to obtain live prices and stock.
- * Also back-fills `provider_product_catalog.min_price_cents` / `qty` / `available_to_buy`
- * so those rows reflect real data instead of the zero-placeholder left by `getAllItem`.
+ * Calls `getItemAndStock(itemId)` once per unique parent item to obtain
+ * live prices and stock for all linked SKUs in that item.
  */
 export async function refreshWgcardsOfferSnapshots(
   db: IDatabase,
@@ -107,144 +54,125 @@ export async function refreshWgcardsOfferSnapshots(
 ): Promise<WgcardsOfferRefreshResult> {
   if (offerRows.length === 0) return { updated: 0, failed: 0 };
 
-  const parentIdBySkuId = await resolveParentIds(db, providerAccountId, offerRows);
+  // ── Group offers by parent itemId ────────────────────────────────────────
+  const byParent = new Map<string, WgcardsOfferRefreshRow[]>();
+  const noParent: WgcardsOfferRefreshRow[] = [];
 
-  // Build parent → offers[] map, skipping offers with no resolvable parent ID.
-  const offersByParent = new Map<string, WgcardsOfferRefreshRow[]>();
-  let skippedNoParent = 0;
-  for (const offer of offerRows) {
-    const skuId = offer.external_offer_id.trim();
-    const parentId = parentIdBySkuId.get(skuId);
+  for (const row of offerRows) {
+    const parentId = row.external_parent_product_id?.trim();
     if (!parentId) {
-      skippedNoParent++;
-      logger.debug('WGCards offer refresh: no parent item ID, skipping', {
-        requestId,
-        offerRowId: offer.id,
-        skuId,
-      });
+      noParent.push(row);
       continue;
     }
-    const list = offersByParent.get(parentId) ?? [];
-    list.push(offer);
-    offersByParent.set(parentId, list);
+    const existing = byParent.get(parentId) ?? [];
+    existing.push(row);
+    byParent.set(parentId, existing);
   }
 
-  if (skippedNoParent > 0) {
-    logger.warn('WGCards offer refresh: some offers skipped — no external_parent_product_id in offers or catalog', {
+  if (noParent.length > 0) {
+    logger.warn('WGCards refresh: offers missing external_parent_product_id — skipped', {
       requestId,
       providerAccountId,
-      skippedNoParent,
+      count: noParent.length,
+      skuIds: noParent.map((r) => r.external_offer_id),
     });
   }
 
+  // ── Per-parent getItemAndStock calls ─────────────────────────────────────
+  /** skuId → { priceCents, currency, stock } */
+  const skuData = new Map<string, { priceCents: number; currency: string; stock: number }>();
+
+  let parentIndex = 0;
+  for (const [parentId, rows] of byParent) {
+    if (parentIndex > 0) await sleep(INTER_PARENT_DELAY_MS);
+    parentIndex++;
+
+    // Infer request currency from the offer rows (default USD)
+    const offerCurrency = rows[0]?.currency?.trim().toUpperCase() ?? 'USD';
+
+    try {
+      const skuInfos = await buyer.getItemAndStockByParent(parentId, offerCurrency);
+      for (const sku of skuInfos) {
+        const priceCents = sku.skuPrice > 0 ? Math.round(sku.skuPrice * 100) : 0;
+        skuData.set(sku.skuId, {
+          priceCents,
+          currency: sku.skuPriceCurrency || offerCurrency,
+          stock: sku.stock,
+        });
+      }
+      logger.debug('WGCards refresh: getItemAndStock succeeded', {
+        requestId,
+        parentId,
+        skuCount: skuInfos.length,
+      });
+    } catch (err) {
+      logger.warn(
+        'WGCards refresh: getItemAndStock failed for parent item',
+        err instanceof Error ? err : new Error(String(err)),
+        { requestId, providerAccountId, parentId, affectedSkus: rows.map((r) => r.external_offer_id) },
+      );
+    }
+  }
+
+  // ── Update offer rows + catalog ──────────────────────────────────────────
   let updated = 0;
   let failed = 0;
   const now = new Date().toISOString();
-  let callIndex = 0;
 
-  for (const [parentId, parentOffers] of offersByParent) {
-    if (callIndex > 0) await sleep(INTER_ITEM_DELAY_MS);
-    callIndex++;
+  for (const offer of offerRows) {
+    if (!offer.external_parent_product_id) continue;
 
-    let skuInfoMap: Map<string, { priceCents: number; currency: string; stock: number }>;
+    const skuId = offer.external_offer_id.trim();
+    const data = skuData.get(skuId);
+
+    // -1 from WGCards means unlimited — map to null (our "no limit" convention)
+    const availableQuantity = data === undefined
+      ? null
+      : data.stock === -1 ? null : data.stock;
+
+    const priceCents = data?.priceCents ?? null;
+    const currency = data?.currency ?? offer.currency ?? 'USD';
 
     try {
-      const page = await buyer.fetchItemPricesAndStock(parentId, 'USD');
-
-      skuInfoMap = new Map();
-      for (const item of page.records) {
-        for (const sku of item.skuInfos ?? []) {
-          const priceCents = sku.skuPrice > 0 ? Math.round(sku.skuPrice * 100) : 0;
-          skuInfoMap.set(sku.skuId, {
-            priceCents,
-            currency: sku.skuPriceCurrency || 'USD',
-            stock: sku.stock ?? 0,
-          });
-        }
-      }
-
-      logger.debug('WGCards getItemAndStock succeeded', {
-        requestId,
-        providerAccountId,
-        parentId,
-        skuCount: skuInfoMap.size,
-      });
+      await db.update(
+        'provider_variant_offers',
+        { id: offer.id },
+        {
+          last_price_cents: priceCents && priceCents > 0 ? priceCents : null,
+          available_quantity: availableQuantity,
+          currency,
+          last_checked_at: now,
+          updated_at: now,
+        },
+      );
+      updated++;
     } catch (err) {
-      logger.warn('WGCards getItemAndStock failed for parent item', err instanceof Error ? err : new Error(String(err)), {
-        requestId,
-        providerAccountId,
-        parentId,
-        offersAffected: parentOffers.length,
-      });
-      failed += parentOffers.length;
+      logger.warn(
+        'WGCards offer snapshot update failed',
+        err instanceof Error ? err : new Error(String(err)),
+        { requestId, offerRowId: offer.id, skuId },
+      );
+      failed++;
       continue;
     }
 
-    // Back-fill provider_product_catalog with fresh prices + stock.
-    for (const [skuId, info] of skuInfoMap) {
-      if (info.priceCents <= 0) continue; // no meaningful price to write
+    // ── Warm up catalog price as a by-product ──────────────────────────────
+    if (priceCents && priceCents > 0) {
       try {
-        await db.update(
+        await db.upsert(
           'provider_product_catalog',
           {
             provider_account_id: providerAccountId,
             external_product_id: skuId,
-          } as Record<string, unknown>,
-          {
-            min_price_cents: info.priceCents,
-            wholesale_price_cents: info.priceCents,
-            qty: info.stock === -1 ? 999 : Math.max(0, info.stock),
-            available_to_buy: info.stock === -1 || info.stock > 0,
-            currency: info.currency,
+            min_price_cents: priceCents,
+            currency,
+            qty: availableQuantity ?? -1,
             updated_at: now,
           },
+          'provider_account_id,external_product_id',
         );
       } catch {
-        // Catalog back-fill is best-effort; don't fail the offer update.
-      }
-    }
-
-    // Update each offer row.
-    for (const offer of parentOffers) {
-      const skuId = offer.external_offer_id.trim();
-      const info = skuInfoMap.get(skuId);
-
-      if (!info) {
-        logger.warn('WGCards offer refresh: skuId not found in getItemAndStock response', {
-          requestId,
-          offerRowId: offer.id,
-          skuId,
-          parentId,
-        });
-        failed++;
-        continue;
-      }
-
-      // -1 = unlimited stock → null in our convention.
-      const availableQuantity = info.stock === -1 ? null : info.stock;
-
-      try {
-        await db.update(
-          'provider_variant_offers',
-          { id: offer.id },
-          {
-            last_price_cents: info.priceCents > 0 ? info.priceCents : null,
-            available_quantity: availableQuantity,
-            currency: info.currency,
-            last_checked_at: now,
-            updated_at: now,
-            // Persist the resolved parent ID so future refreshes skip the catalog lookup.
-            ...(!offer.external_parent_product_id?.trim() ? { external_parent_product_id: parentId } : {}),
-          },
-        );
-        updated++;
-      } catch (err) {
-        logger.warn('WGCards offer snapshot update failed', err instanceof Error ? err : new Error(String(err)), {
-          requestId,
-          offerRowId: offer.id,
-          skuId,
-        });
-        failed++;
+        // Non-critical — offer row already updated; catalog warmup is best-effort
       }
     }
   }
@@ -254,8 +182,8 @@ export async function refreshWgcardsOfferSnapshots(
     providerAccountId,
     updated,
     failed,
-    skippedNoParent,
-    parentItemsQueried: callIndex,
+    parentItems: byParent.size,
+    skuCount: offerRows.length,
   });
 
   return { updated, failed };
