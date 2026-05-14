@@ -190,22 +190,41 @@ export class SupabaseAdminOrderRepository implements IAdminOrderRepository {
     const limit = dto.limit ?? DEFAULT_PAGE_LIMIT;
     const offset = (page - 1) * limit;
 
-    // Use queryPaginated + range so PostgREST returns only the requested page
-    // and the exact total count — no full-scan + in-memory slice.
-    const queryOpts: import('../../core/ports/database.port.js').QueryOptions = {
-      select: 'id, order_number, status, total_amount, currency, delivery_email, contact_email, guest_email, created_at, updated_at, order_channel, payment_provider, provider_fee, net_amount, marketplace_pricing, quantity, order_items(product_id, variant_id, quantity, unit_price, total_price, products(name), product_variants(face_value, sku, product_regions(name)))',
-      order: { column: 'created_at', ascending: false },
-      range: [offset, offset + limit - 1],
-    };
+    const ORDER_SELECT = 'id, order_number, status, total_amount, currency, delivery_email, contact_email, guest_email, created_at, updated_at, order_channel, payment_provider, provider_fee, net_amount, marketplace_pricing, quantity, order_items(product_id, variant_id, quantity, unit_price, total_price, products(name), product_variants(face_value, sku, product_regions(name)))';
 
     const eqFilters: Array<[string, unknown]> = [];
     if (dto.status) eqFilters.push(['status', dto.status]);
-    if (eqFilters.length > 0) queryOpts.eq = eqFilters;
 
-    if (dto.from) queryOpts.gte = [['created_at', dto.from]];
-    if (dto.to) queryOpts.lte = [['created_at', dto.to]];
+    let sliced: Record<string, unknown>[];
+    let totalCount: number;
 
-    const { data: sliced, total: totalCount } = await this.db.queryPaginated<Record<string, unknown>>('orders', queryOpts);
+    // Analytics calls pass limit=5000 to signal "fetch all rows in the date range".
+    // PostgREST caps a single request at 1 000 rows, so we must paginate through
+    // every 1 000-row page with queryAll instead of using a single queryPaginated.
+    if (limit >= 5000) {
+      sliced = await this.db.queryAll<Record<string, unknown>>('orders', {
+        select: ORDER_SELECT,
+        order: { column: 'created_at', ascending: false },
+        ...(eqFilters.length > 0 ? { eq: eqFilters } : {}),
+        ...(dto.from ? { gte: [['created_at', dto.from]] as Array<[string, unknown]> } : {}),
+        ...(dto.to ? { lte: [['created_at', dto.to]] as Array<[string, unknown]> } : {}),
+      });
+      totalCount = sliced.length;
+    } else {
+      // Normal paginated path (CRM orders list, etc.)
+      const queryOpts: import('../../core/ports/database.port.js').QueryOptions = {
+        select: ORDER_SELECT,
+        order: { column: 'created_at', ascending: false },
+        range: [offset, offset + limit - 1],
+      };
+      if (eqFilters.length > 0) queryOpts.eq = eqFilters;
+      if (dto.from) queryOpts.gte = [['created_at', dto.from]];
+      if (dto.to) queryOpts.lte = [['created_at', dto.to]];
+
+      const paginated = await this.db.queryPaginated<Record<string, unknown>>('orders', queryOpts);
+      sliced = paginated.data;
+      totalCount = paginated.total;
+    }
 
     const orderIds = sliced.map(o => o.id as string);
     const keyCostMap = new Map<string, { cost: number; currency: string }>();
