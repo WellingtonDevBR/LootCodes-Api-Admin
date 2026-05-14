@@ -69,10 +69,21 @@ export function flattenWgcardsItemsToCatalogRows(
 
     for (const sku of skus) {
       const productName = `${item.itemName} — ${sku.skuName}`;
-      const skuPrice = (sku as WgcardsSkuInfo).skuPrice ?? 0;
-      const stock = (sku as WgcardsSkuInfo).stock ?? 0;
+
+      // `getAllItem` returns `skuList` which has NO price or stock fields.
+      // `getItemAndStock` returns `skuInfos` which DOES include both.
+      // Detect by checking whether the field exists on the object at runtime;
+      // do NOT default to 0, because 0 would mark items as unavailable when
+      // we simply have no data — a false negative that hides the entire catalog.
+      const hasStock = 'stock' in sku;
+      const hasPrice = 'skuPrice' in sku;
+      const skuPrice = hasPrice ? ((sku as WgcardsSkuInfo).skuPrice ?? 0) : 0;
+      const stock = hasStock ? ((sku as WgcardsSkuInfo).stock ?? 0) : null;
+
       const priceCents = skuPrice > 0 ? Math.round(skuPrice * 100) : 0;
-      const available = stock === -1 || stock > 0;
+      // When stock data is absent (getAllItem / skuList path), default to available=true:
+      // presence in the catalog means the product exists — we just don't know exact qty.
+      const available = stock === null ? true : (stock === -1 || stock > 0);
 
       rows.push({
         provider_account_id: providerAccountId,
@@ -84,7 +95,7 @@ export function flattenWgcardsItemsToCatalogRows(
         region,
         min_price_cents: priceCents,
         currency: sku.skuPriceCurrency || 'USD',
-        qty: stock === -1 ? 999 : Math.max(0, stock),
+        qty: stock === null ? 0 : (stock === -1 ? 999 : Math.max(0, stock)),
         available_to_buy: available,
         thumbnail: (item as { spuImage?: string | null }).spuImage ?? null,
         slug: item.itemId,
