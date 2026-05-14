@@ -173,7 +173,7 @@ describe('WgcardsHttpClient', () => {
       await client.placeOrder({
         serviceOrder: 'my-idempotency-key',
         currency: 'EUR',
-        items: [{ skuId: 'sku-z', buyNum: 3 }],
+        items: [{ skuId: 'sku-z', buyNum: 3, faceValue: 42.5 }],
       });
 
       const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
@@ -181,11 +181,30 @@ describe('WgcardsHttpClient', () => {
       const payload = JSON.parse(crypto.decrypt(body.msg)) as {
         serviceOrder: string;
         currency: string;
-        detailVos: Array<{ skuId: string; buyNum: number }>;
+        detailVos: Array<{ skuId: string; buyNum: number; faceValue?: number }>;
       };
       expect(payload.serviceOrder).toBe('my-idempotency-key');
       expect(payload.currency).toBe('EUR');
-      expect(payload.detailVos).toEqual([{ skuId: 'sku-z', buyNum: 3 }]);
+      expect(payload.detailVos).toEqual([{ skuId: 'sku-z', buyNum: 3, faceValue: 42.5 }]);
+    });
+
+    it('coerces skuId to string and truncates buyNum', async () => {
+      const placeOrderData = { code: 200, data: 'ord-100', message: '' };
+      const fetchMock = vi.fn().mockReturnValue(encryptedResponseFor(crypto, placeOrderData));
+      const client = makeClient(fetchMock);
+
+      await client.placeOrder({
+        serviceOrder: 'svc-1',
+        currency: 'USD',
+        items: [{ skuId: 999888777 as unknown as string, buyNum: 2.9 }],
+      });
+
+      const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      const body = JSON.parse(init.body as string) as { msg: string };
+      const payload = JSON.parse(crypto.decrypt(body.msg)) as {
+        detailVos: Array<{ skuId: string; buyNum: number }>;
+      };
+      expect(payload.detailVos).toEqual([{ skuId: '999888777', buyNum: 2 }]);
     });
   });
 

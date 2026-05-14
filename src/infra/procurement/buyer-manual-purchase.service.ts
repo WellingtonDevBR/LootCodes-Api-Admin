@@ -929,6 +929,7 @@ export class BuyerManualPurchaseService {
 
     const offerLinkRow = await this.db.queryOne<{
       external_parent_product_id: string | null;
+      last_price_cents: number | null;
     }>('provider_variant_offers', {
       filter: {
         provider_account_id: providerAccountId,
@@ -938,21 +939,91 @@ export class BuyerManualPurchaseService {
     });
     const parentId = offerLinkRow?.external_parent_product_id?.trim() ?? '';
 
-    let payCurrency = walletHint;
-    let faceValue: number | undefined;
-    if (parentId) {
-      const meta = await wgcardsBuyer.getSkuCheckoutMeta(parentId, offerId, walletHint);
-      if (meta) {
-        payCurrency = meta.payCurrency;
-        faceValue = meta.faceValue;
-      }
-    } else {
-      logger.warn('WGCards manual purchase — missing external_parent_product_id on provider_variant_offers; placeOrder uses wallet hint only', {
+    if (!parentId) {
+      logger.warn('WGCards manual purchase — missing external_parent_product_id on provider_variant_offers', {
         requestId,
         variantId,
         offerId,
         providerAccountId,
       });
+      return {
+        success: false,
+        error:
+          'WGCards offer is missing external_parent_product_id (WGCards parent itemId). Relink this variant from procurement catalog sync so place order can resolve pay currency and face value.',
+      };
+    }
+
+    let payCurrency = walletHint;
+    let faceValue: number | undefined;
+    const meta = await wgcardsBuyer.getSkuCheckoutMeta(parentId, offerId, walletHint);
+    if (!meta) {
+      return {
+        success: false,
+        error:
+          'Could not load WGCards live SKU metadata (getItemAndStock). Verify external_parent_product_id and external_offer_id (skuId) match the supplier catalog.',
+      };
+    }
+    payCurrency = meta.payCurrency;
+    faceValue = meta.faceValue;
+
+    const hasFaceRange =
+      Number.isFinite(meta.minFaceValue) &&
+      Number.isFinite(meta.maxFaceValue) &&
+      meta.minFaceValue !== meta.maxFaceValue;
+    if (faceValue === undefined && hasFaceRange) {
+      const rawOverride = apiProfile['wgcards_checkout_face_value'];
+      let overrideNum: number | undefined;
+      if (typeof rawOverride === 'number' && Number.isFinite(rawOverride)) {
+        overrideNum = rawOverride;
+      } else if (typeof rawOverride === 'string' && rawOverride.trim().length > 0) {
+        const n = Number(rawOverride.trim());
+        if (Number.isFinite(n)) overrideNum = n;
+      }
+      if (
+        overrideNum !== undefined &&
+        overrideNum >= meta.minFaceValue &&
+        overrideNum <= meta.maxFaceValue
+      ) {
+        faceValue = overrideNum;
+      }
+      if (faceValue === undefined) {
+        const cents = offerLinkRow?.last_price_cents;
+        if (cents != null && cents > 0) {
+          const fromPriceMajor = cents / 100;
+          if (fromPriceMajor >= meta.minFaceValue && fromPriceMajor <= meta.maxFaceValue) {
+            faceValue = Math.round(fromPriceMajor * 100) / 100;
+          }
+        }
+      }
+      if (faceValue === undefined) {
+        return {
+          success: false,
+          error:
+            `WGCards placeOrder requires faceValue for this custom-denomination SKU (allowed ${meta.minFaceValue}–${meta.maxFaceValue}). ` +
+            `Set provider account api_profile.wgcards_checkout_face_value to the card face amount, or ensure last_price_cents matches a face value in that range.`,
+        };
+      }
+    }
+
+    let accountSnapshot;
+    try {
+      accountSnapshot = await wgcardsBuyer.getAccount();
+    } catch (err) {
+      return {
+        success: false,
+        error: `WGCards wallet check failed: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+    const fundedWallet = accountSnapshot.accounts.find(
+      (w) =>
+        w.effective &&
+        w.currency.trim().toUpperCase() === payCurrency.trim().toUpperCase(),
+    );
+    if (!fundedWallet) {
+      return {
+        success: false,
+        error: `No active WGCards wallet in ${payCurrency}. Fund that currency in WGCards or adjust checkout_wallet_currency / offer linking — Provider Balances shows your wallets.`,
+      };
     }
 
     // Resolve unit cost from catalog snapshot for audit/reporting (best-effort).

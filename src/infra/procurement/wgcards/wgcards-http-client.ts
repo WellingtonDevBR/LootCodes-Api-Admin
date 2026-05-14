@@ -256,22 +256,37 @@ export class WgcardsHttpClient {
    * `serviceOrder` is the caller-provided idempotency key (must be unique).
    */
   async placeOrder(req: WgcardsPlaceOrderRequest): Promise<string> {
+    // Per WGCards API: userId = appId, detailVos[].skuId = string, buyNum = integer,
+    // faceValue required for custom-denomination SKUs (variable min/max face range).
     const payload = {
       userId: this.appId,
       accountId: this.accountId,
       currency: req.currency,
       serviceOrder: req.serviceOrder,
-      detailVos: req.items.map((item) => ({
-        skuId: item.skuId,
-        buyNum: item.buyNum,
-        ...(item.faceValue !== undefined ? { faceValue: item.faceValue } : {}),
-      })),
+      detailVos: req.items.map((item) => {
+        const row: {
+          skuId: string;
+          buyNum: number;
+          faceValue?: number;
+        } = {
+          skuId: String(item.skuId),
+          buyNum: Math.max(1, Math.trunc(Number(item.buyNum))),
+        };
+        if (item.faceValue !== undefined && Number.isFinite(item.faceValue)) {
+          row.faceValue = Number(item.faceValue);
+        }
+        return row;
+      }),
     };
 
     const data = await this.post<WgcardsPlaceOrderData>('/api/placeOrder', payload);
 
     if (data.code !== 200 || !data.data) {
-      throw new Error(`WGCards placeOrder inner error: code=${data.code} message=${data.message}`);
+      const innerMsg =
+        data.message === undefined || data.message === null || data.message === ''
+          ? '(none)'
+          : String(data.message);
+      throw new Error(`WGCards placeOrder inner error: code=${data.code} message=${innerMsg}`);
     }
     return data.data;
   }
@@ -343,25 +358,24 @@ export class WgcardsHttpClient {
 
     // The response body is the raw encrypted string (not wrapped in JSON on the outer level)
     const text = await response.text();
-    // Some endpoints return unencrypted JSON on error. If it parses as a JSON
-    // object with a numeric `code` field, surface it directly — do NOT try to
-    // AES-decrypt it (decryption on plain JSON produces garbage).
+    // Some endpoints return JSON with a `msg` key directly; others return raw Base64.
+    // Normalise: if it looks like a JSON object, try to extract the `msg` field.
     const trimmed = text.trim();
     if (trimmed.startsWith('{')) {
-      let parsed: Record<string, unknown> | undefined;
       try {
-        parsed = JSON.parse(trimmed) as Record<string, unknown>;
-      } catch {
-        // Not valid JSON — fall through to treat as raw ciphertext
-      }
-      if (parsed !== undefined && typeof parsed['code'] === 'number') {
-        const code = parsed['code'] as number;
-        if (code !== 200) {
-          const msg =
-            typeof parsed['msg'] === 'string' ? parsed['msg'] : '(no message)';
-          throw new Error(`WGCards API error at ${path}: code=${code} msg=${msg}`);
+        const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+        if (typeof parsed['msg'] === 'string' && parsed['code'] !== undefined) {
+          // Unencrypted error response — surface it directly
+          throw new Error(
+            `WGCards API error at ${path}: code=${parsed['code']} msg=${parsed['msg']}`,
+          );
         }
-        // code===200 unencrypted — unusual but fall through to decrypt (shouldn't happen)
+      } catch (err) {
+        if (err instanceof SyntaxError) {
+          // Not valid JSON — fall through to treat as raw ciphertext
+        } else {
+          throw err;
+        }
       }
     }
 
@@ -371,11 +385,16 @@ export class WgcardsHttpClient {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+function formatWgcardsMsg(msg: unknown): string {
+  if (msg === undefined || msg === null) return '(none)';
+  if (typeof msg === 'string') return msg.length > 0 ? msg : '(empty)';
+  return JSON.stringify(msg);
+}
+
 function assertOk(envelope: WgcardsEnvelope<unknown>, path: string): void {
   if (envelope.code !== 200) {
-    const msg = envelope.msg ?? '(no message)';
     throw new Error(
-      `WGCards API error at ${path}: code=${envelope.code} msg=${msg}`,
+      `WGCards API error at ${path}: code=${envelope.code} msg=${formatWgcardsMsg(envelope.msg)}`,
     );
   }
 }

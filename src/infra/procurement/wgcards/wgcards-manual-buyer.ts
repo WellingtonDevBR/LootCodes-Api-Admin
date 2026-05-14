@@ -31,6 +31,11 @@ const logger = createLogger('wgcards-manual-buyer');
 
 const WGCARDS_DEFAULT_BASE_URL = 'https://api.wgcards.com';
 
+/** WGCards JSON occasionally types `skuId` as a number — always compare coercively. */
+export function sameWgcardsSkuId(apiValue: string | number, expected: string): boolean {
+  return String(apiValue).trim() === String(expected).trim();
+}
+
 /** Poll config: how long to wait for card delivery after placeOrder. */
 const CARD_POLL_INTERVAL_MS = 2_000;
 const CARD_POLL_MAX_ATTEMPTS = 15; // 30 s total max
@@ -66,6 +71,9 @@ export interface WgcardsSkuCheckoutMeta {
   readonly payCurrency: string;
   /** Present when the SKU is a fixed-denomination product (`minFaceValue === maxFaceValue`). */
   readonly faceValue?: number;
+  /** From live SKU — custom-denomination SKUs need `faceValue` on placeOrder (see API doc). */
+  readonly minFaceValue: number;
+  readonly maxFaceValue: number;
 }
 
 export class WgcardsManualBuyer {
@@ -117,11 +125,15 @@ export class WgcardsManualBuyer {
     const hint = /^[A-Za-z]{3}$/.test(currencyHint.trim()) ? currencyHint.trim().toUpperCase() : 'USD';
 
     let skus = await this.getItemAndStockByParent(parentItemId, hint);
-    let sku = skus.find((s) => s.skuId === skuId) ?? null;
+    let sku = skus.find((s) => sameWgcardsSkuId(s.skuId, skuId)) ?? null;
 
     if (!sku) {
       skus = await this.getItemAndStockByParent(parentItemId, 'USD');
-      sku = skus.find((s) => s.skuId === skuId) ?? null;
+      sku = skus.find((s) => sameWgcardsSkuId(s.skuId, skuId)) ?? null;
+    }
+    if (!sku) {
+      skus = await this.getItemAndStockByParent(parentItemId, 'CNY');
+      sku = skus.find((s) => sameWgcardsSkuId(s.skuId, skuId)) ?? null;
     }
     if (!sku) {
       return null;
@@ -134,25 +146,29 @@ export class WgcardsManualBuyer {
 
     if (payCurrency !== hint) {
       skus = await this.getItemAndStockByParent(parentItemId, payCurrency);
-      sku = skus.find((s) => s.skuId === skuId) ?? sku;
+      sku = skus.find((s) => sameWgcardsSkuId(s.skuId, skuId)) ?? sku;
     }
 
+    const minFv = Number(sku.minFaceValue);
+    const maxFv = Number(sku.maxFaceValue);
+    const boundsOk = Number.isFinite(minFv) && Number.isFinite(maxFv);
+
     const faceValue =
-      sku.minFaceValue != null &&
-      sku.maxFaceValue != null &&
-      sku.minFaceValue === sku.maxFaceValue
-        ? sku.minFaceValue
+      boundsOk && minFv === maxFv
+        ? minFv
         : undefined;
 
     return {
       payCurrency,
+      minFaceValue: boundsOk ? minFv : 0,
+      maxFaceValue: boundsOk ? maxFv : 0,
       ...(faceValue !== undefined ? { faceValue } : {}),
     };
   }
 
   async quote(skuId: string): Promise<WgcardsQuoteResult> {
     const stocks = await this.client.getStock([skuId]);
-    const entry = stocks.find((s) => s.skuId === skuId);
+    const entry = stocks.find((s) => sameWgcardsSkuId(s.skuId, skuId));
     if (!entry) {
       throw new Error(`WGCards getStock: skuId ${skuId} not found in response`);
     }

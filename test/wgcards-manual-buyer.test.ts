@@ -210,7 +210,12 @@ describe('WgcardsManualBuyer.getSkuCheckoutMeta', () => {
     })!;
 
     const meta = await buyer.getSkuCheckoutMeta('parent-1', 'sku-fixed', 'USD');
-    expect(meta).toEqual({ payCurrency: 'CNY', faceValue: 10 });
+    expect(meta).toEqual({
+      payCurrency: 'CNY',
+      faceValue: 10,
+      minFaceValue: 10,
+      maxFaceValue: 10,
+    });
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 
@@ -227,8 +232,56 @@ describe('WgcardsManualBuyer.getSkuCheckoutMeta', () => {
     })!;
 
     const meta = await buyer.getSkuCheckoutMeta('parent-2', 'sku-range', 'USD');
-    expect(meta).toEqual({ payCurrency: 'USD' });
+    expect(meta).toEqual({ payCurrency: 'USD', minFaceValue: 5, maxFaceValue: 500 });
     expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('matches skuId when the API returns it as a number (JSON coercion)', async () => {
+    const page = {
+      current: 1,
+      pages: 1,
+      size: 200,
+      total: 1,
+      records: [
+        {
+          itemId: 'parent-num',
+          itemName: 'Test item',
+          itemTitle: 'Test item',
+          itemBrandName: 'Brand',
+          currencyCode: 'USD',
+          spuImage: null,
+          spuType: 2,
+          skuInfos: [
+            {
+              skuId: 2024100660466242 as unknown as string,
+              skuName: 'SKU',
+              skuPrice: 100,
+              skuPriceCurrency: 'CNY',
+              maxFaceValue: 20,
+              minFaceValue: 20,
+              maxPrice: 0,
+              minPrice: 0,
+              stock: 10,
+            },
+          ],
+        },
+      ],
+    };
+    stubSequentialItemAndStockPages([page, page]);
+
+    const buyer = createWgcardsManualBuyer({
+      secrets: VALID_SECRETS,
+      profile: VALID_PROFILE,
+      initialTokenCache: { accessToken: 'tok', expiresAt: Date.now() + 3_600_000 },
+    })!;
+
+    const meta = await buyer.getSkuCheckoutMeta('parent-num', '2024100660466242', 'USD');
+    expect(meta).toEqual({
+      payCurrency: 'CNY',
+      faceValue: 20,
+      minFaceValue: 20,
+      maxFaceValue: 20,
+    });
   });
 
   it('returns null when the skuId is not present under the parent', async () => {
@@ -245,7 +298,7 @@ describe('WgcardsManualBuyer.getSkuCheckoutMeta', () => {
 
     const meta = await buyer.getSkuCheckoutMeta('parent-3', 'missing-sku', 'USD');
     expect(meta).toBeNull();
-    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch).toHaveBeenCalledTimes(3);
   });
 });
 
