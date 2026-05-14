@@ -24,9 +24,10 @@ export async function adminInventorySourceRoutes(app: FastifyInstance) {
     const uc = container.resolve<UnlinkVariantInventorySourceUseCase>(UC_TOKENS.UnlinkVariantInventorySource);
     const body = request.body as Record<string, unknown>;
     const adminId = getAuthenticatedUserId(request);
+    // CRM sends { variant_id, source_id } where source_id is the link row PK
+    // (returned as `id` from listInventorySources, which maps from DB `link_id`).
     const result = await uc.execute({
-      variant_id: body.variant_id as string,
-      source_id: body.source_id as string,
+      link_id: body.source_id as string,
       admin_id: adminId,
     });
     return reply.send(result);

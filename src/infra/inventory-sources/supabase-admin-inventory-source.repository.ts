@@ -26,21 +26,20 @@ export class SupabaseAdminInventorySourceRepository implements IAdminInventorySo
     logger.info('Linking variant to inventory source', { variantId: dto.variant_id, sourceId: dto.source_id });
 
     await this.db.rpc('admin_link_variant_inventory_source', {
-      p_variant_id: dto.variant_id,
-      p_source_id: dto.source_id,
-      p_admin_id: dto.admin_id,
+      p_consumer_variant_id: dto.variant_id,
+      p_source_variant_id: dto.source_id,
+      p_actor: dto.admin_id,
     });
 
     return { success: true };
   }
 
   async unlinkVariantInventorySource(dto: UnlinkVariantInventorySourceDto): Promise<UnlinkVariantInventorySourceResult> {
-    logger.info('Unlinking variant from inventory source', { variantId: dto.variant_id, sourceId: dto.source_id });
+    logger.info('Unlinking variant inventory source', { linkId: dto.link_id });
 
     await this.db.rpc('admin_unlink_variant_inventory_source', {
-      p_variant_id: dto.variant_id,
-      p_source_id: dto.source_id,
-      p_admin_id: dto.admin_id,
+      p_link_id: dto.link_id,
+      p_actor: dto.admin_id,
     });
 
     return { success: true };
@@ -52,7 +51,31 @@ export class SupabaseAdminInventorySourceRepository implements IAdminInventorySo
       { p_consumer_variant_id: dto.variant_id },
     );
 
-    return { sources: Array.isArray(rows) ? rows : [] };
+    // Remap DB column names to the shape CRM's InventorySourceItem expects:
+    //   link_id        → id
+    //   platform_names → source_platform_names
+    //   region_name    → source_region_name
+    //   available_keys → source_available_keys
+    type RawRow = {
+      link_id: string;
+      source_variant_id: string;
+      source_product_name: string | null;
+      platform_names: string[];
+      region_name: string | null;
+      available_keys: number;
+    };
+    const raw = (Array.isArray(rows) ? rows : []) as RawRow[];
+    const sources = raw.map((r) => ({
+      id: r.link_id,
+      variant_id: dto.variant_id,
+      source_variant_id: r.source_variant_id,
+      source_product_name: r.source_product_name,
+      source_platform_names: r.platform_names ?? [],
+      source_region_name: r.region_name,
+      source_available_keys: r.available_keys ?? 0,
+    }));
+
+    return { sources };
   }
 
   async listLinkableInventorySources(dto: ListLinkableInventorySourcesDto): Promise<ListLinkableInventorySourcesResult> {
@@ -61,6 +84,26 @@ export class SupabaseAdminInventorySourceRepository implements IAdminInventorySo
       { p_consumer_variant_id: dto.variant_id },
     );
 
-    return { sources: Array.isArray(rows) ? rows : [] };
+    // Remap DB column names to the shape CRM's LinkableSourceItem expects:
+    //   variant_label → sku
+    type RawRow = {
+      variant_id: string;
+      variant_label: string;
+      product_name: string;
+      platform_names: string[];
+      region_name: string | null;
+      available_keys: number;
+    };
+    const raw = (Array.isArray(rows) ? rows : []) as RawRow[];
+    const sources = raw.map((r) => ({
+      variant_id: r.variant_id,
+      product_name: r.product_name,
+      platform_names: r.platform_names ?? [],
+      region_name: r.region_name,
+      available_keys: r.available_keys ?? 0,
+      sku: r.variant_label,
+    }));
+
+    return { sources };
   }
 }
