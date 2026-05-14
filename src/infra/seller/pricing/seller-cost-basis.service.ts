@@ -95,6 +95,53 @@ export class SellerCostBasisService {
     return result;
   }
 
+  /**
+   * For `declared_stock` listings whose consumer variant has no physical keys,
+   * resolves the average key purchase cost from the **source** variant declared in
+   * `variant_inventory_sources`. This is the actual acquisition cost we incur when
+   * an Eneba PROVIDE callback arrives and we draw from the source variant's key pool.
+   *
+   * Returns a map of consumer_variant_id → avg cost in USD cents.
+   * Only includes entries where the source variant has available keys with a cost.
+   */
+  async computeSourceVariantCosts(consumerVariantIds: string[]): Promise<Map<string, number>> {
+    if (consumerVariantIds.length === 0) return new Map();
+
+    try {
+      const links = await this.db.query<{
+        consumer_variant_id: string;
+        source_variant_id: string;
+      }>('variant_inventory_sources', {
+        select: 'consumer_variant_id, source_variant_id',
+        in: [['consumer_variant_id', consumerVariantIds]],
+        eq: [['source_kind', 'variant']],
+      });
+
+      if (links.length === 0) return new Map();
+
+      const sourceVariantIds = [...new Set(links.map((l) => l.source_variant_id))];
+      const sourceCostMap = await this.computeBatchCostBasis(sourceVariantIds);
+
+      const result = new Map<string, number>();
+      for (const link of links) {
+        const sourceEntry = sourceCostMap.get(link.source_variant_id);
+        if (sourceEntry && sourceEntry.avg_cost_cents > 0) {
+          const existing = result.get(link.consumer_variant_id);
+          if (existing == null || sourceEntry.avg_cost_cents < existing) {
+            result.set(link.consumer_variant_id, sourceEntry.avg_cost_cents);
+          }
+        }
+      }
+      return result;
+    } catch (err) {
+      logger.warn('Failed to resolve source variant costs', {
+        consumerVariantCount: consumerVariantIds.length,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return new Map();
+    }
+  }
+
   async computeBatchCostBasis(variantIds: string[]): Promise<Map<string, VariantCostEntry>> {
     if (variantIds.length === 0) return new Map();
 

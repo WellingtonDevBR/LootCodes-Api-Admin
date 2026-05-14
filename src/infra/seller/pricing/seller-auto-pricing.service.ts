@@ -236,8 +236,25 @@ export class SellerAutoPricingService implements ISellerAutoPricingService {
           .map((l) => l.variant_id),
       ),
     ];
-    const offerCostMap = await this.costBasisService.computeBatchProviderOfferCosts(
+    // For declared_stock listings backed by a source variant (variant_inventory_sources),
+    // the source variant's physical key purchase_cost is the true acquisition cost —
+    // cheaper and more accurate than a live JIT offer price. Resolve those first; the
+    // JIT offer map is only the final fallback (no source keys at all).
+    const sourceVariantCostMap = await this.costBasisService.computeSourceVariantCosts(
       declaredStockZeroCostVariantIds,
+    );
+    if (sourceVariantCostMap.size > 0) {
+      logger.info('Loaded source-variant cost for declared_stock listings', {
+        requestId, variantCount: sourceVariantCostMap.size,
+      });
+    }
+
+    // Variants that still have zero cost after source-variant lookup need JIT offer fallback.
+    const jitFallbackVariantIds = declaredStockZeroCostVariantIds.filter(
+      (id) => !sourceVariantCostMap.has(id),
+    );
+    const offerCostMap = await this.costBasisService.computeBatchProviderOfferCosts(
+      jitFallbackVariantIds,
     );
     if (offerCostMap.size > 0) {
       logger.info('Loaded buyer-offer cost fallback for declared_stock listings', {
@@ -256,10 +273,15 @@ export class SellerAutoPricingService implements ISellerAutoPricingService {
         const costEntry = costBasisMap.get(listing.variant_id);
         let avgUsdCents = costEntry?.avg_cost_cents ?? 0;
 
-        // JIT / declared_stock fallback: no physical keys → use buyer offer price.
-        // The pricing cron owns profitability — if JIT offer cost is available, use it
-        // so the price floor is computed correctly and the price is raised before the
-        // stock cron runs.
+        // Source-variant cost: when a declared_stock listing is backed by a linked
+        // variant's physical key pool, use that pool's avg purchase_cost as the cost
+        // basis rather than the live JIT offer price — it reflects what we actually paid.
+        if (avgUsdCents === 0 && listing.listing_type === 'declared_stock') {
+          avgUsdCents = sourceVariantCostMap.get(listing.variant_id) ?? 0;
+        }
+
+        // JIT / declared_stock fallback: no physical keys in the source pool either →
+        // use buyer offer price so the floor is computed correctly.
         if (avgUsdCents === 0 && listing.listing_type === 'declared_stock') {
           avgUsdCents = offerCostMap.get(listing.variant_id) ?? 0;
         }
@@ -316,8 +338,19 @@ export class SellerAutoPricingService implements ISellerAutoPricingService {
           .map((l) => l.variant_id),
       ),
     ];
-    const offerCostMap = await this.costBasisService.computeBatchProviderOfferCosts(
+
+    // Source-variant cost: preferred over live JIT offer prices — reflects what we
+    // actually paid for the physical keys in the linked source variant's pool.
+    const sourceVariantCostMap = await this.costBasisService.computeSourceVariantCosts(
       declaredStockZeroCostVariantIds,
+    );
+
+    // Only request JIT offer prices for variants not covered by source-variant keys.
+    const jitFallbackVariantIds = declaredStockZeroCostVariantIds.filter(
+      (id) => !sourceVariantCostMap.has(id),
+    );
+    const offerCostMap = await this.costBasisService.computeBatchProviderOfferCosts(
+      jitFallbackVariantIds,
     );
 
     const currencies = [...new Set(listings.map((l) => l.currency))];
@@ -442,10 +475,18 @@ export class SellerAutoPricingService implements ISellerAutoPricingService {
           const costEntry = costBasisMap.get(listing.variant_id);
           let avgUsdCents = costEntry?.avg_cost_cents ?? 0;
 
-          // JIT / declared_stock fallback: no physical keys → use buyer offer price.
+          const isInternalStockOnly = listing.pricing_overrides?.disable_jit_on_stockout === true;
+
+          // Source-variant cost: when a declared_stock listing is backed by a linked
+          // variant's physical key pool, prefer that pool's avg purchase_cost over
+          // the live JIT offer price — it reflects what we actually paid.
+          if (avgUsdCents === 0 && listing.listing_type === 'declared_stock') {
+            avgUsdCents = sourceVariantCostMap.get(listing.variant_id) ?? 0;
+          }
+
+          // JIT fallback: no physical keys in the source pool → use buyer offer price.
           // Skip for internal-stock-only listings: provider offer prices must not
           // inflate cost_basis and trigger a floor-correction price raise.
-          const isInternalStockOnly = listing.pricing_overrides?.disable_jit_on_stockout === true;
           if (avgUsdCents === 0 && listing.listing_type === 'declared_stock' && !isInternalStockOnly) {
             avgUsdCents = offerCostMap.get(listing.variant_id) ?? 0;
           }
