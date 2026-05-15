@@ -139,9 +139,17 @@ export class ProcurementDeclaredStockReconcileService implements IProcurementDec
       const internalQty = internalMap.get(listing.variant_id) ?? 0;
 
       if (internalQty > 0) {
+        // Skip the API call when nothing has changed — avoids burning marketplace
+        // API quota (e.g. Digiseller's 2000 edits/day limit) on no-op updates.
+        if (internalQty === listing.declared_stock) {
+          skipped++;
+          continue;
+        }
+
         // Internal keys cover this listing — declare directly.
         logger.info('Reconcile: pushing internal stock to marketplace', {
           requestId, listingId: listing.id, providerCode: account.provider_code, qty: internalQty,
+          previousDeclaredStock: listing.declared_stock,
         });
         if (!dryRun) {
           const pending = pendingByProvider.get(account.provider_code) ?? [];
@@ -162,11 +170,18 @@ export class ProcurementDeclaredStockReconcileService implements IProcurementDec
       }
 
       if (decision.kind === 'declare') {
+        // Skip the API call if declared stock is already at the target quantity
+        // to preserve marketplace API quota.
+        if (decision.declaredQty === listing.declared_stock) {
+          skipped++;
+          continue;
+        }
         logger.info('Reconcile: declaring stock from credited buyer', {
           requestId, listingId: listing.id, providerCode: account.provider_code,
           buyerProviderCode: decision.offer.provider_code,
           buyerProviderAccountId: decision.offer.provider_account_id,
           declaredQty: decision.declaredQty,
+          previousDeclaredStock: listing.declared_stock,
           costBasisUsdCents: decision.costBasisUsdCents,
         });
         const pending = pendingByProvider.get(account.provider_code) ?? [];

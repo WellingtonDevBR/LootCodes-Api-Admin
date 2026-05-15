@@ -572,6 +572,7 @@ describe('ProcurementDeclaredStockReconcileService — credit-gated flow', () =>
         external_listing_id: 'ds-1',
         currency: 'USD',
         price_cents: 1_786,
+        declared_stock: 0, // different from offer available_quantity so skip-if-unchanged doesn't fire
       }),
     );
     db.offers.push({
@@ -625,6 +626,7 @@ describe('ProcurementDeclaredStockReconcileService — credit-gated flow', () =>
         external_product_id: 'product-uuid',
         currency: 'USD',
         price_cents: 1_786,
+        declared_stock: 0, // different from offer available_quantity so skip-if-unchanged doesn't fire
       }),
     );
     db.offers.push({
@@ -659,5 +661,50 @@ describe('ProcurementDeclaredStockReconcileService — credit-gated flow', () =>
     // Manual config kicked in: 1786*0.94*0.99 = 1662 → buyer at 1500 cleared.
     expect(enebaDeclared.calls).toHaveLength(1);
     expect(enebaDeclared.calls[0].quantity).toBeGreaterThan(0);
+  });
+
+  // ─── Skip-if-unchanged: no-op API call prevention ────────────────────
+
+  it('skips the marketplace API call when internal stock already equals declared_stock', async () => {
+    // Reproduces the Digiseller API 2000-calls/day exhaustion scenario:
+    // if every reconcile run pushes an update even when nothing changed,
+    // the daily quota is burned on no-ops.
+    db.providerAccounts.push(makeAccount({ id: 'acct-eneba', provider_code: 'eneba' }));
+    db.listings.push(
+      makeListing({
+        id: 'l-skip',
+        variant_id: 'v-skip',
+        provider_account_id: 'acct-eneba',
+        external_listing_id: 'eneba-skip',
+        declared_stock: 867,  // already correct
+      }),
+    );
+    db.internalStockByVariant.set('v-skip', 867); // own keys = same value
+
+    const result = await service.execute('req-skip', {});
+
+    expect(enebaDeclared.calls).toHaveLength(0); // no API call made
+    expect(result.skipped).toBe(1);
+    expect(result.updated).toBe(0);
+  });
+
+  it('does push an update when internal stock differs from declared_stock', async () => {
+    db.providerAccounts.push(makeAccount({ id: 'acct-eneba', provider_code: 'eneba' }));
+    db.listings.push(
+      makeListing({
+        id: 'l-stale',
+        variant_id: 'v-stale',
+        provider_account_id: 'acct-eneba',
+        external_listing_id: 'eneba-stale',
+        declared_stock: 2420, // stale — was from an old JIT plan
+      }),
+    );
+    db.internalStockByVariant.set('v-stale', 867); // real available keys
+
+    const result = await service.execute('req-stale', {});
+
+    expect(enebaDeclared.calls).toHaveLength(1);
+    expect(enebaDeclared.calls[0]).toEqual({ externalListingId: 'eneba-stale', quantity: 867 });
+    expect(result.updated).toBe(1);
   });
 });
