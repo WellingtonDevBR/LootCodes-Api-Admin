@@ -805,11 +805,28 @@ export class SupabaseAdminSellerRepository implements IAdminSellerRepository {
   }
 
   async countAvailableProductKeysForVariant(variantId: string): Promise<number> {
+    // Include keys from linked inventory sources (variant_inventory_sources) so that
+    // Eneba publish allows creating a declared-stock auction even when the consumer
+    // variant has 0 own keys but a source variant has available stock.
+    const sourceLinks = await this.db.query<{ source_variant_id: string }>(
+      'variant_inventory_sources',
+      {
+        select: 'source_variant_id',
+        eq: [
+          ['consumer_variant_id', variantId],
+          ['source_kind', 'variant'],
+        ],
+      },
+    );
+
+    const allVariantIds = [
+      variantId,
+      ...sourceLinks.map((r) => r.source_variant_id).filter(Boolean),
+    ];
+
     const keys = await this.db.query<Record<string, unknown>>('product_keys', {
-      eq: [
-        ['variant_id', variantId],
-        ['key_state', 'available'],
-      ],
+      eq: [['key_state', 'available']],
+      in: [['variant_id', allVariantIds]],
     });
     return keys.length;
   }

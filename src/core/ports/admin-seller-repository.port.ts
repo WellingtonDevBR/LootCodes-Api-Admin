@@ -93,6 +93,12 @@ export interface IAdminSellerRepository {
   getSellerListingPublishContext(listingId: string): Promise<SellerListingPublishContext | null>;
   /** Corrects rows stuck `failed` after DB partially succeeded (marketplace id present); safe no-op otherwise. */
   repairSellerListingRowIfStaleFailure(listingId: string): Promise<void>;
+  /**
+   * Returns the total count of available keys for the variant, including keys from
+   * linked `variant_inventory_sources` (Key Sources). Used to determine declared
+   * stock for Eneba publish — must include source variants so that a consumer variant
+   * with 0 own keys but linked sources is not mistakenly treated as out-of-stock.
+   */
   countAvailableProductKeysForVariant(variantId: string): Promise<number>;
   finalizeSellerListingMarketplacePublishSuccess(params: {
     listing_id: string;
