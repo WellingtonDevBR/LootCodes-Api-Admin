@@ -28,6 +28,11 @@ const TRANSIENT_MESSAGE_PATTERNS: readonly RegExp[] = [
   // Digiseller's auth backend ("apilogin") flakes routinely and is recovered
   // on the next cron run.
   /^Digiseller apilogin (?:failed|error)/,
+  // Digiseller daily API edit quota ("seller-limit-0"). Resets at UTC midnight.
+  // Classifying as transient stops Sentry spam and lets the reconcile retry on
+  // the next cron tick rather than escalating to an alert-level error.
+  /seller-limit-0/,
+  /reached the limit for editing product via API/i,
   // Standard HTTP upstream errors — temporary server-side issues that resolve
   // on the next cron tick. 502/503/504 all indicate the upstream gateway or
   // service is momentarily unavailable (e.g. Digiseller deployment, overload).
