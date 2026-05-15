@@ -266,7 +266,7 @@ function buildGamivoAdapter(
   secrets: Record<string, string>,
   profile: Record<string, unknown>,
 ): GamivoMarketplaceAdapter | null {
-  const apiToken = secrets['GAMIVO_API_TOKEN'];
+  const apiToken = (secrets['GAMIVO_API_TOKEN'] ?? '').trim();
   const baseUrl = profileStr(profile, 'base_url') ?? 'https://api.gamivo.com';
 
   if (!apiToken) {

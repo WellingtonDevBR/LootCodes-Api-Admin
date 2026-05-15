@@ -19,8 +19,9 @@ import type {
   BatchPriceUpdateResult,
 } from '../../../core/ports/marketplace-adapter.port.js';
 import type { ISellerPricingService, PriceSuggestionResult, SuggestPriceRequest } from '../../../core/ports/seller-pricing.port.js';
+import type { ISellerProviderConfigRepository } from '../../../core/ports/seller-provider-config-repository.port.js';
 import type { SellerListingType, SellerPriceStrategy, SellerProviderConfig } from '../../../core/use-cases/seller/seller.types.js';
-import { parseSellerConfig } from '../../../core/use-cases/seller/seller.types.js';
+import { parseSellerConfig, SELLER_CONFIG_DEFAULTS } from '../../../core/use-cases/seller/seller.types.js';
 import { applySellerPriceStrategy } from '../../../core/use-cases/seller/apply-seller-price-strategy.js';
 import { resolveEffectiveCostBasisCents } from '../../../core/use-cases/seller/resolve-effective-cost-basis.js';
 import { stampCompetitorOwnership } from './seller-price-intelligence.service.js';
@@ -37,6 +38,8 @@ export class SellerPricingService implements ISellerPricingService {
   constructor(
     @inject(TOKENS.Database) private db: IDatabase,
     @inject(TOKENS.MarketplaceAdapterRegistry) private registry: IMarketplaceAdapterRegistry,
+    @inject(TOKENS.SellerProviderConfigRepository)
+    private readonly providerConfigRepo: ISellerProviderConfigRepository,
   ) {}
 
   // ─── Payout Calculation ────────────────────────────────────────────
@@ -343,10 +346,8 @@ export class SellerPricingService implements ISellerPricingService {
   }
 
   async getProviderConfig(providerAccountId: string): Promise<SellerProviderConfig> {
-    const account = await this.db.queryOne<Record<string, unknown>>('provider_accounts', {
-      filter: { id: providerAccountId },
-    });
-    return parseSellerConfig((account?.seller_config as Record<string, unknown>) ?? {});
+    return (await this.providerConfigRepo.getByAccountId(providerAccountId))
+      ?? SELLER_CONFIG_DEFAULTS;
   }
 
   private async getProviderCode(providerAccountId: string): Promise<string> {

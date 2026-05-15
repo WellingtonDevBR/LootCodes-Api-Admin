@@ -19,7 +19,11 @@ import type { ExpireReservationsUseCase } from '../src/core/use-cases/seller/exp
 import { ReconcileSellerListingsUseCase } from '../src/core/use-cases/seller/reconcile-seller-listings.use-case.js';
 import type { ReconcilePhase } from '../src/core/use-cases/seller/reconcile-seller-listings.types.js';
 import type { SyncSellerListingPausedAlertsUseCase } from '../src/core/use-cases/seller/sync-seller-listing-paused-alerts.use-case.js';
-import type { SyncSellerListingPausedAlertsResult } from '../src/core/use-cases/alerts/alerts.types.js';
+import type { SyncSellerListingPricingFrozenAlertsUseCase } from '../src/core/use-cases/seller/sync-seller-listing-pricing-frozen-alerts.use-case.js';
+import type {
+  SyncSellerListingPausedAlertsResult,
+  SyncSellerListingPricingFrozenAlertsResult,
+} from '../src/core/use-cases/alerts/alerts.types.js';
 
 /** All phases in canonical order. `sync-buyer-catalog` is owned by its own
  *  standalone cron route and is intentionally NOT a phase here. */
@@ -31,6 +35,7 @@ const ALL_PHASES: ReconcilePhase[] = [
   'remote-stock',
   'eneba-key-reconcile',
   'paused-listing-alerts',
+  'pricing-frozen-alerts',
 ];
 
 interface CallTracker {
@@ -83,6 +88,10 @@ function emptyPausedAlertsResult(): SyncSellerListingPausedAlertsResult {
   return { alertsCreated: 0, alertsResolved: 0, pausedListingCount: 0 };
 }
 
+function emptyPricingFrozenAlertsResult(): SyncSellerListingPricingFrozenAlertsResult {
+  return { alertsCreated: 0, alertsResolved: 0, frozenListingCount: 0 };
+}
+
 interface FakeSetup {
   readonly tracker: CallTracker;
   readonly autoPricing: ISellerAutoPricingService;
@@ -91,6 +100,7 @@ interface FakeSetup {
   readonly enebaKeyReconcile: Pick<IEnebaKeyReconcileService, 'execute'>;
   readonly expireReservations: Pick<ExpireReservationsUseCase, 'execute'>;
   readonly syncPausedAlerts: Pick<SyncSellerListingPausedAlertsUseCase, 'execute'>;
+  readonly syncPricingFrozenAlerts: Pick<SyncSellerListingPricingFrozenAlertsUseCase, 'execute'>;
 }
 
 interface SetupOptions {
@@ -133,6 +143,9 @@ function setup(options: SetupOptions = {}): FakeSetup {
     syncPausedAlerts: {
       execute: vi.fn().mockImplementation(async () => record('paused-listing-alerts', emptyPausedAlertsResult())),
     },
+    syncPricingFrozenAlerts: {
+      execute: vi.fn().mockImplementation(async () => record('pricing-frozen-alerts', emptyPricingFrozenAlertsResult())),
+    },
   };
 }
 
@@ -144,6 +157,7 @@ function build(s: FakeSetup): ReconcileSellerListingsUseCase {
     s.enebaKeyReconcile as unknown as IEnebaKeyReconcileService,
     s.expireReservations as unknown as ExpireReservationsUseCase,
     s.syncPausedAlerts as unknown as SyncSellerListingPausedAlertsUseCase,
+    s.syncPricingFrozenAlerts as unknown as SyncSellerListingPricingFrozenAlertsUseCase,
   );
 }
 

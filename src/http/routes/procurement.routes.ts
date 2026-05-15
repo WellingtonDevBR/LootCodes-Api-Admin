@@ -21,12 +21,43 @@ import type { ListPurchaseQueueUseCase } from '../../core/use-cases/procurement/
 import type { CancelQueueItemUseCase } from '../../core/use-cases/procurement/cancel-queue-item.use-case.js';
 import type { ListPurchaseAttemptsUseCase } from '../../core/use-cases/procurement/list-purchase-attempts.use-case.js';
 import type { LinkCatalogProductMarketplacePublishSnap } from '../../core/use-cases/procurement/procurement.types.js';
-import type { IDatabase } from '../../core/ports/database.port.js';
-import { syncAppRouteProductCatalog } from '../../infra/procurement/approute-catalog-sync.js';
+import type { SyncAppRouteCatalogUseCase } from '../../core/use-cases/procurement/sync-approute-catalog.use-case.js';
 import { createLogger } from '../../shared/logger.js';
 import { PublishBlockedError } from '../../core/errors/domain-errors.js';
+import { z } from 'zod';
+import { parseBody, replyInvalidRequestBody } from '../utils/zod-validation.js';
 
 const logger = createLogger('admin-procurement-routes');
+
+// ─── Body schemas (single source of truth) ──────────────────────────────────
+
+const linkCatalogSchema = z.object({
+  variant_id: z.string().uuid(),
+  provider_code: z.string().min(1),
+  external_product_id: z.string().min(1),
+  external_parent_product_id: z.string().min(1).optional(),
+  currency: z.string().min(3).max(8),
+  price_cents: z.number().int().positive(),
+  platform_code: z.string().min(1).optional(),
+  region_code: z.string().min(1).optional(),
+  publish_now: z.boolean().optional(),
+  create_procurement_offer: z.boolean().optional(),
+}).strict();
+
+const manageOfferSchema = z.object({
+  variant_id: z.string().uuid(),
+  provider_code: z.string().min(1),
+  action: z.enum(['link', 'unlink', 'update']),
+  offer_data: z.record(z.string(), z.unknown()).optional(),
+}).strict();
+
+const manualPurchaseSchema = z.object({
+  variant_id: z.string().uuid(),
+  provider_code: z.string().min(1),
+  offer_id: z.string().min(1),
+  quantity: z.number().int().positive(),
+  wallet_currency: z.string().min(3).max(8).optional(),
+}).strict();
 
 export async function adminProcurementRoutes(app: FastifyInstance) {
   app.post('/quote', { preHandler: [adminGuard] }, async (request, reply) => {
@@ -42,14 +73,16 @@ export async function adminProcurementRoutes(app: FastifyInstance) {
   });
 
   app.post('/offer', { preHandler: [adminGuard] }, async (request, reply) => {
+    const parsed = parseBody(manageOfferSchema, request.body);
+    if (parsed.kind === 'error') return replyInvalidRequestBody(reply, parsed.issues);
+
     const uc = container.resolve<ManageProviderOfferUseCase>(UC_TOKENS.ManageProviderOffer);
-    const body = request.body as Record<string, unknown>;
     const adminId = getAuthenticatedUserId(request);
     const result = await uc.execute({
-      variant_id: body.variant_id as string,
-      provider_code: body.provider_code as string,
-      action: body.action as 'link' | 'unlink' | 'update',
-      offer_data: body.offer_data as Record<string, unknown> | undefined,
+      variant_id: parsed.data.variant_id,
+      provider_code: parsed.data.provider_code,
+      action: parsed.data.action,
+      offer_data: parsed.data.offer_data,
       admin_id: adminId,
     });
     return reply.send(result);
@@ -67,44 +100,10 @@ export async function adminProcurementRoutes(app: FastifyInstance) {
   });
 
   app.post('/approute/catalog/sync', { preHandler: [adminGuard] }, async (request, reply) => {
-    const db = container.resolve<IDatabase>(TOKENS.Database);
     const body = request.body as { provider_account_id?: string };
-    let accountId = typeof body.provider_account_id === 'string' ? body.provider_account_id.trim() : '';
-
-    if (!accountId) {
-      const rows = await db.query<{ id: string }>('provider_accounts', {
-        select: 'id',
-        eq: [
-          ['provider_code', 'approute'],
-          ['is_enabled', true],
-        ],
-        limit: 1,
-      });
-      accountId = rows[0]?.id ?? '';
-    }
-
-    if (!accountId) {
-      return reply.status(400).send({
-        success: false,
-        error:
-          'No enabled approute provider account found — create one or pass provider_account_id explicitly.',
-      });
-    }
-
-    const verify = await db.queryOne<{ provider_code: string; is_enabled: boolean }>('provider_accounts', {
-      select: 'provider_code, is_enabled',
-      filter: { id: accountId },
-    });
-    if (!verify?.is_enabled || verify.provider_code.trim().toLowerCase() !== 'approute') {
-      return reply.status(400).send({
-        success: false,
-        error: 'provider_account_id must reference an enabled provider_accounts row with provider_code approute',
-      });
-    }
-
-    const result = await syncAppRouteProductCatalog(db, accountId);
-    const statusCode = result.success ? 200 : 502;
-    return reply.status(statusCode).send(result);
+    const uc = container.resolve<SyncAppRouteCatalogUseCase>(UC_TOKENS.SyncAppRouteCatalog);
+    const outcome = await uc.execute({ provider_account_id: body.provider_account_id });
+    return reply.status(outcome.status).send(outcome.body);
   });
 
   app.get('/catalog/ingest-status', { preHandler: [employeeGuard] }, async (request, reply) => {
@@ -126,18 +125,19 @@ export async function adminProcurementRoutes(app: FastifyInstance) {
   });
 
   app.post('/purchase', { preHandler: [adminGuard] }, async (request, reply) => {
+    const parsed = parseBody(manualPurchaseSchema, request.body);
+    if (parsed.kind === 'error') return replyInvalidRequestBody(reply, parsed.issues);
+
     const uc = container.resolve<ManualProviderPurchaseUseCase>(UC_TOKENS.ManualProviderPurchase);
-    const body = request.body as Record<string, unknown>;
     const adminId = getAuthenticatedUserId(request);
+    const walletCurrency = parsed.data.wallet_currency?.trim();
     const result = await uc.execute({
-      variant_id: body.variant_id as string,
-      provider_code: body.provider_code as string,
-      offer_id: body.offer_id as string,
-      quantity: body.quantity as number,
+      variant_id: parsed.data.variant_id,
+      provider_code: parsed.data.provider_code,
+      offer_id: parsed.data.offer_id,
+      quantity: parsed.data.quantity,
       admin_id: adminId,
-      ...(typeof body.wallet_currency === 'string' && body.wallet_currency.trim()
-        ? { wallet_currency: body.wallet_currency.trim() }
-        : {}),
+      ...(walletCurrency ? { wallet_currency: walletCurrency } : {}),
     });
     return reply.send(result);
   });
@@ -194,25 +194,28 @@ export async function adminProcurementRoutes(app: FastifyInstance) {
   });
 
   app.post('/catalog/link', { preHandler: [employeeGuard] }, async (request, reply) => {
+    const parsed = parseBody(linkCatalogSchema, request.body);
+    if (parsed.kind === 'error') return replyInvalidRequestBody(reply, parsed.issues);
+    const body = parsed.data;
+
     const uc = container.resolve<LinkCatalogProductUseCase>(UC_TOKENS.LinkCatalogProduct);
     const publishUc = container.resolve<PublishSellerListingToMarketplaceUseCase>(
       UC_TOKENS.PublishSellerListingToMarketplace,
     );
-    const body = request.body as Record<string, unknown>;
     const adminId = getAuthenticatedUserId(request);
     const publishNow = body.publish_now !== false;
 
     const baseResult = await uc.execute({
-      variant_id: body.variant_id as string,
-      provider_code: body.provider_code as string,
-      external_product_id: body.external_product_id as string,
-      ...(typeof body.external_parent_product_id === 'string' && body.external_parent_product_id.trim()
+      variant_id: body.variant_id,
+      provider_code: body.provider_code,
+      external_product_id: body.external_product_id,
+      ...(body.external_parent_product_id?.trim()
         ? { external_parent_product_id: body.external_parent_product_id.trim() }
         : {}),
-      currency: body.currency as string,
-      price_cents: body.price_cents as number,
-      platform_code: body.platform_code as string | undefined,
-      region_code: body.region_code as string | undefined,
+      currency: body.currency,
+      price_cents: body.price_cents,
+      platform_code: body.platform_code,
+      region_code: body.region_code,
       admin_id: adminId,
       ...(typeof body.create_procurement_offer === 'boolean'
         ? { create_procurement_offer: body.create_procurement_offer }

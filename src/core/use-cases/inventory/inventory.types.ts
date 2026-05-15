@@ -228,3 +228,178 @@ export interface UploadKeysResult {
   uploaded: number;
   duplicates: number;
 }
+
+// --- KPIs ---
+
+export interface GetInventoryKpisResult {
+  availableKeyCount: number;
+  /** USD-converted sum of `purchase_cost` across all `available` keys. */
+  purchaseCostUsdTotal: number;
+}
+
+// --- List Keys ---
+
+export interface ListKeysDto {
+  productId?: string;
+  variantId?: string;
+  /** Comma-separated allowed key_state values (already validated by caller). */
+  state?: string;
+  page?: number;
+  pageSize?: number;
+  search?: string;
+}
+
+export interface ListKeysKeyRow {
+  id: string;
+  productId: string;
+  productName: string;
+  variantId: string;
+  variantSku: string | null;
+  variantFaceValue: string | null;
+  variantRegionName: string | null;
+  key: string;
+  keyState: string;
+  supplierId: string;
+  supplierName: string;
+  addedAt: string;
+  usedAt: string | null;
+  orderId: string | null;
+  orderNumber: string | null;
+  orderChannel: string | null;
+  marketplaceName: string | null;
+  soldTo: string | null;
+  purchaseCost: number | null;
+  purchaseCurrency: string | null;
+  locked: boolean;
+}
+
+export interface ListKeysResult {
+  keys: ListKeysKeyRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+// --- List Variant Keys ---
+
+export interface ListVariantKeysDto {
+  variant_id: string;
+  /** Comma-separated allowed key_state values. */
+  key_state?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface ListVariantKeysKeyRow {
+  id: string;
+  masked_value: string;
+  keyState: string;
+  created_at: string;
+  sold_at: string | null;
+  order_id: string | null;
+  is_sales_blocked: boolean;
+  is_faulty: boolean;
+  purchase_cost: number | null;
+  purchase_currency: string | null;
+}
+
+export interface ListVariantKeysResult {
+  keys: ListVariantKeysKeyRow[];
+  total: number;
+  available: number;
+  reserved: number;
+  sold: number;
+}
+
+// --- Lookup Keys by Value (plaintext hash) ---
+
+export interface LookupKeysByValueDto {
+  key_values: string[];
+}
+
+export interface LookupKeysByValueRow {
+  input_value: string;
+  matched: boolean;
+  key_id: string | null;
+  key_state: string | null;
+  product_name: string | null;
+  variant_sku: string | null;
+  order_id: string | null;
+}
+
+export interface LookupKeysByValueResult {
+  results: LookupKeysByValueRow[];
+  matched: number;
+  total: number;
+}
+
+// --- Bulk burn keys (available → burnt) ---
+
+export interface BulkBurnKeysDto {
+  key_ids: string[];
+}
+
+export interface BulkBurnKeysRow {
+  key_id: string;
+  outcome: string;
+}
+
+export interface BulkBurnKeysResult {
+  success: boolean;
+  keys_marked: number;
+  results: BulkBurnKeysRow[];
+}
+
+// --- Manual sell ---
+
+export interface ManualSellKeysDto {
+  key_ids: string[];
+  buyer_email: string;
+  buyer_name: string | null;
+  notes: string | null;
+  price_cents: number;
+  currency: string;
+  admin_user_id: string;
+  admin_email: string | null;
+  client_ip: string;
+  user_agent: string | null;
+}
+
+export interface ManualSellKeysResult {
+  order_id: string;
+  order_number: string;
+  keys_sold: number;
+}
+
+// --- Decrypt keys (audit + notify orchestration) ---
+
+export interface DecryptKeysOrchestrateDto {
+  key_ids: string[];
+  variant_id_context: string | null;
+  admin_user_id: string;
+  admin_email: string | null;
+  client_ip: string;
+  user_agent: string | null;
+}
+
+export interface DecryptKeysOrchestrateResult {
+  keys: Array<{ id: string; decrypted_value: string }>;
+  failures: Array<{ id: string; error: string }>;
+}
+
+// --- Export keys (CSV) ---
+
+export interface ExportKeysDto {
+  key_ids: string[];
+  remove_from_inventory: boolean;
+  admin_user_id: string;
+  admin_email: string | null;
+  client_ip: string;
+  user_agent: string | null;
+}
+
+export interface ExportKeysResult {
+  csv: string;
+  exported: number;
+  removed: boolean;
+}

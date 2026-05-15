@@ -124,6 +124,44 @@ export interface IAdminSellerRepository {
     dto: BindSellerListingExternalAuctionDto & { verified_remote_status: string },
   ): Promise<BindSellerListingExternalAuctionResult>;
 
+  /**
+   * Appends a price-change timestamp to each listing's `provider_metadata.price_change_timestamps`
+   * (pruning entries older than `price_change_window_hours`). Called after a manual admin batch
+   * push so our local view of the marketplace quota stays in sync with what the marketplace
+   * has recorded — without this, manual drops would burn the marketplace's real quota but
+   * leave the auto-pricing budget evaluator with a stale "free quota available" view.
+   */
+  recordSellerListingPriceChangeQuota(params: {
+    provider_account_id: string;
+    external_listing_ids: string[];
+    price_change_window_hours: number;
+  }): Promise<void>;
+
+  /** Clears `error_message` on a listing (admin "Clear error" button). */
+  clearSellerListingError(listingId: string): Promise<void>;
+
+  /** Recent seller-side domain events (audit feed for the CRM). */
+  listSellerWebhookEvents(params: {
+    limit: number;
+    offset: number;
+    provider_code?: string;
+  }): Promise<{ readonly events: readonly Record<string, unknown>[] }>;
+
+  /** Active (pending) declared-stock reservations. */
+  listActiveSellerReservations(params: { limit: number }): Promise<{
+    readonly reservations: readonly Record<string, unknown>[];
+  }>;
+
+  /** Recent declared-stock key provisions (delivery audit feed). */
+  listSellerProvisionHistory(params: { limit: number; offset: number }): Promise<{
+    readonly provisions: readonly Record<string, unknown>[];
+  }>;
+
+  /** Reservation / provision success-and-failure counters per active listing. */
+  listSellerMarketplaceHealth(): Promise<{
+    readonly listings: readonly Record<string, unknown>[];
+  }>;
+
   // Variant offers
   getVariantOffers(dto: GetVariantOffersDto): Promise<GetVariantOffersResult>;
   createVariantOffer(dto: CreateVariantOfferDto): Promise<CreateVariantOfferResult>;

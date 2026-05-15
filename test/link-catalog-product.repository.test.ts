@@ -1,7 +1,30 @@
-import { describe, expect, it, vi } from 'vitest';
+import 'reflect-metadata';
+import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { container } from 'tsyringe';
+import { TOKENS } from '../src/di/tokens.js';
 import type { IDatabase } from '../src/core/ports/database.port.js';
 import type { IMarketplaceAdapterRegistry } from '../src/core/ports/marketplace-adapter.port.js';
+import type { ISellerProviderConfigRepository } from '../src/core/ports/seller-provider-config-repository.port.js';
+import type { SellerProviderConfig } from '../src/core/use-cases/seller/seller.types.js';
+import { SELLER_CONFIG_DEFAULTS } from '../src/core/use-cases/seller/seller.types.js';
 import { SupabaseAdminProcurementRepository } from '../src/infra/procurement/supabase-admin-procurement.repository.js';
+
+function registerConfigRepo(config: SellerProviderConfig | null): void {
+  const repo: ISellerProviderConfigRepository = {
+    async getByAccountId() { return config; },
+    async getByProviderCode() { return config; },
+    invalidate() { /* no-op */ },
+    clear() { /* no-op */ },
+  };
+  container.register(TOKENS.SellerProviderConfigRepository, { useValue: repo });
+}
+
+beforeEach(() => {
+  container.clearInstances();
+  // Default — every test that doesn't care about seller-config flags
+  // gets the SELLER_CONFIG_DEFAULTS via the registered repo.
+  registerConfigRepo(SELLER_CONFIG_DEFAULTS);
+});
 
 describe('SupabaseAdminProcurementRepository.linkCatalogProduct', () => {
   it('inserts provider_variant_offers using external_offer_id and omits invalid columns', async () => {
@@ -144,6 +167,71 @@ describe('SupabaseAdminProcurementRepository.linkCatalogProduct', () => {
         external_parent_product_id: 'svc-parent',
       }),
     );
+  });
+
+  it('seeds new seller_listings with provider seller_config auto_sync defaults (true)', async () => {
+    registerConfigRepo({
+      ...SELLER_CONFIG_DEFAULTS,
+      auto_sync_stock_default: true,
+      auto_sync_price_default: true,
+    });
+    const insert = vi.fn().mockImplementation(async (table: string) => {
+      if (table === 'seller_listings') return { id: 'listing-defaults-1' };
+      throw new Error(`unexpected insert into ${table}`);
+    });
+    const query = vi.fn().mockImplementation(async (table: string) => {
+      if (table === 'provider_accounts') return [{ id: 'pa-eneba', supports_seller: true }];
+      if (table === 'seller_listings') return [];
+      return [];
+    });
+
+    const db = { insert, query } as unknown as IDatabase;
+    const repo = new SupabaseAdminProcurementRepository(db, {} as IMarketplaceAdapterRegistry);
+
+    await repo.linkCatalogProduct({
+      variant_id: 'var-defaults',
+      provider_code: 'eneba',
+      external_product_id: 'ext-prod-defaults',
+      currency: 'EUR',
+      price_cents: 1500,
+      admin_id: 'admin-1',
+      create_procurement_offer: false,
+    });
+
+    expect(insert).toHaveBeenCalledWith(
+      'seller_listings',
+      expect.objectContaining({
+        auto_sync_stock: true,
+        auto_sync_price: true,
+      }),
+    );
+  });
+
+  it('relink does NOT overwrite existing auto_sync_* flags on the listing', async () => {
+    const update = vi.fn().mockResolvedValue([]);
+    const query = vi.fn().mockImplementation(async (table: string) => {
+      if (table === 'provider_accounts') return [{ id: 'pa-eneba', supports_seller: true }];
+      if (table === 'seller_listings') return [{ id: 'existing-listing-1' }];
+      return [];
+    });
+
+    const db = { insert: vi.fn(), query, update } as unknown as IDatabase;
+    const repo = new SupabaseAdminProcurementRepository(db, {} as IMarketplaceAdapterRegistry);
+
+    await repo.linkCatalogProduct({
+      variant_id: 'var-relink',
+      provider_code: 'eneba',
+      external_product_id: 'ext-prod-relink',
+      currency: 'EUR',
+      price_cents: 1234,
+      admin_id: 'admin-1',
+      create_procurement_offer: false,
+    });
+
+    expect(update).toHaveBeenCalledTimes(1);
+    const payload = update.mock.calls[0][2] as Record<string, unknown>;
+    expect(payload).not.toHaveProperty('auto_sync_stock');
+    expect(payload).not.toHaveProperty('auto_sync_price');
   });
 
   it('persists external_parent_product_id from provider_product_catalog slug fallback when DTO omits parent', async () => {

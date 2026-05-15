@@ -28,6 +28,8 @@ import type {
 import { parseSellerConfig } from '../../core/use-cases/seller/seller.types.js';
 import { mergeApiProfilePatch } from './merge-api-profile.js';
 import { extractPublicApiProfileFields } from './extract-public-api-profile-fields.js';
+import { resolveSellerSyncDefaults } from './seller-sync-defaults.js';
+import { buildUpdatedMetadata } from './pricing/seller-price-change-quota.js';
 import type {
   CreateSellerListingDto,
   CreateSellerListingResult,
@@ -395,6 +397,10 @@ export class SupabaseAdminSellerRepository implements IAdminSellerRepository {
     logger.info('Creating seller listing', { variantId: dto.variant_id, provider: dto.provider_account_id });
 
     const now = new Date().toISOString();
+    const syncDefaults = await resolveSellerSyncDefaults(dto.provider_account_id, {
+      auto_sync_stock: dto.auto_sync_stock,
+      auto_sync_price: dto.auto_sync_price,
+    });
     const row = await this.db.insert<Record<string, unknown>>('seller_listings', {
       variant_id: dto.variant_id,
       provider_account_id: dto.provider_account_id,
@@ -405,8 +411,8 @@ export class SupabaseAdminSellerRepository implements IAdminSellerRepository {
       price_cents: dto.price_cents,
       min_price_cents: 0,
       declared_stock: 0,
-      auto_sync_stock: dto.auto_sync_stock ?? true,
-      auto_sync_price: dto.auto_sync_price ?? false,
+      auto_sync_stock: syncDefaults.auto_sync_stock,
+      auto_sync_price: syncDefaults.auto_sync_price,
       created_at: now,
       updated_at: now,
     });
@@ -566,12 +572,13 @@ export class SupabaseAdminSellerRepository implements IAdminSellerRepository {
     const previousExternalListingId = (listing.external_listing_id as string | null) ?? null;
 
     const now = new Date().toISOString();
+    // Unlinking is admin-driven mapping maintenance — preserve the listing's existing
+    // auto_sync_stock / auto_sync_price toggles. Disabling automation is a separate
+    // admin action via `toggleSellerListingSync`.
     const rows = await this.db.update<Record<string, unknown>>('seller_listings', { id: dto.listing_id }, {
       external_product_id: null,
       external_listing_id: null,
       status: 'draft',
-      auto_sync_stock: false,
-      auto_sync_price: false,
       error_message: null,
       updated_at: now,
     });
@@ -962,6 +969,100 @@ export class SupabaseAdminSellerRepository implements IAdminSellerRepository {
       status: 'active',
       verified_remote_status: dto.verified_remote_status,
     };
+  }
+
+  async recordSellerListingPriceChangeQuota(params: {
+    provider_account_id: string;
+    external_listing_ids: string[];
+    price_change_window_hours: number;
+  }): Promise<void> {
+    const externalIds = [...new Set(params.external_listing_ids.filter((id) => typeof id === 'string' && id.length > 0))];
+    if (externalIds.length === 0) return;
+
+    const rows = await this.db.query<{
+      readonly id: string;
+      readonly provider_metadata: Record<string, unknown> | null;
+    }>('seller_listings', {
+      eq: [['provider_account_id', params.provider_account_id]],
+      in: [['external_listing_id', externalIds]],
+      select: 'id, provider_metadata',
+    });
+
+    const nowIso = new Date().toISOString();
+    const updateOpts: Array<Promise<unknown>> = [];
+    for (const row of rows) {
+      const updated = buildUpdatedMetadata(row.provider_metadata, params.price_change_window_hours, nowIso);
+      updateOpts.push(
+        this.db.update('seller_listings', { id: row.id }, { provider_metadata: updated }),
+      );
+    }
+    await Promise.all(updateOpts);
+    logger.info('Recorded price-change quota for manual batch push', {
+      providerAccountId: params.provider_account_id,
+      listingsTouched: rows.length,
+    });
+  }
+
+  async clearSellerListingError(listingId: string): Promise<void> {
+    await this.db.update('seller_listings', { id: listingId }, { error_message: null });
+  }
+
+  async listSellerWebhookEvents(params: {
+    limit: number;
+    offset: number;
+    provider_code?: string;
+  }): Promise<{ readonly events: readonly Record<string, unknown>[] }> {
+    // `provider_code` is currently informational — `domain_events` does not carry it as
+    // a column. We still scope to `seller.*` so the CRM "Webhook events" panel only
+    // surfaces seller-side activity. Cross-provider filtering belongs to a future
+    // dedicated index column; until then the param is reserved for API stability.
+    void params.provider_code;
+    const events = await this.db.query<Record<string, unknown>>('domain_events', {
+      select: 'id, event_type, aggregate_id, payload, created_at',
+      order: { column: 'created_at', ascending: false },
+      ilike: [['event_type', 'seller.%']],
+      limit: params.limit,
+      range: [params.offset, params.offset + params.limit - 1],
+    });
+    return { events };
+  }
+
+  async listActiveSellerReservations(params: { limit: number }): Promise<{
+    readonly reservations: readonly Record<string, unknown>[];
+  }> {
+    const reservations = await this.db.query<Record<string, unknown>>('seller_stock_reservations', {
+      select: 'id, seller_listing_id, status, quantity, external_order_id, expires_at, created_at, provider_metadata',
+      eq: [['status', 'pending']],
+      order: { column: 'created_at', ascending: false },
+      limit: params.limit,
+    });
+    return { reservations };
+  }
+
+  async listSellerProvisionHistory(params: { limit: number; offset: number }): Promise<{
+    readonly provisions: readonly Record<string, unknown>[];
+  }> {
+    const provisions = await this.db.query<Record<string, unknown>>('seller_key_provisions', {
+      select: 'id, reservation_id, product_key_id, status, created_at',
+      order: { column: 'created_at', ascending: false },
+      limit: params.limit,
+      range: [params.offset, params.offset + params.limit - 1],
+    });
+    return { provisions };
+  }
+
+  async listSellerMarketplaceHealth(): Promise<{
+    readonly listings: readonly Record<string, unknown>[];
+  }> {
+    const listings = await this.db.query<Record<string, unknown>>('seller_listings', {
+      select:
+        'id, external_listing_id, status, provider_account_id, listing_type, last_synced_at, error_message, '
+        + 'reservation_success_count, reservation_failure_count, provision_success_count, provision_failure_count',
+      eq: [['status', 'active']],
+      order: { column: 'updated_at', ascending: false },
+      limit: 100,
+    });
+    return { listings };
   }
 
   // --- Private Helpers ---

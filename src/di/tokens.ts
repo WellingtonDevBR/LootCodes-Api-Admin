@@ -38,6 +38,7 @@ export const TOKENS = {
   AdminSellerPricingRepository: Symbol.for('IAdminSellerPricingRepository'),
   AdminOpportunitiesRepository: Symbol.for('IAdminOpportunitiesRepository'),
   AdminAlertsRepository: Symbol.for('IAdminAlertsRepository'),
+  HealthRepository: Symbol.for('IHealthRepository'),
 
   // Crypto & key management
   KeyDecryption: Symbol.for('IKeyDecryptionPort'),
@@ -67,6 +68,10 @@ export const TOKENS = {
   SellerAutoPricingService: Symbol.for('ISellerAutoPricingService'),
   SellerPriceIntelligenceService: Symbol.for('SellerPriceIntelligenceService'),
   SellerCostBasisService: Symbol.for('SellerCostBasisService'),
+  SellerListingFetcher: Symbol.for('SellerListingFetcher'),
+  SellerPriceDecisionRecorder: Symbol.for('SellerPriceDecisionRecorder'),
+  SellerProviderConfigRepository: Symbol.for('ISellerProviderConfigRepository'),
+  CurrencyRatesRepository: Symbol.for('ICurrencyRatesRepository'),
   SellerStockSyncService: Symbol.for('ISellerStockSyncService'),
   ProcurementDeclaredStockReconcileService: Symbol.for('IProcurementDeclaredStockReconcileService'),
   BuyerOfferSnapshotSyncService: Symbol.for('IBuyerOfferSnapshotSyncService'),
@@ -114,6 +119,14 @@ export const UC_TOKENS = {
   UpdateVariantPrice: Symbol.for('UpdateVariantPriceUseCase'),
   GetInventoryCatalog: Symbol.for('GetInventoryCatalogUseCase'),
   GetVariantContext: Symbol.for('GetVariantContextUseCase'),
+  GetInventoryKpis: Symbol.for('GetInventoryKpisUseCase'),
+  ListKeys: Symbol.for('ListKeysUseCase'),
+  ListVariantKeys: Symbol.for('ListVariantKeysUseCase'),
+  LookupKeysByValue: Symbol.for('LookupKeysByValueUseCase'),
+  BulkBurnKeys: Symbol.for('BulkBurnKeysUseCase'),
+  ManualSellKeys: Symbol.for('ManualSellKeysUseCase'),
+  DecryptKeysWithAudit: Symbol.for('DecryptKeysWithAuditUseCase'),
+  ExportKeys: Symbol.for('ExportKeysUseCase'),
 
   // Inventory Sources
   LinkVariantInventorySource: Symbol.for('LinkVariantInventorySourceUseCase'),
@@ -191,6 +204,7 @@ export const UC_TOKENS = {
   RecoverProviderOrder: Symbol.for('RecoverProviderOrderUseCase'),
   SearchCatalog: Symbol.for('SearchCatalogUseCase'),
   LinkCatalogProduct: Symbol.for('LinkCatalogProductUseCase'),
+  SyncAppRouteCatalog: Symbol.for('SyncAppRouteCatalogUseCase'),
   LiveSearchProviders: Symbol.for('LiveSearchProvidersUseCase'),
   GetProcurementConfig: Symbol.for('GetProcurementConfigUseCase'),
   UpdateProcurementConfig: Symbol.for('UpdateProcurementConfigUseCase'),
@@ -236,6 +250,8 @@ export const UC_TOKENS = {
   GetFinancialSummary: Symbol.for('GetFinancialSummaryUseCase'),
   GetTransactions: Symbol.for('GetTransactionsUseCase'),
   GetChannelsSnapshot: Symbol.for('GetChannelsSnapshotUseCase'),
+  GetChannelsOverview: Symbol.for('GetChannelsOverviewUseCase'),
+  GetAnalyticsSnapshot: Symbol.for('GetAnalyticsSnapshotUseCase'),
 
   // Notifications
   SendBroadcastNotification: Symbol.for('SendBroadcastNotificationUseCase'),
@@ -350,6 +366,8 @@ export const UC_TOKENS = {
   ExpireReservations: Symbol.for('ExpireReservationsUseCase'),
   ReconcileSellerListings: Symbol.for('ReconcileSellerListingsUseCase'),
   SyncSellerListingPausedAlerts: Symbol.for('SyncSellerListingPausedAlertsUseCase'),
+  SyncSellerListingPricingFrozenAlerts: Symbol.for('SyncSellerListingPricingFrozenAlertsUseCase'),
+  ClearSellerListingError: Symbol.for('ClearSellerListingErrorUseCase'),
 
   // Seller Webhooks
   HandleDeclaredStockReserve: Symbol.for('HandleDeclaredStockReserveUseCase'),
@@ -369,6 +387,7 @@ export const UC_TOKENS = {
   HandleG2AGetInventory: Symbol.for('HandleG2AGetInventoryUseCase'),
   HandleG2AReturnInventory: Symbol.for('HandleG2AReturnInventoryUseCase'),
   HandleG2ANotifications: Symbol.for('HandleG2ANotificationsUseCase'),
+  HandleG2ATokenExchange: Symbol.for('HandleG2ATokenExchangeUseCase'),
   HandleGamivoReservation: Symbol.for('HandleGamivoReservationUseCase'),
   HandleGamivoOrder: Symbol.for('HandleGamivoOrderUseCase'),
   HandleGamivoGetKeys: Symbol.for('HandleGamivoGetKeysUseCase'),

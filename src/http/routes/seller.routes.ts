@@ -37,11 +37,71 @@ import type { EnableDeclaredStockUseCase } from '../../core/use-cases/seller/ena
 import type { EnableKeyReplacementsUseCase } from '../../core/use-cases/seller/enable-key-replacements.use-case.js';
 import type { RemoveCallbackUseCase } from '../../core/use-cases/seller/remove-callback.use-case.js';
 import type { ExpireReservationsUseCase } from '../../core/use-cases/seller/expire-reservations.use-case.js';
-import type { IDatabase } from '../../core/ports/database.port.js';
+import type { ClearSellerListingErrorUseCase } from '../../core/use-cases/seller/clear-seller-listing-error.use-case.js';
+import type { IAdminSellerRepository } from '../../core/ports/admin-seller-repository.port.js';
 import { TOKENS } from '../../di/tokens.js';
 import { createLogger } from '../../shared/logger.js';
+import { z } from 'zod';
+import { parseBody, replyInvalidRequestBody } from '../utils/zod-validation.js';
 
 const logger = createLogger('admin-seller-routes');
+
+// ─── Body schemas (single source of truth) ──────────────────────────────────
+
+const createSellerListingSchema = z.object({
+  variant_id: z.string().uuid(),
+  provider_account_id: z.string().uuid(),
+  price_cents: z.number().int().positive(),
+  currency: z.string().min(3).max(8),
+  listing_type: z.enum(['key_upload', 'declared_stock']),
+  external_product_id: z.string().min(1).optional(),
+  auto_sync_stock: z.boolean().optional(),
+  auto_sync_price: z.boolean().optional(),
+  publish_to_marketplace: z.boolean().optional(),
+}).strict();
+
+const updatePriceSchema = z.object({
+  price_cents: z.number().int().positive(),
+}).strict();
+
+const toggleSyncSchema = z.object({
+  sync_stock: z.boolean().optional(),
+  sync_price: z.boolean().optional(),
+}).strict().refine(
+  (b) => b.sync_stock !== undefined || b.sync_price !== undefined,
+  { message: 'At least one of sync_stock or sync_price must be provided' },
+);
+
+const updateMinPriceSchema = z.object({
+  mode: z.enum(['auto', 'manual']),
+  override_cents: z.number().int().nonnegative().optional(),
+}).strict();
+
+const updateOverridesSchema = z.object({
+  overrides: z.record(z.string(), z.unknown()),
+}).strict();
+
+const setVisibilitySchema = z.object({
+  visibility: z.enum(['all', 'retail', 'business']),
+}).strict();
+
+const deleteListingSchema = z.object({
+  deactivate_first: z.boolean().optional(),
+}).strict();
+
+const bindMarketplaceAuctionSchema = z.object({
+  external_listing_id: z.string().min(1),
+}).strict();
+
+const batchUpdatePricesSchema = z.object({
+  provider_account_id: z.string().uuid(),
+  updates: z.array(
+    z.object({
+      external_listing_id: z.string().min(1),
+      price_cents: z.number().int().positive(),
+    }),
+  ).min(1),
+}).strict();
 
 export async function adminSellerRoutes(app: FastifyInstance) {
   // --- Provider Accounts ---
@@ -211,26 +271,27 @@ export async function adminSellerRoutes(app: FastifyInstance) {
   // --- Seller Listing Mutations ---
 
   app.post('/listings', { preHandler: [adminGuard] }, async (request, reply) => {
+    const parsed = parseBody(createSellerListingSchema, request.body);
+    if (parsed.kind === 'error') return replyInvalidRequestBody(reply, parsed.issues);
+    const body = parsed.data;
+
     const createUc = container.resolve<CreateSellerListingUseCase>(UC_TOKENS.CreateSellerListing);
     const publishUc = container.resolve<PublishSellerListingToMarketplaceUseCase>(
       UC_TOKENS.PublishSellerListingToMarketplace,
     );
-    const body = request.body as Record<string, unknown>;
     const admin_id = (request as unknown as Record<string, unknown>).adminId as string;
-    const extRaw = body.external_product_id;
-    const external_product_id =
-      typeof extRaw === 'string' && extRaw.trim().length > 0 ? extRaw.trim() : undefined;
+    const external_product_id = body.external_product_id?.trim() || undefined;
     const publishToMarketplace = Boolean(external_product_id) && body.publish_to_marketplace !== false;
 
     const result = await createUc.execute({
-      variant_id: body.variant_id as string,
-      provider_account_id: body.provider_account_id as string,
-      price_cents: body.price_cents as number,
-      currency: body.currency as string,
-      listing_type: body.listing_type as 'key_upload' | 'declared_stock',
+      variant_id: body.variant_id,
+      provider_account_id: body.provider_account_id,
+      price_cents: body.price_cents,
+      currency: body.currency,
+      listing_type: body.listing_type,
       ...(external_product_id ? { external_product_id } : {}),
-      auto_sync_stock: body.auto_sync_stock as boolean | undefined,
-      auto_sync_price: body.auto_sync_price as boolean | undefined,
+      auto_sync_stock: body.auto_sync_stock,
+      auto_sync_price: body.auto_sync_price,
       admin_id,
     });
 
@@ -275,16 +336,18 @@ export async function adminSellerRoutes(app: FastifyInstance) {
   });
 
   app.post('/listings/:id/bind-marketplace-auction', { preHandler: [adminGuard] }, async (request, reply) => {
+    const parsed = parseBody(bindMarketplaceAuctionSchema, request.body);
+    if (parsed.kind === 'error') return replyInvalidRequestBody(reply, parsed.issues);
+
     const uc = container.resolve<BindSellerListingExternalAuctionUseCase>(
       UC_TOKENS.BindSellerListingExternalAuction,
     );
     const { id } = request.params as { id: string };
-    const body = request.body as Record<string, unknown>;
     const admin_id = (request as unknown as Record<string, unknown>).adminId as string;
     try {
       const result = await uc.execute({
         listing_id: id,
-        external_listing_id: body.external_listing_id as string,
+        external_listing_id: parsed.data.external_listing_id,
         admin_id,
       });
       return reply.send(result);
@@ -299,67 +362,77 @@ export async function adminSellerRoutes(app: FastifyInstance) {
   });
 
   app.patch('/listings/:id/price', { preHandler: [adminGuard] }, async (request, reply) => {
+    const parsed = parseBody(updatePriceSchema, request.body);
+    if (parsed.kind === 'error') return replyInvalidRequestBody(reply, parsed.issues);
+
     const uc = container.resolve<UpdateSellerListingPriceUseCase>(UC_TOKENS.UpdateSellerListingPrice);
     const { id } = request.params as { id: string };
-    const body = request.body as Record<string, unknown>;
     const admin_id = (request as unknown as Record<string, unknown>).adminId as string;
     const result = await uc.execute({
       listing_id: id,
-      price_cents: body.price_cents as number,
+      price_cents: parsed.data.price_cents,
       admin_id,
     });
     return reply.send(result);
   });
 
   app.patch('/listings/:id/sync', { preHandler: [adminGuard] }, async (request, reply) => {
+    const parsed = parseBody(toggleSyncSchema, request.body);
+    if (parsed.kind === 'error') return replyInvalidRequestBody(reply, parsed.issues);
+
     const uc = container.resolve<ToggleSellerListingSyncUseCase>(UC_TOKENS.ToggleSellerListingSync);
     const { id } = request.params as { id: string };
-    const body = request.body as Record<string, unknown>;
     const admin_id = (request as unknown as Record<string, unknown>).adminId as string;
     const result = await uc.execute({
       listing_id: id,
-      sync_stock: body.sync_stock as boolean | undefined,
-      sync_price: body.sync_price as boolean | undefined,
+      sync_stock: parsed.data.sync_stock,
+      sync_price: parsed.data.sync_price,
       admin_id,
     });
     return reply.send(result);
   });
 
   app.patch('/listings/:id/min-price', { preHandler: [adminGuard] }, async (request, reply) => {
+    const parsed = parseBody(updateMinPriceSchema, request.body);
+    if (parsed.kind === 'error') return replyInvalidRequestBody(reply, parsed.issues);
+
     const uc = container.resolve<UpdateSellerListingMinPriceUseCase>(UC_TOKENS.UpdateSellerListingMinPrice);
     const { id } = request.params as { id: string };
-    const body = request.body as Record<string, unknown>;
     const admin_id = (request as unknown as Record<string, unknown>).adminId as string;
     const result = await uc.execute({
       listing_id: id,
-      mode: body.mode as 'auto' | 'manual',
-      override_cents: body.override_cents as number | undefined,
+      mode: parsed.data.mode,
+      override_cents: parsed.data.override_cents,
       admin_id,
     });
     return reply.send(result);
   });
 
   app.patch('/listings/:id/overrides', { preHandler: [adminGuard] }, async (request, reply) => {
+    const parsed = parseBody(updateOverridesSchema, request.body);
+    if (parsed.kind === 'error') return replyInvalidRequestBody(reply, parsed.issues);
+
     const uc = container.resolve<UpdateSellerListingOverridesUseCase>(UC_TOKENS.UpdateSellerListingOverrides);
     const { id } = request.params as { id: string };
-    const body = request.body as Record<string, unknown>;
     const admin_id = (request as unknown as Record<string, unknown>).adminId as string;
     const result = await uc.execute({
       listing_id: id,
-      overrides: body.overrides as Record<string, unknown>,
+      overrides: parsed.data.overrides,
       admin_id,
     });
     return reply.send(result);
   });
 
   app.patch('/listings/:id/visibility', { preHandler: [adminGuard] }, async (request, reply) => {
+    const parsed = parseBody(setVisibilitySchema, request.body);
+    if (parsed.kind === 'error') return replyInvalidRequestBody(reply, parsed.issues);
+
     const uc = container.resolve<SetSellerListingVisibilityUseCase>(UC_TOKENS.SetSellerListingVisibility);
     const { id } = request.params as { id: string };
-    const body = request.body as Record<string, unknown>;
     const admin_id = (request as unknown as Record<string, unknown>).adminId as string;
     const result = await uc.execute({
       listing_id: id,
-      visibility: body.visibility as 'all' | 'retail' | 'business',
+      visibility: parsed.data.visibility,
       admin_id,
     });
     return reply.send(result);
@@ -384,13 +457,15 @@ export async function adminSellerRoutes(app: FastifyInstance) {
   });
 
   app.delete('/listings/:id', { preHandler: [adminGuard] }, async (request, reply) => {
+    const parsed = parseBody(deleteListingSchema, request.body ?? {});
+    if (parsed.kind === 'error') return replyInvalidRequestBody(reply, parsed.issues);
+
     const uc = container.resolve<DeleteSellerListingUseCase>(UC_TOKENS.DeleteSellerListing);
     const { id } = request.params as { id: string };
-    const body = (request.body ?? {}) as Record<string, unknown>;
     const admin_id = (request as unknown as Record<string, unknown>).adminId as string;
     await uc.execute({
       listing_id: id,
-      deactivate_first: body.deactivate_first as boolean | undefined,
+      deactivate_first: parsed.data.deactivate_first,
       admin_id,
     });
     return reply.status(204).send();
@@ -458,99 +533,53 @@ export async function adminSellerRoutes(app: FastifyInstance) {
   });
 
   app.post('/listings/:id/clear-error', { preHandler: [adminGuard] }, async (request, reply) => {
-    const db = container.resolve<IDatabase>(TOKENS.Database);
+    const uc = container.resolve<ClearSellerListingErrorUseCase>(UC_TOKENS.ClearSellerListingError);
     const { id } = request.params as { id: string };
-    await db.update('seller_listings', { id }, { error_message: null });
+    await uc.execute(id);
     return reply.send({ ok: true });
   });
 
   // ─── Monitoring Endpoints ────────────────────────────────────────────
 
   app.get('/webhook-events', { preHandler: [employeeGuard] }, async (request, reply) => {
-    const db = container.resolve<IDatabase>(TOKENS.Database);
+    const repo = container.resolve<IAdminSellerRepository>(TOKENS.AdminSellerRepository);
     const query = request.query as Record<string, string>;
     const limit = Math.min(parseInt(query.limit ?? '50', 10), 200);
     const offset = parseInt(query.offset ?? '0', 10);
-    const providerCode = query.provider_code;
-
-    const options: import('../../core/ports/database.port.js').QueryOptions = {
-      select: 'id, event_type, aggregate_id, payload, created_at',
-      order: { column: 'created_at', ascending: false },
+    const { events } = await repo.listSellerWebhookEvents({
       limit,
-      range: [offset, offset + limit - 1],
-    };
-
-    if (providerCode) {
-      options.ilike = [['event_type', `seller.%`]];
-    } else {
-      options.ilike = [['event_type', `seller.%`]];
-    }
-
-    const events = await db.query('domain_events', options);
+      offset,
+      provider_code: query.provider_code,
+    });
     return reply.send({ events, limit, offset });
   });
 
   app.get('/active-reservations', { preHandler: [employeeGuard] }, async (request, reply) => {
-    const db = container.resolve<IDatabase>(TOKENS.Database);
+    const repo = container.resolve<IAdminSellerRepository>(TOKENS.AdminSellerRepository);
     const query = request.query as Record<string, string>;
     const limit = Math.min(parseInt(query.limit ?? '50', 10), 200);
-
-    const reservations = await db.query('seller_stock_reservations', {
-      select: 'id, seller_listing_id, status, quantity, external_order_id, expires_at, created_at, provider_metadata',
-      eq: [['status', 'pending']],
-      order: { column: 'created_at', ascending: false },
-      limit,
-    });
-
+    const { reservations } = await repo.listActiveSellerReservations({ limit });
     return reply.send({ reservations });
   });
 
   app.get('/provision-history', { preHandler: [employeeGuard] }, async (request, reply) => {
-    const db = container.resolve<IDatabase>(TOKENS.Database);
+    const repo = container.resolve<IAdminSellerRepository>(TOKENS.AdminSellerRepository);
     const query = request.query as Record<string, string>;
     const limit = Math.min(parseInt(query.limit ?? '50', 10), 200);
     const offset = parseInt(query.offset ?? '0', 10);
-
-    const provisions = await db.query('seller_key_provisions', {
-      select: 'id, reservation_id, product_key_id, status, created_at',
-      order: { column: 'created_at', ascending: false },
-      limit,
-      range: [offset, offset + limit - 1],
-    });
-
+    const { provisions } = await repo.listSellerProvisionHistory({ limit, offset });
     return reply.send({ provisions, limit, offset });
   });
 
-  app.get('/marketplace-health', { preHandler: [employeeGuard] }, async (request, reply) => {
-    const db = container.resolve<IDatabase>(TOKENS.Database);
-
-    const listings = await db.query<{
-      id: string;
-      external_listing_id: string;
-      status: string;
-      provider_account_id: string;
-      listing_type: string;
-      last_synced_at: string | null;
-      error_message: string | null;
-      reservation_success_count: number;
-      reservation_failure_count: number;
-      provision_success_count: number;
-      provision_failure_count: number;
-    }>('seller_listings', {
-      select: 'id, external_listing_id, status, provider_account_id, listing_type, last_synced_at, error_message, reservation_success_count, reservation_failure_count, provision_success_count, provision_failure_count',
-      eq: [['status', 'active']],
-      order: { column: 'updated_at', ascending: false },
-      limit: 100,
-    });
-
-    const pendingReservations = await db.query<{ id: string }>('seller_stock_reservations', {
-      select: 'id',
-      eq: [['status', 'pending']],
-    });
-
+  app.get('/marketplace-health', { preHandler: [employeeGuard] }, async (_request, reply) => {
+    const repo = container.resolve<IAdminSellerRepository>(TOKENS.AdminSellerRepository);
+    const [{ listings }, { reservations }] = await Promise.all([
+      repo.listSellerMarketplaceHealth(),
+      repo.listActiveSellerReservations({ limit: 1000 }),
+    ]);
     return reply.send({
       activeListings: listings.length,
-      pendingReservations: pendingReservations.length,
+      pendingReservations: reservations.length,
       listings,
     });
   });
@@ -558,12 +587,14 @@ export async function adminSellerRoutes(app: FastifyInstance) {
   // ─── Batch Operations ──────────────────────────────────────────────
 
   app.post('/listings/batch-prices', { preHandler: [adminGuard] }, async (request, reply) => {
+    const parsed = parseBody(batchUpdatePricesSchema, request.body);
+    if (parsed.kind === 'error') return replyInvalidRequestBody(reply, parsed.issues);
+
     const uc = container.resolve<BatchUpdatePricesUseCase>(UC_TOKENS.BatchUpdatePrices);
-    const body = request.body as Record<string, unknown>;
     const admin_id = (request as unknown as Record<string, unknown>).adminId as string;
     const result = await uc.execute({
-      provider_account_id: body.provider_account_id as string,
-      updates: body.updates as Array<{ external_listing_id: string; price_cents: number }>,
+      provider_account_id: parsed.data.provider_account_id,
+      updates: [...parsed.data.updates],
       admin_id,
     });
     return reply.send(result);

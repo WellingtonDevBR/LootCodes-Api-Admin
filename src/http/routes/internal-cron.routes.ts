@@ -168,7 +168,7 @@ export async function internalCronRoutes(app: FastifyInstance): Promise<void> {
         UC_TOKENS.ReconcileSellerListings,
       );
       orchestrator.execute(requestId, {
-        phases: ['expire-reservations', 'cost-basis', 'paused-listing-alerts'],
+        phases: ['expire-reservations', 'cost-basis', 'paused-listing-alerts', 'pricing-frozen-alerts'],
       }).catch((err: unknown) => {
         logger.error('Seller housekeeping background run failed', err as Error, { requestId });
         Sentry.withScope((scope) => {

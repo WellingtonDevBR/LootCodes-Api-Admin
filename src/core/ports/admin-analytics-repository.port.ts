@@ -7,6 +7,9 @@ import type {
   GetTransactionsResult,
   GetChannelsSnapshotDto,
   GetChannelsSnapshotResult,
+  GetChannelsOverviewResult,
+  GetAnalyticsSnapshotDto,
+  GetAnalyticsSnapshotResult,
 } from '../use-cases/analytics/analytics.types.js';
 
 export interface IAdminAnalyticsRepository {
@@ -14,4 +17,11 @@ export interface IAdminAnalyticsRepository {
   getFinancialSummary(dto: GetFinancialSummaryDto): Promise<GetFinancialSummaryResult>;
   getTransactions(dto: GetTransactionsDto): Promise<GetTransactionsResult>;
   getChannelsSnapshot(dto: GetChannelsSnapshotDto): Promise<GetChannelsSnapshotResult>;
+  getChannelsOverview(): Promise<GetChannelsOverviewResult>;
+  /**
+   * Returns the pre-aggregated analytics snapshot for the given window. The
+   * implementation owns currency conversion (it injects the rates repository)
+   * so route handlers don't need to thread `IDatabase` around.
+   */
+  getAnalyticsSnapshot(dto: GetAnalyticsSnapshotDto): Promise<GetAnalyticsSnapshotResult>;
 }

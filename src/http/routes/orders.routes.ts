@@ -1,10 +1,9 @@
 import type { FastifyInstance } from 'fastify';
 import { container } from '../../di/container.js';
-import { TOKENS, UC_TOKENS } from '../../di/tokens.js';
+import { UC_TOKENS } from '../../di/tokens.js';
 import { adminGuard, employeeGuard, internalSecretGuard } from '../middleware/auth.guard.js';
 import type { ListOrdersUseCase } from '../../core/use-cases/orders/list-orders.use-case.js';
 import type { GetOrderDetailUseCase } from '../../core/use-cases/orders/get-order-detail.use-case.js';
-import type { IDatabase } from '../../core/ports/database.port.js';
 import { type RateMap, loadCurrencyRates, convertCents } from './_currency-helpers.js';
 
 interface OrderItemEmbed {
@@ -212,8 +211,6 @@ function toSerializedOrder(raw: Record<string, unknown>, rates: RateMap) {
 }
 
 export async function adminOrderRoutes(app: FastifyInstance) {
-  const getDb = () => container.resolve<IDatabase>(TOKENS.Database);
-
   app.get('/', { preHandler: [employeeGuard] }, async (request, reply) => {
     const query = request.query as {
       limit?: string;
@@ -233,7 +230,7 @@ export async function adminOrderRoutes(app: FastifyInstance) {
         from: query.from,
         to: query.to,
       }),
-      loadCurrencyRates(getDb()),
+      loadCurrencyRates(),
     ]);
 
     const shaped = {
@@ -249,7 +246,7 @@ export async function adminOrderRoutes(app: FastifyInstance) {
     const uc = container.resolve<GetOrderDetailUseCase>(UC_TOKENS.GetOrderDetail);
     const [raw, rates] = await Promise.all([
       uc.execute(orderId) as Promise<Record<string, unknown> | null>,
-      loadCurrencyRates(getDb()),
+      loadCurrencyRates(),
     ]);
     if (!raw) return reply.code(404).send({ error: 'Order not found' });
 

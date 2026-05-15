@@ -12,14 +12,35 @@ import type { GetLatestDecisionUseCase } from '../../core/use-cases/seller/get-l
 import type { GetProviderDefaultsUseCase } from '../../core/use-cases/seller/get-provider-defaults.use-case.js';
 import type { ISellerAutoPricingService, ISellerStockSyncService } from '../../core/ports/seller-pricing.port.js';
 import { getRegisteredJobs } from '../../infra/scheduler/cron-registry.js';
+import { z } from 'zod';
+import { parseBody, replyInvalidRequestBody } from '../utils/zod-validation.js';
+
+// ─── Body schemas (single source of truth) ──────────────────────────────────
+
+const payoutSchema = z.object({
+  listing_id: z.string().uuid(),
+  price_cents: z.number().int().positive(),
+}).strict();
+
+const suggestSchema = z.object({
+  listing_id: z.string().uuid(),
+  effective_cost_cents: z.number().int().nonnegative(),
+  listing_type: z.enum(['key_upload', 'declared_stock']),
+}).strict();
+
+const dryRunSchema = z.object({
+  listing_id: z.string().uuid(),
+}).strict();
 
 export async function adminSellerPricingRoutes(app: FastifyInstance) {
   app.post('/payout', { preHandler: [employeeGuard] }, async (request, reply) => {
+    const parsed = parseBody(payoutSchema, request.body);
+    if (parsed.kind === 'error') return replyInvalidRequestBody(reply, parsed.issues);
+
     const uc = container.resolve<CalculatePayoutUseCase>(UC_TOKENS.CalculatePayout);
-    const body = request.body as Record<string, unknown>;
     const result = await uc.execute({
-      listing_id: body.listing_id as string,
-      price_cents: body.price_cents as number,
+      listing_id: parsed.data.listing_id,
+      price_cents: parsed.data.price_cents,
     });
     return reply.send(result);
   });
@@ -32,21 +53,25 @@ export async function adminSellerPricingRoutes(app: FastifyInstance) {
   });
 
   app.post('/suggest', { preHandler: [adminGuard] }, async (request, reply) => {
+    const parsed = parseBody(suggestSchema, request.body);
+    if (parsed.kind === 'error') return replyInvalidRequestBody(reply, parsed.issues);
+
     const uc = container.resolve<SuggestPriceUseCase>(UC_TOKENS.SuggestPrice);
-    const body = request.body as Record<string, unknown>;
     const result = await uc.execute({
-      listing_id: body.listing_id as string,
-      effective_cost_cents: body.effective_cost_cents as number,
-      listing_type: body.listing_type as 'key_upload' | 'declared_stock',
+      listing_id: parsed.data.listing_id,
+      effective_cost_cents: parsed.data.effective_cost_cents,
+      listing_type: parsed.data.listing_type,
     });
     return reply.send(result);
   });
 
   app.post('/dry-run', { preHandler: [employeeGuard] }, async (request, reply) => {
+    const parsed = parseBody(dryRunSchema, request.body);
+    if (parsed.kind === 'error') return replyInvalidRequestBody(reply, parsed.issues);
+
     const uc = container.resolve<DryRunPricingUseCase>(UC_TOKENS.DryRunPricing);
-    const body = request.body as Record<string, unknown>;
     const result = await uc.execute({
-      listing_id: body.listing_id as string,
+      listing_id: parsed.data.listing_id,
     });
     return reply.send(result);
   });

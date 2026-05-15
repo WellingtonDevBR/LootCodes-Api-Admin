@@ -57,3 +57,23 @@ export interface SyncSellerListingPausedAlertsResult {
   readonly alertsResolved: number;
   readonly pausedListingCount: number;
 }
+
+/**
+ * Outcome of {@link IAdminAlertsRepository.syncSellerListingPricingFrozenAlerts}.
+ *
+ * Listings are considered "pricing frozen" when EITHER:
+ *   1. The most recent `seller_pricing_decisions` row for the listing is
+ *      `action='skipped' AND reason_code='budget_exhausted'` AND the listing's
+ *      `last_synced_at` is older than `FROZEN_BUDGET_HOURS` (default 6 h), OR
+ *   2. The listing has `auto_sync_price=true` AND `price_cents < cost_basis_cents`
+ *      for more than `FROZEN_BELOW_COST_HOURS` (default 1 h).
+ *
+ * `alertsCreated` — net-new `seller_listing_pricing_frozen` rows inserted.
+ * `alertsResolved` — open alerts auto-closed because the listing recovered.
+ * `frozenListingCount` — total listings observed in a frozen state.
+ */
+export interface SyncSellerListingPricingFrozenAlertsResult {
+  readonly alertsCreated: number;
+  readonly alertsResolved: number;
+  readonly frozenListingCount: number;
+}

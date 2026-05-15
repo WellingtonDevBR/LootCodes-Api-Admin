@@ -2,11 +2,40 @@ import crypto from 'node:crypto';
 import { injectable, inject } from 'tsyringe';
 import { TOKENS } from '../../di/tokens.js';
 import type { IDatabase, QueryOptions } from '../../core/ports/database.port.js';
+import type { ICurrencyRatesRepository } from '../../core/ports/currency-rates-repository.port.js';
+import { convertCentsToUsd } from '../../http/routes/_currency-helpers.js';
 import { sanitizeIlikeTerm } from '../../shared/sanitize-ilike.js';
 import { createLogger } from '../../shared/logger.js';
 import type { IAdminInventoryRepository } from '../../core/ports/admin-inventory-repository.port.js';
 
 const logger = createLogger('supabase-admin-inventory-repository');
+
+const VALID_KEY_STATES = new Set([
+  'available', 'assigned', 'revealed', 'used', 'burnt', 'faulty',
+  'seller_uploaded', 'seller_provisioned', 'seller_reserved',
+]);
+
+const KEYS_LIST_SELECT = [
+  'id, variant_id, key_state, is_used, created_at, used_at, supplier_reference, order_id,',
+  'purchase_cost, purchase_currency,',
+  'orders(order_number, order_channel, marketplace_pricing, delivery_email,',
+  'guest_email, contact_email, customer_full_name)',
+].join(' ');
+
+const LOOKUP_BY_HASH_CHUNK_SIZE = 100;
+const LOOKUP_IN_CHUNK_UUID = 200;
+
+function keyStateToKpiBucket(keyState: string | null, isUsed: boolean): 'available' | 'reserved' | 'sold' {
+  if (isUsed || keyState === 'used' || keyState === 'seller_provisioned') return 'sold';
+  if (keyState === 'faulty' || keyState === 'burnt') return 'sold';
+  if (
+    keyState === 'assigned' ||
+    keyState === 'revealed' ||
+    keyState === 'seller_reserved' ||
+    keyState === 'seller_uploaded'
+  ) return 'reserved';
+  return 'available';
+}
 import type {
   EmitInventoryStockChangedDto,
   EmitInventoryStockChangedResult,
@@ -41,12 +70,28 @@ import type {
   InventoryCatalogRow,
   UploadKeysDto,
   UploadKeysResult,
+  GetInventoryKpisResult,
+  ListKeysDto,
+  ListKeysResult,
+  ListVariantKeysDto,
+  ListVariantKeysResult,
+  LookupKeysByValueDto,
+  LookupKeysByValueResult,
+  BulkBurnKeysDto,
+  BulkBurnKeysResult,
+  ManualSellKeysDto,
+  ManualSellKeysResult,
+  DecryptKeysOrchestrateDto,
+  DecryptKeysOrchestrateResult,
+  ExportKeysDto,
+  ExportKeysResult,
 } from '../../core/use-cases/inventory/inventory.types.js';
 
 @injectable()
 export class SupabaseAdminInventoryRepository implements IAdminInventoryRepository {
   constructor(
     @inject(TOKENS.Database) private db: IDatabase,
+    @inject(TOKENS.CurrencyRatesRepository) private currencyRates: ICurrencyRatesRepository,
   ) {}
 
   async emitInventoryStockChanged(dto: EmitInventoryStockChangedDto): Promise<EmitInventoryStockChangedResult> {
@@ -558,5 +603,628 @@ export class SupabaseAdminInventoryRepository implements IAdminInventoryReposito
     }
 
     return { uploaded, duplicates };
+  }
+
+  async getInventoryKpis(): Promise<GetInventoryKpisResult> {
+    const [countResult, costRows, rates] = await Promise.all([
+      this.db.queryPaginated<Record<string, unknown>>('product_keys', {
+        select: 'id',
+        eq: [['key_state', 'available']],
+        limit: 1,
+      }),
+      this.db.queryAll<{
+        purchase_cost: string | number | null;
+        purchase_currency: string | null;
+      }>('product_keys', {
+        select: 'purchase_cost, purchase_currency',
+        eq: [['key_state', 'available']],
+      }),
+      this.currencyRates.getActiveRates(),
+    ]);
+
+    let totalCostUsdCents = 0;
+    for (const row of costRows) {
+      const cost = typeof row.purchase_cost === 'number'
+        ? row.purchase_cost
+        : typeof row.purchase_cost === 'string'
+        ? Number(row.purchase_cost)
+        : 0;
+      if (cost <= 0) continue;
+      const currency = (row.purchase_currency ?? 'USD').toUpperCase();
+      totalCostUsdCents += convertCentsToUsd(cost, currency, rates);
+    }
+
+    return {
+      availableKeyCount: countResult.total,
+      purchaseCostUsdTotal: totalCostUsdCents / 100,
+    };
+  }
+
+  async listKeys(dto: ListKeysDto): Promise<ListKeysResult> {
+    const page = Math.max(1, dto.page ?? 1);
+    const pageSize = Math.min(500, Math.max(1, dto.pageSize ?? 25));
+    const from = (page - 1) * pageSize;
+    const to = from + pageSize - 1;
+
+    const eqFilters: Array<[string, unknown]> = [];
+    const inFilters: Array<[string, unknown[]]> = [];
+    const ilikeFilters: Array<[string, string]> = [];
+
+    if (dto.variantId) {
+      eqFilters.push(['variant_id', dto.variantId]);
+    } else if (dto.productId) {
+      const variants = await this.db.query<{ id: string }>('product_variants', {
+        select: 'id',
+        eq: [['product_id', dto.productId]],
+      });
+      const variantIds = variants.map((v) => v.id);
+      if (variantIds.length === 0) {
+        return { keys: [], total: 0, page, pageSize };
+      }
+      inFilters.push(['variant_id', variantIds]);
+    }
+
+    if (dto.state) {
+      const states = dto.state.split(',').filter((s) => VALID_KEY_STATES.has(s.trim()));
+      if (states.length > 0) inFilters.push(['key_state', states]);
+    }
+
+    if (dto.search) {
+      ilikeFilters.push(['id', `${sanitizeIlikeTerm(dto.search)}%`]);
+    }
+
+    const { data: keys, total } = await this.db.queryPaginated<Record<string, unknown>>(
+      'product_keys',
+      {
+        select: KEYS_LIST_SELECT,
+        eq: eqFilters.length > 0 ? eqFilters : undefined,
+        in: inFilters.length > 0 ? inFilters : undefined,
+        ilike: ilikeFilters.length > 0 ? ilikeFilters : undefined,
+        order: { column: 'created_at', ascending: false },
+        range: [from, to],
+      },
+    );
+
+    const variantIds = [...new Set(keys.map((k) => k.variant_id as string))];
+    const variantProductMap = new Map<string, string>();
+    const variantMetaMap = new Map<string, { sku: string; face_value: string | null; region_id: string | null }>();
+    const regionNameMap = new Map<string, string>();
+    const productMap = new Map<string, string>();
+
+    if (variantIds.length > 0) {
+      const variants = await this.db.query<{
+        id: string;
+        product_id: string;
+        sku: string;
+        face_value: string | null;
+        region_id: string | null;
+      }>('product_variants', {
+        select: 'id, product_id, sku, face_value, region_id',
+        in: [['id', variantIds]],
+      });
+      for (const v of variants) {
+        variantProductMap.set(v.id, v.product_id);
+        variantMetaMap.set(v.id, { sku: v.sku, face_value: v.face_value, region_id: v.region_id });
+      }
+
+      const regionIds = [...new Set(
+        variants.map((v) => v.region_id).filter((id): id is string => typeof id === 'string' && id.length > 0),
+      )];
+      if (regionIds.length > 0) {
+        const regions = await this.db.query<{ id: string; name: string }>('product_regions', {
+          select: 'id, name',
+          in: [['id', regionIds]],
+        });
+        for (const r of regions) regionNameMap.set(r.id, r.name);
+      }
+
+      const productIds = [...new Set(variants.map((v) => v.product_id))];
+      if (productIds.length > 0) {
+        const products = await this.db.query<{ id: string; name: string }>('products', {
+          select: 'id, name',
+          in: [['id', productIds]],
+        });
+        for (const p of products) productMap.set(p.id, p.name);
+      }
+    }
+
+    const mapped = keys.map((k) => {
+      const vid = k.variant_id as string;
+      const productId = variantProductMap.get(vid) ?? '';
+      const productName = productMap.get(productId) ?? '';
+      const meta = variantMetaMap.get(vid);
+      const regionName = meta?.region_id ? regionNameMap.get(meta.region_id) ?? null : null;
+      const order = k.orders as {
+        order_number?: string;
+        order_channel?: string;
+        marketplace_pricing?: { provider?: string } | null;
+        delivery_email?: string;
+        guest_email?: string;
+        contact_email?: string;
+        customer_full_name?: string;
+      } | null;
+
+      const soldTo = order
+        ? (order.customer_full_name
+            || order.delivery_email
+            || order.contact_email
+            || order.guest_email
+            || null)
+        : null;
+
+      return {
+        id: k.id as string,
+        productId,
+        productName,
+        variantId: vid,
+        variantSku: meta?.sku ?? null,
+        variantFaceValue: meta?.face_value ?? null,
+        variantRegionName: regionName,
+        key: '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022',
+        keyState: k.key_state as string,
+        supplierId: '',
+        supplierName: (k.supplier_reference as string) || '\u2014',
+        addedAt: (k.created_at as string) ?? '',
+        usedAt: (k.used_at as string) || null,
+        orderId: (k.order_id as string) || null,
+        orderNumber: order?.order_number ?? null,
+        orderChannel: order?.order_channel ?? null,
+        marketplaceName: order?.marketplace_pricing?.provider ?? null,
+        soldTo,
+        purchaseCost: typeof k.purchase_cost === 'number'
+          ? k.purchase_cost
+          : typeof k.purchase_cost === 'string'
+          ? Number(k.purchase_cost)
+          : null,
+        purchaseCurrency: (k.purchase_currency as string) || null,
+        locked: true,
+      };
+    });
+
+    return { keys: mapped, total, page, pageSize };
+  }
+
+  async listVariantKeys(dto: ListVariantKeysDto): Promise<ListVariantKeysResult> {
+    const limit = Math.min(500, Math.max(1, dto.limit ?? 50));
+    const offset = Math.max(0, dto.offset ?? 0);
+    const from = offset;
+    const to = offset + limit - 1;
+
+    const eqFilters: Array<[string, unknown]> = [['variant_id', dto.variant_id]];
+    const inFilters: Array<[string, unknown[]]> = [];
+
+    if (dto.key_state) {
+      const states = dto.key_state.split(',').filter((s) => VALID_KEY_STATES.has(s.trim()));
+      if (states.length > 0) inFilters.push(['key_state', states]);
+    }
+
+    const { data: keys, total } = await this.db.queryPaginated<Record<string, unknown>>(
+      'product_keys',
+      {
+        select: [
+          'id, key_state, is_used, created_at, used_at, order_id,',
+          'sales_blocked_at, marked_faulty_at, purchase_cost, purchase_currency',
+        ].join(' '),
+        eq: eqFilters,
+        in: inFilters.length > 0 ? inFilters : undefined,
+        order: { column: 'created_at', ascending: false },
+        range: [from, to],
+      },
+    );
+
+    let available = 0;
+    let reserved = 0;
+    let sold = 0;
+    const allKeys = await this.db.query<{ key_state: string; is_used: boolean }>('product_keys', {
+      select: 'key_state, is_used',
+      eq: [['variant_id', dto.variant_id]],
+      limit: 10000,
+    });
+    for (const k of allKeys) {
+      const bucket = keyStateToKpiBucket(k.key_state, k.is_used);
+      if (bucket === 'available') available++;
+      else if (bucket === 'reserved') reserved++;
+      else sold++;
+    }
+
+    const mapped = keys.map((k) => ({
+      id: k.id as string,
+      masked_value: '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022',
+      keyState: (k.key_state as string) ?? 'available',
+      created_at: (k.created_at as string) ?? '',
+      sold_at: (k.used_at as string) || null,
+      order_id: (k.order_id as string) || null,
+      is_sales_blocked: k.sales_blocked_at !== null && k.sales_blocked_at !== undefined,
+      is_faulty: k.marked_faulty_at !== null && k.marked_faulty_at !== undefined,
+      purchase_cost: typeof k.purchase_cost === 'number'
+        ? k.purchase_cost
+        : typeof k.purchase_cost === 'string'
+        ? Number(k.purchase_cost)
+        : null,
+      purchase_currency: (k.purchase_currency as string) || null,
+    }));
+
+    return { keys: mapped, total, available, reserved, sold };
+  }
+
+  async lookupKeysByValue(dto: LookupKeysByValueDto): Promise<LookupKeysByValueResult> {
+    const rawValues = dto.key_values.map((v) => v.trim());
+
+    const hashFn = async (key: string): Promise<string> => {
+      const data = new TextEncoder().encode(key);
+      const buf = await crypto.subtle.digest('SHA-256', data);
+      return Buffer.from(buf).toString('hex');
+    };
+    const hashes = await Promise.all(rawValues.map((v) => hashFn(v)));
+
+    type KeyLookupRow = {
+      id: string;
+      raw_key_hash: string;
+      key_state: string;
+      variant_id: string;
+      order_id: string | null;
+      marked_faulty_at: string | null;
+      sales_blocked_at: string | null;
+    };
+
+    const uniqueHashes = [...new Set(hashes)];
+    const hashToRow = new Map<string, KeyLookupRow>();
+    const select = 'id, raw_key_hash, key_state, variant_id, order_id, marked_faulty_at, sales_blocked_at';
+
+    for (let i = 0; i < uniqueHashes.length; i += LOOKUP_BY_HASH_CHUNK_SIZE) {
+      const chunk = uniqueHashes.slice(i, i + LOOKUP_BY_HASH_CHUNK_SIZE);
+      const rows = await this.db.query<KeyLookupRow>('product_keys', {
+        select,
+        in: [['raw_key_hash', chunk]],
+      });
+      for (const row of rows) hashToRow.set(row.raw_key_hash, row);
+    }
+
+    const found = [...hashToRow.values()];
+
+    const variantIds = [...new Set(found.map((r) => r.variant_id))];
+    type VariantRow = { id: string; sku: string | null; product_id: string };
+    const variants: VariantRow[] = [];
+    for (let i = 0; i < variantIds.length; i += LOOKUP_IN_CHUNK_UUID) {
+      const chunk = variantIds.slice(i, i + LOOKUP_IN_CHUNK_UUID);
+      const rows = await this.db.query<VariantRow>('product_variants', {
+        select: 'id, sku, product_id',
+        in: [['id', chunk]],
+      });
+      variants.push(...rows);
+    }
+    const variantMap = new Map(variants.map((v) => [v.id, v]));
+
+    const productIds = [...new Set(variants.map((v) => v.product_id))];
+    type ProductRow = { id: string; name: string };
+    const products: ProductRow[] = [];
+    for (let i = 0; i < productIds.length; i += LOOKUP_IN_CHUNK_UUID) {
+      const chunk = productIds.slice(i, i + LOOKUP_IN_CHUNK_UUID);
+      const rows = await this.db.query<ProductRow>('products', {
+        select: 'id, name',
+        in: [['id', chunk]],
+      });
+      products.push(...rows);
+    }
+    const productMap = new Map(products.map((p) => [p.id, p]));
+
+    const results = rawValues.map((raw, i) => {
+      const hash = hashes[i]!;
+      const row = hashToRow.get(hash);
+      if (!row) {
+        return {
+          input_value: raw,
+          matched: false,
+          key_id: null,
+          key_state: null,
+          product_name: null,
+          variant_sku: null,
+          order_id: null,
+        };
+      }
+      const variant = variantMap.get(row.variant_id);
+      const product = variant ? productMap.get(variant.product_id) : undefined;
+      return {
+        input_value: raw,
+        matched: true,
+        key_id: row.id,
+        key_state: row.key_state,
+        product_name: product?.name ?? null,
+        variant_sku: variant?.sku ?? null,
+        order_id: row.order_id,
+      };
+    });
+
+    return {
+      results,
+      matched: results.filter((r) => r.matched).length,
+      total: rawValues.length,
+    };
+  }
+
+  async bulkBurnAvailableKeys(dto: BulkBurnKeysDto): Promise<BulkBurnKeysResult> {
+    const rows = await this.db.query<{ id: string; key_state: string }>('product_keys', {
+      select: 'id, key_state',
+      in: [['id', dto.key_ids]],
+    });
+
+    const eligible = rows.filter((r) => r.key_state === 'available');
+    const locked = rows.filter((r) => r.key_state !== 'available');
+
+    const results: BulkBurnKeysResult['results'] = locked.map((r) => ({
+      key_id: r.id,
+      outcome: `state_locked:${r.key_state}`,
+    }));
+
+    let keysUpdated = 0;
+    for (const row of eligible) {
+      await this.db.update('product_keys', { id: row.id }, {
+        key_state: 'burnt',
+        marketplace_eligible: false,
+      });
+      results.push({ key_id: row.id, outcome: 'updated' });
+      keysUpdated++;
+    }
+
+    return { success: true, keys_marked: keysUpdated, results };
+  }
+
+  async manualSellKeys(dto: ManualSellKeysDto): Promise<ManualSellKeysResult> {
+    const keys = await this.db.query<{ id: string; key_state: string; variant_id: string }>(
+      'product_keys',
+      { select: 'id, key_state, variant_id', in: [['id', dto.key_ids]] },
+    );
+    if (keys.length !== dto.key_ids.length) {
+      const found = new Set(keys.map((k) => k.id));
+      const missing = dto.key_ids.filter((id) => !found.has(id));
+      throw Object.assign(new Error('Some keys not found'), { code: 'KEYS_NOT_FOUND', missing });
+    }
+    const unavailable = keys.filter((k) => k.key_state !== 'available');
+    if (unavailable.length > 0) {
+      throw Object.assign(new Error('Some keys are not available for sale'), {
+        code: 'KEYS_UNAVAILABLE',
+        unavailable: unavailable.map((k) => ({ id: k.id, current_state: k.key_state })),
+      });
+    }
+
+    const firstVariantId = keys[0]!.variant_id;
+    const variant = await this.db.queryOne<{ id: string; product_id: string }>(
+      'product_variants',
+      { select: 'id, product_id', eq: [['id', firstVariantId]] },
+    );
+    if (!variant) {
+      throw new Error('Could not resolve product for variant');
+    }
+
+    const now = new Date().toISOString();
+    const newOrder = await this.db.insert<{ id: string; order_number: string }>('orders', {
+      status: 'fulfilled',
+      order_channel: 'manual',
+      payment_method: 'manual',
+      delivery_email: dto.buyer_email,
+      customer_full_name: dto.buyer_name,
+      notes: dto.notes,
+      total_amount: dto.price_cents,
+      currency: dto.currency,
+      quantity: dto.key_ids.length,
+      product_id: variant.product_id,
+      fulfillment_status: 'fulfilled',
+      processed_at: now,
+      processed_by: dto.admin_user_id,
+    });
+
+    for (const keyId of dto.key_ids) {
+      await this.db.update('product_keys', { id: keyId }, {
+        key_state: 'used',
+        is_used: true,
+        order_id: newOrder.id,
+        used_at: now,
+      });
+    }
+
+    try {
+      await this.db.insert('admin_actions', {
+        admin_user_id: dto.admin_user_id,
+        admin_email: dto.admin_email,
+        action_type: 'keys_manual_sell',
+        target_type: 'orders',
+        target_id: newOrder.id,
+        details: {
+          key_count: dto.key_ids.length,
+          key_ids: dto.key_ids,
+          buyer_email: dto.buyer_email,
+          order_id: newOrder.id,
+          price_cents: dto.price_cents,
+          currency: dto.currency,
+        },
+        ip_address: dto.client_ip,
+        user_agent: dto.user_agent,
+        client_channel: 'crm',
+      });
+    } catch (auditErr) {
+      logger.error('Failed to write manual-sell audit log', auditErr as Error, {
+        order_id: newOrder.id,
+      });
+    }
+
+    return {
+      order_id: newOrder.id,
+      order_number: newOrder.order_number,
+      keys_sold: dto.key_ids.length,
+    };
+  }
+
+  async decryptAndAuditKeys(
+    dto: DecryptKeysOrchestrateDto,
+    decryptFn: (row: {
+      id: string;
+      encrypted_key: string | null;
+      encryption_iv: string | null;
+      encryption_salt: string | null;
+      encryption_key_id: string | null;
+    }) => Promise<string>,
+  ): Promise<DecryptKeysOrchestrateResult> {
+    const rows = await this.db.query<{
+      id: string;
+      encrypted_key: string | null;
+      encryption_iv: string | null;
+      encryption_salt: string | null;
+      encryption_key_id: string | null;
+    }>('product_keys', {
+      select: 'id, encrypted_key, encryption_iv, encryption_salt, encryption_key_id',
+      in: [['id', dto.key_ids]],
+    });
+
+    const decrypted: Array<{ id: string; decrypted_value: string }> = [];
+    const failures: Array<{ id: string; error: string }> = [];
+
+    for (const row of rows) {
+      if (!row.encrypted_key || !row.encryption_iv || !row.encryption_salt) {
+        failures.push({ id: row.id, error: 'Missing encryption data' });
+        continue;
+      }
+      try {
+        const value = await decryptFn(row);
+        decrypted.push({ id: row.id, decrypted_value: value });
+      } catch (err) {
+        logger.error('Key decryption failed', err as Error, { keyId: row.id });
+        failures.push({ id: row.id, error: 'Decryption failed' });
+      }
+    }
+
+    try {
+      await this.db.insert('admin_actions', {
+        admin_user_id: dto.admin_user_id,
+        admin_email: dto.admin_email,
+        action_type: 'keys_decrypt',
+        target_type: 'product_keys',
+        target_id: dto.key_ids.length === 1 ? dto.key_ids[0] : null,
+        details: {
+          key_count: dto.key_ids.length,
+          key_ids: dto.key_ids,
+          decrypted_count: decrypted.length,
+          failed_count: failures.length,
+          variant_id: dto.variant_id_context,
+        },
+        ip_address: dto.client_ip,
+        user_agent: dto.user_agent,
+        client_channel: 'crm',
+      });
+    } catch (auditErr) {
+      logger.error('Failed to write decrypt audit log', auditErr as Error);
+    }
+
+    return { keys: decrypted, failures };
+  }
+
+  async exportKeysCsv(
+    dto: ExportKeysDto,
+    decryptFn: (row: {
+      id: string;
+      encrypted_key: string | null;
+      encryption_iv: string | null;
+      encryption_salt: string | null;
+      encryption_key_id: string | null;
+    }) => Promise<string>,
+  ): Promise<ExportKeysResult> {
+    const rows = await this.db.query<{
+      id: string;
+      variant_id: string;
+      key_state: string;
+      encrypted_key: string | null;
+      encryption_iv: string | null;
+      encryption_salt: string | null;
+      encryption_key_id: string | null;
+      created_at: string;
+    }>('product_keys', {
+      select: 'id, variant_id, key_state, encrypted_key, encryption_iv, encryption_salt, encryption_key_id, created_at',
+      in: [['id', dto.key_ids]],
+    });
+
+    const variantIds = [...new Set(rows.map((r) => r.variant_id))];
+    const variantProductMap = new Map<string, string>();
+    const productNameMap = new Map<string, string>();
+
+    if (variantIds.length > 0) {
+      const variants = await this.db.query<{ id: string; product_id: string }>(
+        'product_variants',
+        { select: 'id, product_id', in: [['id', variantIds]] },
+      );
+      for (const v of variants) variantProductMap.set(v.id, v.product_id);
+
+      const productIds = [...new Set(variants.map((v) => v.product_id))];
+      if (productIds.length > 0) {
+        const products = await this.db.query<{ id: string; name: string }>(
+          'products',
+          { select: 'id, name', in: [['id', productIds]] },
+        );
+        for (const p of products) productNameMap.set(p.id, p.name);
+      }
+    }
+
+    const csvLines: string[] = ['key_id,product,variant_id,key_value,key_state,added_at'];
+    for (const row of rows) {
+      let keyValue = '';
+      if (row.encrypted_key && row.encryption_iv && row.encryption_salt) {
+        try {
+          keyValue = await decryptFn(row);
+        } catch {
+          keyValue = '[decryption failed]';
+        }
+      } else {
+        keyValue = '[no encryption data]';
+      }
+
+      const productId = variantProductMap.get(row.variant_id) ?? '';
+      const productName = productNameMap.get(productId) ?? '';
+      const escapedProduct = productName.includes(',') ? `"${productName}"` : productName;
+      const escapedKey = keyValue.includes(',') || keyValue.includes('"')
+        ? `"${keyValue.replace(/"/g, '""')}"`
+        : keyValue;
+
+      csvLines.push(
+        `${row.id},${escapedProduct},${row.variant_id},${escapedKey},${row.key_state},${row.created_at}`,
+      );
+    }
+
+    try {
+      await this.db.insert('admin_actions', {
+        admin_user_id: dto.admin_user_id,
+        admin_email: dto.admin_email,
+        action_type: 'keys_export',
+        target_type: 'product_keys',
+        target_id: null,
+        details: {
+          key_count: dto.key_ids.length,
+          key_ids: dto.key_ids,
+        },
+        ip_address: dto.client_ip,
+        user_agent: dto.user_agent,
+        client_channel: 'crm',
+      });
+    } catch (auditErr) {
+      logger.error('Failed to write export audit log', auditErr as Error);
+    }
+
+    if (dto.remove_from_inventory) {
+      for (const row of rows) {
+        try {
+          await this.db.update('product_keys', { id: row.id }, {
+            key_state: 'burnt',
+            is_used: true,
+          });
+        } catch (burnErr) {
+          logger.error('Failed to mark key as burnt during export', burnErr as Error, {
+            keyId: row.id,
+          });
+        }
+      }
+    }
+
+    return {
+      csv: csvLines.join('\n'),
+      exported: rows.length,
+      removed: dto.remove_from_inventory,
+    };
   }
 }

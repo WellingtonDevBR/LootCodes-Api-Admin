@@ -1,83 +1,31 @@
-import type { IDatabase } from '../../core/ports/database.port.js';
+/**
+ * Currency conversion helpers for route handlers.
+ *
+ * Routes call {@link loadCurrencyRates} (which resolves the
+ * `ICurrencyRatesRepository` from DI) and pass the resulting `RateMap` to
+ * {@link convertCents} / {@link convertCentsToUsd}. The repository owns the
+ * TTL cache, so this module is purely a thin facade + the pure conversion
+ * math — no `IDatabase` access leaks into route code.
+ */
+import { container } from 'tsyringe';
+import { TOKENS } from '../../di/tokens.js';
+import type { ICurrencyRatesRepository, RateMap } from '../../core/ports/currency-rates-repository.port.js';
+
+export type { RateMap };
 
 /**
- * Sparse map of `"FROM->TO"` → rate pairs loaded from `currency_rates`.
- * Example key: `"USD->EUR"`, value: `0.92`.
+ * Returns the cached map of active currency rates. The underlying repository
+ * applies a short TTL so admin updates propagate within a minute.
  */
-export type RateMap = Map<string, number>;
-
-/**
- * Process-level cache for currency rates.
- *
- * The `/orders`, `/inventory`, `/pricing` and `/analytics` routes
- * previously called `loadCurrencyRates` on every request, each
- * issuing a fresh `SELECT * FROM currency_rates`. Rates only change
- * a few times per day, so the per-request fetch is pure overhead.
- *
- * A short TTL keeps memory pressure bounded and means the cache will
- * pick up new rates within `CURRENCY_RATES_TTL_MS` of an admin
- * updating the table — a perfectly acceptable trade-off.
- *
- * Coalesces concurrent first-loads through `inflight` so a stampede
- * of incoming requests doesn't all hit Postgres at once.
- */
-const CURRENCY_RATES_TTL_MS = 60_000; // 60 seconds
-let cachedRates: RateMap | null = null;
-let cachedAt = 0;
-let inflight: Promise<RateMap> | null = null;
-
-async function fetchRates(db: IDatabase): Promise<RateMap> {
-  const rows = await db.query<{
-    from_currency: string;
-    to_currency: string;
-    rate: string | number;
-  }>('currency_rates', { select: 'from_currency, to_currency, rate', eq: [['is_active', true]] });
-
-  const map: RateMap = new Map();
-  for (const r of rows) {
-    const rate = typeof r.rate === 'number' ? r.rate : Number(r.rate);
-    if (!Number.isFinite(rate) || rate <= 0) continue;
-    map.set(`${r.from_currency}->${r.to_currency}`, rate);
-  }
-  return map;
+export async function loadCurrencyRates(): Promise<RateMap> {
+  const repo = container.resolve<ICurrencyRatesRepository>(TOKENS.CurrencyRatesRepository);
+  return repo.getActiveRates();
 }
 
-/**
- * Loads active currency rates from the `currency_rates` table into a
- * sparse `RateMap`. Used by order, inventory, and pricing endpoints for
- * multi-currency conversion via {@link convertCents}.
- *
- * Cached at module level with a {@link CURRENCY_RATES_TTL_MS} TTL.
- */
-export async function loadCurrencyRates(db: IDatabase): Promise<RateMap> {
-  const now = Date.now();
-  if (cachedRates !== null && now - cachedAt < CURRENCY_RATES_TTL_MS) {
-    return cachedRates;
-  }
-  if (inflight !== null) return inflight;
-
-  inflight = (async () => {
-    try {
-      const fresh = await fetchRates(db);
-      cachedRates = fresh;
-      cachedAt = Date.now();
-      return fresh;
-    } finally {
-      inflight = null;
-    }
-  })();
-
-  return inflight;
-}
-
-/**
- * Force the rates cache to refresh on the next call. Intended for
- * admin actions that mutate `currency_rates` and want their next
- * read to be fresh without waiting for the TTL.
- */
+/** Force the rates cache to refresh on the next call. */
 export function invalidateCurrencyRatesCache(): void {
-  cachedRates = null;
-  cachedAt = 0;
+  const repo = container.resolve<ICurrencyRatesRepository>(TOKENS.CurrencyRatesRepository);
+  repo.invalidate();
 }
 
 /**

@@ -49,6 +49,7 @@ import {
 } from './live-search-mapping.js';
 import { refreshBambooOfferSnapshotsForVariant } from './bamboo-variant-offer-quote-refresh.js';
 import { refreshAppRouteOfferSnapshotsForVariant } from './approute-variant-offer-quote-refresh.js';
+import { resolveSellerSyncDefaults } from '../seller/seller-sync-defaults.js';
 import { syncAppRouteProductCatalog } from './approute-catalog-sync.js';
 import { syncWgcardsProductCatalog } from './wgcards-catalog-sync.js';
 import { catalogProductNameIlikeClauses } from './catalog-product-name-search.js';
@@ -437,6 +438,7 @@ export class SupabaseAdminProcurementRepository implements IAdminProcurementRepo
 
       const relinkNow = new Date().toISOString();
       if (existingListings.length === 0) {
+        const syncDefaults = await resolveSellerSyncDefaults(account.id, {});
         const listing = await this.db.insert<{ id: string }>('seller_listings', {
           variant_id: dto.variant_id,
           provider_account_id: account.id,
@@ -444,9 +446,13 @@ export class SupabaseAdminProcurementRepository implements IAdminProcurementRepo
           status: 'draft',
           currency: dto.currency,
           price_cents: dto.price_cents,
+          auto_sync_stock: syncDefaults.auto_sync_stock,
+          auto_sync_price: syncDefaults.auto_sync_price,
         });
         sellerListingId = listing.id;
       } else {
+        // Relink: preserve the listing's existing auto_sync_* toggles. Relinking is
+        // an admin-initiated mapping fix, not a reason to silently opt-out of automation.
         const listingId = existingListings[0].id;
         await this.db.update('seller_listings', { id: listingId }, {
           external_product_id: dto.external_product_id,
@@ -454,8 +460,6 @@ export class SupabaseAdminProcurementRepository implements IAdminProcurementRepo
           price_cents: dto.price_cents,
           external_listing_id: null,
           status: 'draft',
-          auto_sync_stock: false,
-          auto_sync_price: false,
           error_message: null,
           updated_at: relinkNow,
         });

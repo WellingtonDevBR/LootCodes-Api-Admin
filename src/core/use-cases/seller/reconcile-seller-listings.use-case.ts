@@ -16,6 +16,10 @@
  *   6. paused-listing-alerts  — sync `admin_alerts` of type `seller_listing_paused`
  *                               so the CRM surfaces every paused/failed listing
  *                               as an actionable alert
+ *   7. pricing-frozen-alerts  — sync `admin_alerts` of type
+ *                               `seller_listing_pricing_frozen` so the CRM
+ *                               surfaces listings stuck on budget_exhausted or
+ *                               priced below cost basis
  *
  * NOT gated by `platform_settings.fulfillment_mode` — that flag controls
  * user-facing checkout/key delivery, not admin-owned marketplace listings.
@@ -38,6 +42,7 @@ import type { IProcurementDeclaredStockReconcileService } from '../../ports/proc
 import type { IEnebaKeyReconcileService } from '../../ports/eneba-key-reconcile.port.js';
 import { ExpireReservationsUseCase } from './expire-reservations.use-case.js';
 import { SyncSellerListingPausedAlertsUseCase } from './sync-seller-listing-paused-alerts.use-case.js';
+import { SyncSellerListingPricingFrozenAlertsUseCase } from './sync-seller-listing-pricing-frozen-alerts.use-case.js';
 import {
   RECONCILE_PHASES,
   type PhaseOutcome,
@@ -64,6 +69,8 @@ export class ReconcileSellerListingsUseCase {
     private readonly expireReservations: ExpireReservationsUseCase,
     @inject(UC_TOKENS.SyncSellerListingPausedAlerts)
     private readonly syncPausedAlerts: SyncSellerListingPausedAlertsUseCase,
+    @inject(UC_TOKENS.SyncSellerListingPricingFrozenAlerts)
+    private readonly syncPricingFrozenAlerts: SyncSellerListingPricingFrozenAlertsUseCase,
   ) {}
 
   async execute(
@@ -135,6 +142,8 @@ export class ReconcileSellerListingsUseCase {
         return this.enebaKeyReconcile.execute(requestId);
       case 'paused-listing-alerts':
         return this.syncPausedAlerts.execute();
+      case 'pricing-frozen-alerts':
+        return this.syncPricingFrozenAlerts.execute();
     }
   }
 }

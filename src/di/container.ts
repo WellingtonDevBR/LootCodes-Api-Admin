@@ -61,6 +61,10 @@ import { SellerPricingService } from '../infra/seller/pricing/seller-pricing.ser
 import { SellerAutoPricingService } from '../infra/seller/pricing/seller-auto-pricing.service.js';
 import { SellerPriceIntelligenceService } from '../infra/seller/pricing/seller-price-intelligence.service.js';
 import { SellerCostBasisService } from '../infra/seller/pricing/seller-cost-basis.service.js';
+import { SellerListingFetcher } from '../infra/seller/pricing/seller-listing-fetcher.js';
+import { SellerPriceDecisionRecorder } from '../infra/seller/pricing/seller-price-decision-recorder.js';
+import { SupabaseSellerProviderConfigRepository } from '../infra/seller/supabase-seller-provider-config.repository.js';
+import { SupabaseCurrencyRatesRepository } from '../infra/currency/supabase-currency-rates.repository.js';
 import { SellerStockSyncService } from '../infra/seller/pricing/seller-stock-sync.service.js';
 import { ProcurementDeclaredStockReconcileService } from '../infra/seller/procurement-declared-stock-reconcile.service.js';
 import { BuyerOfferSnapshotSyncService } from '../infra/procurement/buyer-offer-snapshot-sync.service.js';
@@ -68,6 +72,7 @@ import { EnebaKeyReconcileService } from '../infra/seller/eneba-key-reconcile.se
 import { SupabasePlatformSettingsRepository } from '../infra/platform-settings/supabase-platform-settings.repository.js';
 import { SupabaseAdminOpportunitiesRepository } from '../infra/opportunities/supabase-admin-opportunities.repository.js';
 import { SupabaseAdminAlertsRepository } from '../infra/alerts/supabase-admin-alerts.repository.js';
+import { SupabaseHealthRepository } from '../infra/health/supabase-health.repository.js';
 
 // Notification dispatcher & channels
 import { NotificationDispatcher } from '../infra/notifications/notification-dispatcher.js';
@@ -127,6 +132,14 @@ import { ManualSellUseCase } from '../core/use-cases/inventory/manual-sell.use-c
 import { UpdateVariantPriceUseCase } from '../core/use-cases/inventory/update-variant-price.use-case.js';
 import { GetInventoryCatalogUseCase } from '../core/use-cases/inventory/get-inventory-catalog.use-case.js';
 import { GetVariantContextUseCase } from '../core/use-cases/inventory/get-variant-context.use-case.js';
+import { GetInventoryKpisUseCase } from '../core/use-cases/inventory/get-inventory-kpis.use-case.js';
+import { ListKeysUseCase } from '../core/use-cases/inventory/list-keys.use-case.js';
+import { ListVariantKeysUseCase } from '../core/use-cases/inventory/list-variant-keys.use-case.js';
+import { LookupKeysByValueUseCase } from '../core/use-cases/inventory/lookup-keys-by-value.use-case.js';
+import { BulkBurnKeysUseCase } from '../core/use-cases/inventory/bulk-burn-keys.use-case.js';
+import { ManualSellKeysUseCase } from '../core/use-cases/inventory/manual-sell-keys.use-case.js';
+import { DecryptKeysWithAuditUseCase } from '../core/use-cases/inventory/decrypt-keys-with-audit.use-case.js';
+import { ExportKeysUseCase } from '../core/use-cases/inventory/export-keys.use-case.js';
 
 // Use cases — Users
 import { GetComprehensiveUserDataUseCase } from '../core/use-cases/users/get-comprehensive-user-data.use-case.js';
@@ -210,6 +223,8 @@ import { GetDashboardMetricsUseCase } from '../core/use-cases/analytics/get-dash
 import { GetFinancialSummaryUseCase } from '../core/use-cases/analytics/get-financial-summary.use-case.js';
 import { GetTransactionsUseCase } from '../core/use-cases/analytics/get-transactions.use-case.js';
 import { GetChannelsSnapshotUseCase } from '../core/use-cases/analytics/get-channels-snapshot.use-case.js';
+import { GetChannelsOverviewUseCase } from '../core/use-cases/analytics/get-channels-overview.use-case.js';
+import { GetAnalyticsSnapshotUseCase } from '../core/use-cases/analytics/get-analytics-snapshot.use-case.js';
 
 // Use cases — Notifications
 import { SendBroadcastNotificationUseCase } from '../core/use-cases/notifications/send-broadcast-notification.use-case.js';
@@ -315,6 +330,8 @@ import { RemoveCallbackUseCase } from '../core/use-cases/seller/remove-callback.
 import { ExpireReservationsUseCase } from '../core/use-cases/seller/expire-reservations.use-case.js';
 import { ReconcileSellerListingsUseCase } from '../core/use-cases/seller/reconcile-seller-listings.use-case.js';
 import { SyncSellerListingPausedAlertsUseCase } from '../core/use-cases/seller/sync-seller-listing-paused-alerts.use-case.js';
+import { SyncSellerListingPricingFrozenAlertsUseCase } from '../core/use-cases/seller/sync-seller-listing-pricing-frozen-alerts.use-case.js';
+import { ClearSellerListingErrorUseCase } from '../core/use-cases/seller/clear-seller-listing-error.use-case.js';
 
 // Use cases — Seller Webhooks
 import { HandleDeclaredStockReserveUseCase } from '../core/use-cases/seller-webhook/eneba/handle-declared-stock-reserve.use-case.js';
@@ -366,6 +383,7 @@ import { ManualProviderPurchaseUseCase } from '../core/use-cases/procurement/man
 import { RecoverProviderOrderUseCase } from '../core/use-cases/procurement/recover-provider-order.use-case.js';
 import { SearchCatalogUseCase } from '../core/use-cases/procurement/search-catalog.use-case.js';
 import { LinkCatalogProductUseCase } from '../core/use-cases/procurement/link-catalog-product.use-case.js';
+import { SyncAppRouteCatalogUseCase } from '../core/use-cases/procurement/sync-approute-catalog.use-case.js';
 import { LiveSearchProvidersUseCase } from '../core/use-cases/procurement/live-search-providers.use-case.js';
 import { GetProcurementConfigUseCase } from '../core/use-cases/procurement/get-procurement-config.use-case.js';
 import { UpdateProcurementConfigUseCase } from '../core/use-cases/procurement/update-procurement-config.use-case.js';
@@ -419,6 +437,7 @@ container.register(TOKENS.AdminSellerRepository, { useClass: SupabaseAdminSeller
 container.register(TOKENS.AdminSellerPricingRepository, { useClass: SupabaseAdminSellerPricingRepository });
 container.register(TOKENS.AdminOpportunitiesRepository, { useClass: SupabaseAdminOpportunitiesRepository });
 container.register(TOKENS.AdminAlertsRepository, { useClass: SupabaseAdminAlertsRepository });
+container.register(TOKENS.HealthRepository, { useClass: SupabaseHealthRepository });
 
 // Notification dispatcher (singleton so all channels are shared)
 container.registerSingleton(TOKENS.NotificationDispatcher, NotificationDispatcher);
@@ -481,6 +500,14 @@ container.register(UC_TOKENS.ManualSell, { useClass: ManualSellUseCase });
 container.register(UC_TOKENS.UpdateVariantPrice, { useClass: UpdateVariantPriceUseCase });
 container.register(UC_TOKENS.GetInventoryCatalog, { useClass: GetInventoryCatalogUseCase });
 container.register(UC_TOKENS.GetVariantContext, { useClass: GetVariantContextUseCase });
+container.register(UC_TOKENS.GetInventoryKpis, { useClass: GetInventoryKpisUseCase });
+container.register(UC_TOKENS.ListKeys, { useClass: ListKeysUseCase });
+container.register(UC_TOKENS.ListVariantKeys, { useClass: ListVariantKeysUseCase });
+container.register(UC_TOKENS.LookupKeysByValue, { useClass: LookupKeysByValueUseCase });
+container.register(UC_TOKENS.BulkBurnKeys, { useClass: BulkBurnKeysUseCase });
+container.register(UC_TOKENS.ManualSellKeys, { useClass: ManualSellKeysUseCase });
+container.register(UC_TOKENS.DecryptKeysWithAudit, { useClass: DecryptKeysWithAuditUseCase });
+container.register(UC_TOKENS.ExportKeys, { useClass: ExportKeysUseCase });
 
 // Use cases — Users
 container.register(UC_TOKENS.GetComprehensiveUserData, { useClass: GetComprehensiveUserDataUseCase });
@@ -533,6 +560,7 @@ container.register(UC_TOKENS.ManualProviderPurchase, { useClass: ManualProviderP
 container.register(UC_TOKENS.RecoverProviderOrder, { useClass: RecoverProviderOrderUseCase });
 container.register(UC_TOKENS.SearchCatalog, { useClass: SearchCatalogUseCase });
 container.register(UC_TOKENS.LinkCatalogProduct, { useClass: LinkCatalogProductUseCase });
+container.register(UC_TOKENS.SyncAppRouteCatalog, { useClass: SyncAppRouteCatalogUseCase });
 container.register(UC_TOKENS.LiveSearchProviders, { useClass: LiveSearchProvidersUseCase });
 container.register(UC_TOKENS.GetProcurementConfig, { useClass: GetProcurementConfigUseCase });
 container.register(UC_TOKENS.UpdateProcurementConfig, { useClass: UpdateProcurementConfigUseCase });
@@ -591,6 +619,8 @@ container.register(UC_TOKENS.GetDashboardMetrics, { useClass: GetDashboardMetric
 container.register(UC_TOKENS.GetFinancialSummary, { useClass: GetFinancialSummaryUseCase });
 container.register(UC_TOKENS.GetTransactions, { useClass: GetTransactionsUseCase });
 container.register(UC_TOKENS.GetChannelsSnapshot, { useClass: GetChannelsSnapshotUseCase });
+container.register(UC_TOKENS.GetChannelsOverview, { useClass: GetChannelsOverviewUseCase });
+container.register(UC_TOKENS.GetAnalyticsSnapshot, { useClass: GetAnalyticsSnapshotUseCase });
 
 // Use cases — Notifications
 container.register(UC_TOKENS.SendBroadcastNotification, { useClass: SendBroadcastNotificationUseCase });
@@ -697,6 +727,8 @@ container.register(UC_TOKENS.EnableKeyReplacements, { useClass: EnableKeyReplace
 container.register(UC_TOKENS.RemoveCallback, { useClass: RemoveCallbackUseCase });
 container.register(UC_TOKENS.ExpireReservations, { useClass: ExpireReservationsUseCase });
 container.register(UC_TOKENS.SyncSellerListingPausedAlerts, { useClass: SyncSellerListingPausedAlertsUseCase });
+container.register(UC_TOKENS.SyncSellerListingPricingFrozenAlerts, { useClass: SyncSellerListingPricingFrozenAlertsUseCase });
+container.register(UC_TOKENS.ClearSellerListingError, { useClass: ClearSellerListingErrorUseCase });
 container.register(UC_TOKENS.ReconcileSellerListings, { useClass: ReconcileSellerListingsUseCase });
 
 // Infrastructure — Marketplace & Seller Services
@@ -736,6 +768,10 @@ container.register(TOKENS.KinguinKeyUpload, { useClass: KinguinKeyUploadService 
 // Seller pricing services
 container.register(TOKENS.SellerCostBasisService, { useClass: SellerCostBasisService });
 container.register(TOKENS.SellerPriceIntelligenceService, { useClass: SellerPriceIntelligenceService });
+container.register(TOKENS.SellerListingFetcher, { useClass: SellerListingFetcher });
+container.register(TOKENS.SellerPriceDecisionRecorder, { useClass: SellerPriceDecisionRecorder });
+container.registerSingleton(TOKENS.SellerProviderConfigRepository, SupabaseSellerProviderConfigRepository);
+container.registerSingleton(TOKENS.CurrencyRatesRepository, SupabaseCurrencyRatesRepository);
 container.register(TOKENS.SellerPricingService, { useClass: SellerPricingService });
 container.register(TOKENS.SellerAutoPricingService, { useClass: SellerAutoPricingService });
 container.register(TOKENS.SellerStockSyncService, { useClass: SellerStockSyncService });

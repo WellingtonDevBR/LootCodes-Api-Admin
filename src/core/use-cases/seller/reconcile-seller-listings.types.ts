@@ -33,6 +33,13 @@ export const RECONCILE_PHASES = [
    * alerts surface within the same cron tick.
    */
   'paused-listing-alerts',
+  /**
+   * Idempotent reconciliation of `admin_alerts` of type `seller_listing_pricing_frozen`.
+   * Surfaces listings whose pricing is stuck (budget_exhausted for >6h or below
+   * cost basis for >1h). Runs after `pricing` so the freshest decision rows are
+   * considered.
+   */
+  'pricing-frozen-alerts',
 ] as const;
 
 export type ReconcilePhase = (typeof RECONCILE_PHASES)[number];
