@@ -9,8 +9,6 @@ import { describe, expect, it, vi } from 'vitest';
 import type { IDatabase } from '../src/core/ports/database.port.js';
 import { SupabaseAdminSellerRepository } from '../src/infra/seller/supabase-admin-seller.repository.js';
 
-type QueryCall = [string, unknown];
-
 function buildDb(calls: Map<string, unknown[]>): IDatabase {
   const query = vi.fn().mockImplementation((table: string) => {
     return Promise.resolve(calls.get(table) ?? []);

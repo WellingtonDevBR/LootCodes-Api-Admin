@@ -21,7 +21,7 @@ import type {
 import type { ISellerPricingService, PriceSuggestionResult, SuggestPriceRequest } from '../../../core/ports/seller-pricing.port.js';
 import type { ISellerProviderConfigRepository } from '../../../core/ports/seller-provider-config-repository.port.js';
 import type { SellerListingType, SellerPriceStrategy, SellerProviderConfig } from '../../../core/use-cases/seller/seller.types.js';
-import { parseSellerConfig, SELLER_CONFIG_DEFAULTS } from '../../../core/use-cases/seller/seller.types.js';
+import { SELLER_CONFIG_DEFAULTS } from '../../../core/use-cases/seller/seller.types.js';
 import { applySellerPriceStrategy } from '../../../core/use-cases/seller/apply-seller-price-strategy.js';
 import { resolveEffectiveCostBasisCents } from '../../../core/use-cases/seller/resolve-effective-cost-basis.js';
 import { stampCompetitorOwnership } from './seller-price-intelligence.service.js';
