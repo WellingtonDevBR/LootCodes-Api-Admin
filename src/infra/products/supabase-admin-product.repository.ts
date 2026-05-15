@@ -471,14 +471,16 @@ export class SupabaseAdminProductRepository implements IAdminProductRepository {
   }
 
   async listMetadata(): Promise<ListMetadataResult> {
+    // queryAll guarantees all rows are returned regardless of PostgREST max_rows config.
+    // query() relies on the server-side page limit which may silently truncate large tables.
     const [platforms, regions, genres] = await Promise.all([
-      this.db.query<{ id: string; name: string; code: string }>('product_platforms', {
+      this.db.queryAll<{ id: string; name: string; code: string }>('product_platforms', {
         order: { column: 'name', ascending: true },
       }),
-      this.db.query<{ id: string; name: string; code: string }>('product_regions', {
+      this.db.queryAll<{ id: string; name: string; code: string }>('product_regions', {
         order: { column: 'name', ascending: true },
       }),
-      this.db.query<{ id: string; name: string; slug: string }>('genres', {
+      this.db.queryAll<{ id: string; name: string; slug: string }>('genres', {
         order: { column: 'name', ascending: true },
       }),
     ]);

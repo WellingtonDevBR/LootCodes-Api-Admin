@@ -65,7 +65,7 @@ export class SupabaseAdminSettingsRepository implements IAdminSettingsRepository
   // ── Languages ─────────────────────────────────────────────────────
 
   async listLanguages(): Promise<Language[]> {
-    return this.db.query<Language>('languages', {
+    return this.db.queryAll<Language>('languages', {
       select: 'id, name, code, native_name, is_active',
       order: { column: 'name', ascending: true },
     });
@@ -88,7 +88,7 @@ export class SupabaseAdminSettingsRepository implements IAdminSettingsRepository
   // ── Countries ─────────────────────────────────────────────────────
 
   async listCountries(): Promise<Country[]> {
-    return this.db.query<Country>('countries', {
+    return this.db.queryAll<Country>('countries', {
       select: 'id, name, code, is_active',
       order: { column: 'name', ascending: true },
     });
@@ -110,7 +110,7 @@ export class SupabaseAdminSettingsRepository implements IAdminSettingsRepository
   // ── Regions ───────────────────────────────────────────────────────
 
   async listRegions(): Promise<Region[]> {
-    return this.db.query<Region>('product_regions', {
+    return this.db.queryAll<Region>('product_regions', {
       select: 'id, name, code, is_global, restrictions, created_at',
       order: { column: 'name', ascending: true },
     });
@@ -152,7 +152,7 @@ export class SupabaseAdminSettingsRepository implements IAdminSettingsRepository
   // ── Platform families ─────────────────────────────────────────────
 
   async listPlatformFamilies(): Promise<PlatformFamily[]> {
-    return this.db.query<PlatformFamily>('platform_families', {
+    return this.db.queryAll<PlatformFamily>('platform_families', {
       select: 'id, code, name, slug, icon_url, display_order',
       order: { column: 'display_order', ascending: true },
     });
@@ -179,7 +179,7 @@ export class SupabaseAdminSettingsRepository implements IAdminSettingsRepository
   // ── Platforms ─────────────────────────────────────────────────────
 
   async listPlatforms(): Promise<Platform[]> {
-    return this.db.query<Platform>('product_platforms', {
+    return this.db.queryAll<Platform>('product_platforms', {
       select: 'id, name, code, slug, icon_url, default_instructions, family_id, redemption_url_template, key_display_label',
       order: { column: 'name', ascending: true },
     });
@@ -209,7 +209,7 @@ export class SupabaseAdminSettingsRepository implements IAdminSettingsRepository
   // ── Genres ────────────────────────────────────────────────────────
 
   async listGenres(): Promise<Genre[]> {
-    return this.db.query<Genre>('genres', {
+    return this.db.queryAll<Genre>('genres', {
       select: 'id, name, slug, sort_order',
       order: { column: 'sort_order', ascending: true },
     });
