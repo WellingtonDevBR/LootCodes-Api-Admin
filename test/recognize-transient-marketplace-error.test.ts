@@ -57,6 +57,20 @@ describe('isTransientMarketplaceError', () => {
     expect(isTransientMarketplaceError(new Error('Digiseller apilogin error: retval=-1'))).toBe(true);
   });
 
+  // Production issue: Digiseller enforces a 2000 edits/day limit on their
+  // /api/product/edit/arbitrary endpoint (error code "seller-limit-0"). The
+  // reconcile cron must treat this as transient so it logs at info (not error)
+  // and the DB is updated optimistically to prevent the vicious retry cycle.
+  it('classifies Digiseller 2000/day edit quota errors as transient', () => {
+    const digiLimitMsg =
+      'digiseller API error: 400 Bad Request: {"retval":-1,"retdesc":"Validation error",' +
+      '"errors":[{"code":"seller-limit-0","message":[{"locale":"en-US","value":' +
+      '"You have reached the limit for editing product via API on 2026-05-15. Limit in day: 2000"}]}],"content":null}';
+    expect(isTransientMarketplaceError(new Error(digiLimitMsg))).toBe(true);
+    expect(isTransientMarketplaceError(new Error('seller-limit-0'))).toBe(true);
+    expect(isTransientMarketplaceError(new Error('You have reached the limit for editing product via API on 2026-05-14. Limit in day: 2000'))).toBe(true);
+  });
+
   it('does NOT classify generic application errors as transient', () => {
     expect(isTransientMarketplaceError(new Error('Listing not found'))).toBe(false);
     expect(isTransientMarketplaceError(new Error('Invalid product ID'))).toBe(false);

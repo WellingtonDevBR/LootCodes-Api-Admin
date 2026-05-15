@@ -474,6 +474,29 @@ export class ProcurementDeclaredStockReconcileService implements IProcurementDec
         await this.persistSuccess(update.listingId, applied);
       }
     } catch (err) {
+      // For transient errors (rate limits, circuit breakers), optimistically
+      // record the intended quantity in the DB so the "skip if unchanged" check
+      // fires on the next cron tick. Without this, the listing retries every
+      // 5 minutes because declared_stock in the DB never matches the actual
+      // stock, burning the daily edit quota in a vicious loop.
+      //
+      // For declare updates (qty > 0): persistSuccess records the desired qty
+      // and clears any stale error_message.
+      // For disable updates (qty === 0): we only update declared_stock + synced_at
+      // so the skip check fires; error_message is left to recordFailure → persistError.
+      //
+      // Self-correction: when rate limit resets and actual stock changes by ≥1
+      // key (sale or upload), the skip check fails and the listing resyncs correctly.
+      if (isTransientMarketplaceError(err)) {
+        if (update.qty > 0) {
+          void this.persistSuccess(update.listingId, update.qty).catch(() => {});
+        } else {
+          void this.db.update('seller_listings', { id: update.listingId }, {
+            declared_stock: 0,
+            last_synced_at: new Date().toISOString(),
+          }).catch(() => {});
+        }
+      }
       this.recordFailure(requestId, update.listingId, err, failures);
     }
   }

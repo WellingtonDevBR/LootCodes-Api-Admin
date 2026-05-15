@@ -236,10 +236,9 @@ export class DigisellerMarketplaceAdapter
   async declareStock(externalListingId: string, quantity: number): Promise<DeclareStockResult> {
     const productId = Number(externalListingId);
 
-    if (this.listingOpts.callbackUrl) {
-      await this.ensureFormDeliveryConfigured(productId);
-    }
-
+    // Form delivery is configured once during createListing — not re-checked on
+    // every stock sync. Calling ensureFormDeliveryConfigured here burned the
+    // Digiseller 2000 edits/day quota (every 5-min cron tick per listing).
     await this.updateSalesLimit(productId, quantity);
 
     const desiredStatus = quantity === 0 ? 'disabled' : 'enabled';

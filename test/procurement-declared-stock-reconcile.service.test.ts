@@ -707,4 +707,53 @@ describe('ProcurementDeclaredStockReconcileService — credit-gated flow', () =>
     expect(enebaDeclared.calls[0]).toEqual({ externalListingId: 'eneba-stale', quantity: 867 });
     expect(result.updated).toBe(1);
   });
+
+  it('optimistically updates declared_stock in DB when declareStock throws a transient rate-limit error', async () => {
+    // Mirrors the Digiseller 2000 edits/day production scenario.
+    // Without this optimistic update the listing retries every cron tick because
+    // the DB declared_stock never changes, burning the daily quota in a loop.
+    const rateLimitMsg =
+      'digiseller API error: 400 Bad Request: {"retval":-1,"retdesc":"Validation error",' +
+      '"errors":[{"code":"seller-limit-0","message":[{"locale":"en-US","value":' +
+      '"You have reached the limit for editing product via API. Limit in day: 2000"}]}]}';
+
+    // Adapter that throws the Digiseller rate-limit error.
+    class ThrowingDeclaredStockAdapter implements ISellerDeclaredStockAdapter {
+      async declareStock(): Promise<DeclareStockResult> {
+        throw new Error(rateLimitMsg);
+      }
+      async provisionKeys(): Promise<KeyProvisionResult> { return { success: true, provisioned: 0 }; }
+      async cancelReservation(): Promise<{ success: boolean }> { return { success: true }; }
+    }
+
+    db.providerAccounts.push(makeAccount({ id: 'acct-ds2', provider_code: 'digiseller2' }));
+    db.listings.push(
+      makeListing({
+        id: 'l-rl',
+        variant_id: 'v-rl',
+        provider_account_id: 'acct-ds2',
+        external_listing_id: '999999',
+        declared_stock: 0, // stale — DB never updated because API kept failing
+      }),
+    );
+    db.internalStockByVariant.set('v-rl', 865); // real available keys
+
+    // Register the throwing adapter directly on the registry's declared map.
+    registry.declaredByCode.set('digiseller2', new ThrowingDeclaredStockAdapter());
+
+    const result = await service.execute('req-rl', {});
+
+    // The failure is recorded (transient errors are still tracked).
+    expect(result.failures).toHaveLength(1);
+
+    // Despite the API error, the DB should have been updated optimistically
+    // so the skip-if-unchanged check fires on the next cron tick.
+    const persistSuccessCall = db.updates.find(
+      (u) => u.table === 'seller_listings'
+        && u.filter['id'] === 'l-rl'
+        && typeof u.data['declared_stock'] === 'number',
+    );
+    expect(persistSuccessCall).toBeDefined();
+    expect(persistSuccessCall?.data['declared_stock']).toBe(865);
+  });
 });
