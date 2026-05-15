@@ -721,10 +721,12 @@ export class ProcurementDeclaredStockReconcileService implements IProcurementDec
     variantIds: readonly string[] | undefined,
     batchLimit: number,
   ): Promise<ListingRow[]> {
+    // Include both own-inventory listings (auto_sync_stock_follows_provider=false,
+    // synced via internalQty path below) and procurement-backed listings
+    // (auto_sync_stock_follows_provider=true, synced via buyer-offer selector).
     const eq: Array<[string, unknown]> = [
       ['auto_sync_stock', true],
       ['listing_type', 'declared_stock'],
-      ['auto_sync_stock_follows_provider', true],
     ];
 
     const baseOpts: QueryOptions = { eq };

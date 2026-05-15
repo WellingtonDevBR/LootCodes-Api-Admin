@@ -35,6 +35,7 @@ import { parseSellerConfig, type SellerProviderConfig } from '../../../core/use-
 import { mergeSellerListingPricingOverrides } from '../../../core/use-cases/seller/listing-pricing-overrides-merge.js';
 import { loadBuyerCapableOffersByVariant } from '../load-procurement-offer-supply.js';
 import { dispatchListingDisable } from '../dispatch-listing-disable.js';
+import { isTransientMarketplaceError } from '../recognize-transient-marketplace-error.js';
 import { createLogger } from '../../../shared/logger.js';
 
 const logger = createLogger('seller-stock-sync');
@@ -178,12 +179,7 @@ export class SellerStockSyncService implements ISellerStockSyncService {
       } catch (err) {
         result.errors++;
         const errMsg = err instanceof Error ? err.message : String(err);
-        const errName = err instanceof Error ? err.name : '';
-        const isTransient =
-          errName === 'CircuitOpenError' ||
-          errName === 'RateLimitExceededError' ||
-          /^Circuit breaker open for /.test(errMsg) ||
-          /^Rate limit exceeded for /.test(errMsg);
+        const isTransient = isTransientMarketplaceError(err);
         const logFn = isTransient ? logger.info.bind(logger) : logger.error.bind(logger);
         logFn('Failed to sync stock for listing', {
           requestId, listingId: listing.id, error: errMsg, transient: isTransient,
@@ -256,10 +252,7 @@ export class SellerStockSyncService implements ISellerStockSyncService {
           }
         } catch (err) {
           const errMsg = err instanceof Error ? err.message : String(err);
-          const errName = err instanceof Error ? err.name : '';
-          const isTransient =
-            errName === 'CircuitOpenError' || errName === 'RateLimitExceededError' ||
-            /^Circuit breaker open for /.test(errMsg) || /^Rate limit exceeded for /.test(errMsg);
+          const isTransient = isTransientMarketplaceError(err);
           const logFn = isTransient ? logger.info.bind(logger) : logger.warn.bind(logger);
           logFn('Stock-sync: batch declared stock threw, retrying individually', {
             requestId, providerCode, count: chunk.length, error: errMsg, transient: isTransient,
@@ -308,10 +301,7 @@ export class SellerStockSyncService implements ISellerStockSyncService {
     } catch (err) {
       result.errors++;
       const errMsg = err instanceof Error ? err.message : String(err);
-      const errName = err instanceof Error ? err.name : '';
-      const isTransient =
-        errName === 'CircuitOpenError' || errName === 'RateLimitExceededError' ||
-        /^Circuit breaker open for /.test(errMsg) || /^Rate limit exceeded for /.test(errMsg);
+      const isTransient = isTransientMarketplaceError(err);
       const logFn = isTransient ? logger.info.bind(logger) : logger.error.bind(logger);
       logFn('Failed to sync stock for listing', {
         requestId, listingId: update.listingId, error: errMsg, transient: isTransient,

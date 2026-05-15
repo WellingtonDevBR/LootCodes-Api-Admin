@@ -14,6 +14,12 @@
  * (Digiseller setupFormDelivery failed → "Circuit breaker open for
  * digiseller") were both produced by inline transient regexes that
  * missed these patterns. Centralizing the predicate stops the drift.
+ *
+ * `LOOTCODES-API-Q`: `seller-stock-sync` had three inline transient
+ * checks that only covered CircuitOpenError / RateLimitExceededError,
+ * so Digiseller's daily 2000-edit quota (seller-limit-0) was logged as
+ * logger.error instead of logger.info, creating 307+ Sentry events.
+ * Fixed by replacing all three with isTransientMarketplaceError().
  */
 
 const TRANSIENT_NAMES: ReadonlySet<string> = new Set([

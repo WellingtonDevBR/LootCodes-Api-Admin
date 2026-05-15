@@ -214,9 +214,17 @@ export async function internalCronRoutes(app: FastifyInstance): Promise<void> {
    *
    * Credit-aware declared-stock reconcile: snapshots buyer wallets, picks the
    * cheapest funded offer per listing, and pushes stock quantities to all
-   * marketplaces. Schedule immediately after sync-buyer-catalog so quotes are
-   * fresh. Accepts the same optional body as reconcile-seller-listings.
+   * marketplaces (Eneba, Gamivo, Kinguin, G2A). Handles both own-inventory
+   * listings (counts local available keys) and procurement-backed listings
+   * (buyer-offer selector with wallet credit check).
+   *
+   * Schedule immediately after sync-buyer-catalog so quotes are fresh.
+   * Accepts the same optional body as reconcile-seller-listings.
    * Recommended cadence: every 5 minutes.
+   *
+   * Returns the full reconcile result synchronously so callers (Lambda, pg_cron)
+   * can inspect scanned/updated/skipped counts and per-listing failures directly
+   * from the HTTP response body without needing to tail logs.
    */
   app.post(
     '/seller-declared-stock',
@@ -235,30 +243,46 @@ export async function internalCronRoutes(app: FastifyInstance): Promise<void> {
       }
 
       const { variant_ids, batch_limit, dry_run } = parsed.data;
-      logger.info('Seller declared-stock cron accepted — running in background', {
+      logger.info('Seller declared-stock cron starting', {
         requestId,
         variantFilterCount: variant_ids?.length ?? 0,
         batch_limit,
         dry_run: dry_run === true,
       });
-      reply.code(202).send({ accepted: true, request_id: requestId });
 
       const orchestrator = container.resolve<ReconcileSellerListingsUseCase>(
         UC_TOKENS.ReconcileSellerListings,
       );
-      orchestrator.execute(requestId, {
-        phases: ['declared-stock'],
-        variant_ids,
-        batch_limit,
-        dry_run,
-      }).catch((err: unknown) => {
-        logger.error('Seller declared-stock background run failed', err as Error, { requestId });
+
+      try {
+        const result = await orchestrator.execute(requestId, {
+          phases: ['declared-stock'],
+          variant_ids,
+          batch_limit,
+          dry_run,
+        });
+
+        const phase = result.phases['declared-stock'];
+        logger.info('Seller declared-stock cron complete', {
+          requestId,
+          durationMs: result.total_duration_ms,
+          scanned: (phase.result as Record<string, unknown> | undefined)?.scanned,
+          updated: (phase.result as Record<string, unknown> | undefined)?.updated,
+          skipped: (phase.result as Record<string, unknown> | undefined)?.skipped,
+          failures: ((phase.result as Record<string, unknown> | undefined)?.failures as unknown[])?.length ?? 0,
+          phaseError: phase.error,
+        });
+
+        return reply.code(200).send(result);
+      } catch (err) {
+        logger.error('Seller declared-stock cron failed', err as Error, { requestId });
         Sentry.withScope((scope) => {
           scope.setTag('cron.job', 'seller-declared-stock');
           scope.setContext('cron', { requestId, dry_run, variant_ids });
           Sentry.captureException(err);
         });
-      });
+        return reply.code(500).send({ error: 'cron_failed', request_id: requestId, message: err instanceof Error ? err.message : String(err) });
+      }
     },
   );
 

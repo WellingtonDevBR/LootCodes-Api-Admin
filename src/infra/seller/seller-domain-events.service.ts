@@ -102,6 +102,11 @@ export class SellerDomainEventsService implements ISellerDomainEventPort {
     const url = `${baseUrl}/functions/v1/event-dispatcher`;
 
     try {
+      // 8-second ceiling: Edge Function cold starts are ~2–5 s. Waiting 30 s
+      // would hang this background promise for half a minute on every cold start,
+      // generate high-severity Sentry events, and burn memory — all for a
+      // fire-and-forget call whose event is already persisted to domain_events.
+      // The pg_cron fallback processes any events the dispatcher missed.
       const res = await fetch(url, {
         method: 'POST',
         headers: {
@@ -110,17 +115,20 @@ export class SellerDomainEventsService implements ISellerDomainEventPort {
           'X-Internal-Secret': internalSecret,
         },
         body: JSON.stringify(event),
-        signal: AbortSignal.timeout(30_000),
+        signal: AbortSignal.timeout(8_000),
       });
 
       if (!res.ok) {
         const text = await res.text();
-        logger.error('event-dispatcher invocation failed', new Error(`${res.status}: ${text}`), {
+        // Non-fatal: event is already in domain_events. warn → Sentry warning,
+        // not an error alert.
+        logger.warn('event-dispatcher invocation failed', new Error(`${res.status}: ${text}`), {
           eventType: event.event_type as string,
         });
       }
     } catch (err) {
-      logger.error('event-dispatcher invocation network error', err as Error, {
+      // Timeout or network blip — not fatal since the event is persisted.
+      logger.warn('event-dispatcher invocation network error', err as Error, {
         eventType: event.event_type as string,
       });
     }
