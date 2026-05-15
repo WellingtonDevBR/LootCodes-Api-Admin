@@ -38,6 +38,7 @@ const PRODUCT_ID = 'product-1';
 interface ReservationOpts {
   status?: 'pending' | 'expired' | 'provisioned' | 'cancelled' | 'failed';
   expiresAt?: string | null;
+  providerMetadata?: Record<string, unknown> | null;
 }
 
 function makeReservation(overrides: ReservationOpts = {}) {
@@ -50,14 +51,25 @@ function makeReservation(overrides: ReservationOpts = {}) {
       ? new Date(Date.now() + 60_000).toISOString()
       : overrides.expiresAt,
     external_reservation_id: RESERVATION_ID,
+    provider_metadata: overrides.providerMetadata === undefined
+      ? {
+        provider: 'gamivo',
+        currency: 'EUR',
+        unit_price: 13.79,
+        unit_price_cents: 1379,
+        gamivo_product_id: 140724,
+      }
+      : overrides.providerMetadata,
   };
 }
 
-function makeListing() {
+function makeListing(overrides: { priceCents?: number | null; currency?: string | null } = {}) {
   return {
     external_listing_id: EXTERNAL_LISTING_ID,
     variant_id: VARIANT_ID,
     provider_account_id: PROVIDER_ACCOUNT_ID,
+    price_cents: overrides.priceCents === undefined ? 1379 : overrides.priceCents,
+    currency: overrides.currency === undefined ? 'EUR' : overrides.currency,
   };
 }
 
@@ -126,6 +138,61 @@ describe('HandleGamivoOrderUseCase', () => {
       reservationId: RESERVATION_ID,
       providerCode: 'gamivo',
       externalOrderId: GAMIVO_ORDER_ID,
+      priceCents: 1379,
+      feeCents: 0,
+      currency: 'EUR',
+      marketplaceFinancialsSnapshot: expect.objectContaining({
+        provider: 'gamivo',
+        gross_cents_per_unit: 1379,
+        seller_profit_cents_per_unit: 1379,
+        provider_fee_cents_per_unit: 0,
+        currency: 'EUR',
+        raw: expect.objectContaining({
+          unit_price: 13.79,
+          unit_price_cents: 1379,
+          gamivo_product_id: 140724,
+        }),
+      }),
+    }));
+  });
+
+  it('falls back to seller_listings.price_cents when reservation metadata is missing the unit price', async () => {
+    const { useCase, keyOps } = makeUseCase({
+      reservation: makeReservation({ providerMetadata: { provider: 'gamivo' } }),
+      listing: makeListing({ priceCents: 999, currency: 'EUR' }),
+    });
+    keyOps.provisionFromPendingKeys.mockResolvedValue({
+      keyIds: ['k1'],
+      decryptedKeys: [{ keyId: 'k1', plaintext: 'AAAA-BBBB' }],
+    });
+
+    await useCase.execute(SPEC_DTO);
+
+    expect(keyOps.completeProvisionOrchestration).toHaveBeenCalledWith(expect.objectContaining({
+      priceCents: 999,
+      feeCents: 0,
+      currency: 'EUR',
+      marketplaceFinancialsSnapshot: undefined,
+    }));
+  });
+
+  it('records priceCents=0 (and warns) when neither metadata nor listing price are available', async () => {
+    const { useCase, keyOps } = makeUseCase({
+      reservation: makeReservation({ providerMetadata: null }),
+      listing: makeListing({ priceCents: null, currency: null }),
+    });
+    keyOps.provisionFromPendingKeys.mockResolvedValue({
+      keyIds: ['k1'],
+      decryptedKeys: [{ keyId: 'k1', plaintext: 'XXXX-YYYY' }],
+    });
+
+    const result = await useCase.execute(SPEC_DTO);
+
+    expect(result.ok).toBe(true);
+    expect(keyOps.completeProvisionOrchestration).toHaveBeenCalledWith(expect.objectContaining({
+      priceCents: 0,
+      feeCents: 0,
+      currency: 'EUR',
     }));
   });
 

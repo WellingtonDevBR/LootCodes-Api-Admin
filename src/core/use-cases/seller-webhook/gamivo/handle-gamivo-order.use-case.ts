@@ -15,6 +15,10 @@ import type { ISellerKeyOperationsPort } from '../../../ports/seller-key-operati
 import type { IListingHealthPort } from '../../../ports/seller-listing-health.port.js';
 import type { GamivoOrderDto, GamivoOrderResult, GamivoKeyResponse } from '../seller-webhook.types.js';
 import { countAvailableKeys } from '../../../shared/stock-queries.js';
+import {
+  resolveGamivoSalePricing,
+  buildGamivoFinancialsSnapshot,
+} from './gamivo-parser.js';
 import { createLogger } from '../../../../shared/logger.js';
 
 const logger = createLogger('webhook:gamivo:order');
@@ -37,8 +41,9 @@ export class HandleGamivoOrderUseCase {
       quantity: number;
       expires_at: string | null;
       external_reservation_id: string;
+      provider_metadata: Record<string, unknown> | null;
     }>('seller_stock_reservations', {
-      select: 'id, seller_listing_id, status, quantity, expires_at, external_reservation_id',
+      select: 'id, seller_listing_id, status, quantity, expires_at, external_reservation_id, provider_metadata',
       eq: [['id', reservationId]],
       single: true,
     });
@@ -80,8 +85,10 @@ export class HandleGamivoOrderUseCase {
       external_listing_id: string | null;
       variant_id: string;
       provider_account_id: string;
+      price_cents: number | null;
+      currency: string | null;
     }>('seller_listings', {
-      select: 'external_listing_id, variant_id, provider_account_id',
+      select: 'external_listing_id, variant_id, provider_account_id, price_cents, currency',
       eq: [['id', reservation.seller_listing_id]],
       single: true,
     });
@@ -119,6 +126,36 @@ export class HandleGamivoOrderUseCase {
       })
       : null;
 
+    // Per public-api-import.pdf §"Order reservation" the only place Gamivo gives
+    // us the unit price is the POST /reservation body (`unit_price`). We stored
+    // it on `seller_stock_reservations.provider_metadata` at reservation time
+    // (handle-gamivo-reservation.use-case.ts) — read it back here so the order
+    // ledger shows the actual net we receive instead of €0. Fall back to the
+    // listing's `price_cents` snapshot for legacy reservations created before
+    // metadata persistence and to `0` as a last-resort defensive default.
+    const salePricing = resolveGamivoSalePricing(reservation.provider_metadata);
+    const fallbackUnitPriceCents = listing?.price_cents != null && listing.price_cents > 0
+      ? listing.price_cents
+      : 0;
+    const unitPriceCents = salePricing?.grossCents ?? fallbackUnitPriceCents;
+    const saleCurrency = salePricing?.currency
+      ?? listing?.currency
+      ?? 'EUR';
+    const financialsSnapshot = salePricing != null
+      ? buildGamivoFinancialsSnapshot({
+        unitPriceCents,
+        quantity: provisionResult.keyIds.length,
+        currency: saleCurrency,
+        providerMetadata: reservation.provider_metadata ?? {},
+      })
+      : undefined;
+
+    if (unitPriceCents === 0) {
+      logger.warn('Gamivo order has no unit price (missing reservation metadata + listing price snapshot)', {
+        reservationId, gamivoOrderId,
+      });
+    }
+
     await this.keyOps.completeProvisionOrchestration({
       reservationId: reservation.id,
       listingId: reservation.seller_listing_id,
@@ -128,8 +165,10 @@ export class HandleGamivoOrderUseCase {
       externalOrderId: gamivoOrderId,
       keyIds: provisionResult.keyIds,
       keysProvisionedCount: provisionResult.decryptedKeys.length,
-      priceCents: 0,
-      currency: 'EUR',
+      priceCents: unitPriceCents,
+      feeCents: 0,
+      currency: saleCurrency,
+      marketplaceFinancialsSnapshot: financialsSnapshot,
     });
 
     const availableStock = listing?.variant_id && listing.provider_account_id

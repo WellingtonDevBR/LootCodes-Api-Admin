@@ -315,11 +315,36 @@ export class SellerAutoPricingService implements ISellerAutoPricingService {
       });
     }
 
-    if (batchUpdates.length > 0 && hasBatchPrice) {
-      await this.flushBatchUpdates({
-        providerCode, providerAccountId, providerListings, batchUpdates,
-        baseConfig, preventPaid, result, requestId,
-      });
+    if (batchUpdates.length > 0) {
+      if (hasBatchPrice) {
+        await this.flushBatchUpdates({
+          providerCode, providerAccountId, providerListings, batchUpdates,
+          baseConfig, preventPaid, result, requestId,
+        });
+      } else {
+        // No batch_price adapter on this provider — the decisions would be
+        // silently dropped. Record each as a `skipped/no_batch_price_adapter`
+        // row so the gap is observable in `seller_pricing_decisions` and the
+        // admin alert path can pick it up. This was the source of the Gamivo
+        // "auto-pricing on but nothing ever happens" symptom.
+        logger.warn('Provider has no batch_price adapter — recording skipped decisions instead', {
+          requestId, providerCode, queuedUpdates: batchUpdates.length,
+        });
+        for (const update of batchUpdates) {
+          await this.decisionRecorder.record({
+            ...update.pendingDecision,
+            action: 'skipped',
+            reason_code: 'no_batch_price_adapter',
+            reason_detail: `Provider ${providerCode} has no batch_price adapter capability`,
+            price_after_cents: null,
+            decision_context: {
+              ...(update.pendingDecision.decision_context ?? {}),
+              block_stage: 'no_batch_price_adapter',
+            },
+          });
+          result.decisionsRecorded++;
+        }
+      }
     }
   }
 

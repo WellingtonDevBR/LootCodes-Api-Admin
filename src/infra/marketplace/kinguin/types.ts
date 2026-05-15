@@ -106,7 +106,24 @@ export interface KinguinSubscription {
   blockedEndpoints: string[];
 }
 
-// ─── Buyer Product Search ──────────────────────────────────────────────
+// ─── Buyer Product Search & Detail (ESA v1/v2) ─────────────────────────
+// Buyer prices are floats (EUR).
+
+/**
+ * Single offer row inside `KinguinBuyerProduct.offers[]` from `GET /v2/products/{id}`.
+ * Each row is one merchant's listing for that product — `merchantName === 'Kinguin'`
+ * and the row whose `offerId` matches our own Sales Manager offer id is our offer.
+ */
+export interface KinguinBuyerOffer {
+  name: string;
+  offerId: string;
+  price: number;
+  qty: number;
+  textQty?: number;
+  merchantName: string;
+  isPreorder: boolean;
+  releaseDate?: string;
+}
 
 export interface KinguinBuyerProduct {
   kinguinId: number;
@@ -118,6 +135,9 @@ export interface KinguinBuyerProduct {
   isPreorder: boolean;
   regionId: number | null;
   regionalLimitations?: string;
+  /** Aggregate offers list returned only by `GET /v2/products/{id}`. */
+  offers?: KinguinBuyerOffer[];
+  offersCount?: number;
 }
 
 export interface KinguinBuyerSearchResponse {

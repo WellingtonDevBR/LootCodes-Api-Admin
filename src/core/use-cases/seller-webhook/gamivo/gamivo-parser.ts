@@ -137,6 +137,84 @@ export function parseOfferDeactivation(body: unknown): {
   return { offerId, productName, reason };
 }
 
+// ─── Financials resolver ────────────────────────────────────────────
+
+/**
+ * Resolves the unit sale pricing for a Gamivo order from the reservation
+ * `provider_metadata` JSONB column.
+ *
+ * Gamivo's Import API spec (public-api-import.pdf §"Order reservation")
+ * delivers `unit_price` ONLY on `POST /reservation`. Per the offer pricing
+ * model (`seller_price`), that float is the NET payout we receive — i.e.
+ * `retail_price - commission`. The follow-up `POST /order` webhook carries
+ * no price, so the order handler must read the unit price back from the
+ * reservation we persisted earlier.
+ *
+ * Returns `null` when the metadata is missing or malformed so callers can
+ * fall back to the listing's price snapshot.
+ */
+export function resolveGamivoSalePricing(
+  providerMetadata: unknown,
+): { grossCents: number; netCents: number; currency: string } | null {
+  if (!providerMetadata || typeof providerMetadata !== 'object') return null;
+  const meta = providerMetadata as Record<string, unknown>;
+
+  const unitPriceCentsRaw = Number(meta.unit_price_cents);
+  if (Number.isInteger(unitPriceCentsRaw) && unitPriceCentsRaw > 0) {
+    const currency = typeof meta.currency === 'string' && meta.currency.length > 0
+      ? meta.currency
+      : 'EUR';
+    return { grossCents: unitPriceCentsRaw, netCents: unitPriceCentsRaw, currency };
+  }
+
+  const unitPriceRaw = Number(meta.unit_price);
+  if (Number.isFinite(unitPriceRaw) && unitPriceRaw > 0) {
+    const cents = Math.round(unitPriceRaw * 100);
+    const currency = typeof meta.currency === 'string' && meta.currency.length > 0
+      ? meta.currency
+      : 'EUR';
+    return { grossCents: cents, netCents: cents, currency };
+  }
+
+  return null;
+}
+
+/**
+ * Builds the `marketplaceFinancialsSnapshot` payload persisted in
+ * `orders.marketplace_pricing`. Mirrors the Eneba snapshot shape (keys
+ * `provider`, `currency`, `gross_cents_per_unit`, `seller_profit_cents_per_unit`,
+ * etc.) so cross-marketplace analytics queries stay uniform.
+ *
+ * Gamivo gross == net because the Import API never exposes the customer-side
+ * price. The `raw` block preserves the exact reservation metadata we saw
+ * so downstream audits can recover the original wire values.
+ */
+export function buildGamivoFinancialsSnapshot(args: {
+  unitPriceCents: number;
+  quantity: number;
+  currency: string;
+  providerMetadata: Record<string, unknown>;
+}): Record<string, unknown> {
+  const { unitPriceCents, quantity, currency, providerMetadata } = args;
+  return {
+    provider: 'gamivo',
+    currency,
+    key_count: quantity,
+    gross_cents_per_unit: unitPriceCents,
+    seller_profit_cents_per_unit: unitPriceCents,
+    provider_fee_cents_per_unit: 0,
+    total_gross_cents: unitPriceCents * quantity,
+    total_seller_profit_cents: unitPriceCents * quantity,
+    total_provider_fee_aggregate_cents: 0,
+    raw: {
+      unit_price: providerMetadata.unit_price ?? null,
+      unit_price_cents: providerMetadata.unit_price_cents ?? null,
+      currency: providerMetadata.currency ?? null,
+      gamivo_product_id: providerMetadata.gamivo_product_id ?? null,
+    },
+  };
+}
+
 // ─── Response builders ──────────────────────────────────────────────
 
 export function buildErrorResponse(code: string, message: string): { code: string; message: string } {

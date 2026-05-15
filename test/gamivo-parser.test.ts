@@ -17,6 +17,8 @@ import {
   parseRefundRequest,
   parseOfferDeactivation,
   buildErrorResponse,
+  resolveGamivoSalePricing,
+  buildGamivoFinancialsSnapshot,
   GamivoParseError,
 } from '../src/core/use-cases/seller-webhook/gamivo/gamivo-parser.js';
 
@@ -299,5 +301,79 @@ describe('buildErrorResponse', () => {
   it('preserves message verbatim (no escaping or rewriting)', () => {
     const message = 'Reservation has expired (id: abc-123)';
     expect(buildErrorResponse('reservation_expired', message).message).toBe(message);
+  });
+});
+
+// ─── resolveGamivoSalePricing ────────────────────────────────────────
+
+describe('resolveGamivoSalePricing', () => {
+  it('reads the integer unit_price_cents we persist at reservation time', () => {
+    expect(resolveGamivoSalePricing({
+      provider: 'gamivo',
+      currency: 'EUR',
+      unit_price: 13.79,
+      unit_price_cents: 1379,
+    })).toEqual({ grossCents: 1379, netCents: 1379, currency: 'EUR' });
+  });
+
+  it('falls back to unit_price (float) when only that key is present', () => {
+    expect(resolveGamivoSalePricing({
+      provider: 'gamivo',
+      currency: 'EUR',
+      unit_price: 7.49,
+    })).toEqual({ grossCents: 749, netCents: 749, currency: 'EUR' });
+  });
+
+  it('defaults currency to EUR when missing or empty', () => {
+    expect(resolveGamivoSalePricing({ unit_price_cents: 1000 })).toEqual({
+      grossCents: 1000, netCents: 1000, currency: 'EUR',
+    });
+    expect(resolveGamivoSalePricing({ unit_price_cents: 1000, currency: '' })).toEqual({
+      grossCents: 1000, netCents: 1000, currency: 'EUR',
+    });
+  });
+
+  it('returns null on missing/invalid/zero pricing', () => {
+    expect(resolveGamivoSalePricing(null)).toBeNull();
+    expect(resolveGamivoSalePricing(undefined)).toBeNull();
+    expect(resolveGamivoSalePricing({})).toBeNull();
+    expect(resolveGamivoSalePricing({ unit_price_cents: 0 })).toBeNull();
+    expect(resolveGamivoSalePricing({ unit_price_cents: -100 })).toBeNull();
+    expect(resolveGamivoSalePricing({ unit_price: 0 })).toBeNull();
+  });
+});
+
+// ─── buildGamivoFinancialsSnapshot ───────────────────────────────────
+
+describe('buildGamivoFinancialsSnapshot', () => {
+  it('emits a Gamivo-tagged snapshot with gross == net (Import API has no customer-side gross)', () => {
+    expect(buildGamivoFinancialsSnapshot({
+      unitPriceCents: 1379,
+      quantity: 2,
+      currency: 'EUR',
+      providerMetadata: {
+        provider: 'gamivo',
+        currency: 'EUR',
+        unit_price: 13.79,
+        unit_price_cents: 1379,
+        gamivo_product_id: 140724,
+      },
+    })).toEqual({
+      provider: 'gamivo',
+      currency: 'EUR',
+      key_count: 2,
+      gross_cents_per_unit: 1379,
+      seller_profit_cents_per_unit: 1379,
+      provider_fee_cents_per_unit: 0,
+      total_gross_cents: 2758,
+      total_seller_profit_cents: 2758,
+      total_provider_fee_aggregate_cents: 0,
+      raw: {
+        unit_price: 13.79,
+        unit_price_cents: 1379,
+        currency: 'EUR',
+        gamivo_product_id: 140724,
+      },
+    });
   });
 });

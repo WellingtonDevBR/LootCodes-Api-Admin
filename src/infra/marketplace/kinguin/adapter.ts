@@ -6,11 +6,20 @@
  *   - ISellerDeclaredStockAdapter (declared stock + webhook-driven provisioning)
  *   - ISellerStockSyncAdapter
  *   - ISellerPricingAdapter (pricingModel = 'gross')
+ *   - ISellerCompetitionAdapter (`/v2/products/{id}` buyer-ESA path; falls back to
+ *     seller `/api/v1/offers` lookup when no buyer ESA key is configured)
  *   - ISellerBatchPriceAdapter (sequential PATCH — no native batch endpoint)
  *   - ISellerCallbackSetupAdapter (Envoy webhook subscriptions)
  *
  * Auth: OAuth2 client_credentials for seller + webhook APIs.
- * Prices: EUR cents (integer) for seller API.
+ *       X-Api-Key (buyer ESA) for the buyer-side product/offer queries used by
+ *       `searchProducts` and `getCompetitorPrices`.
+ * Prices: EUR cents (integer) for seller API; EUR floats for buyer ESA.
+ *
+ * Capability parity with the storefront Edge Function
+ * `supabase/functions/provider-procurement/providers/kinguin/adapter.ts`:
+ * the dual buyer/seller competitor lookup is a 1:1 port so the cron and the
+ * storefront see identical competitor snapshots per product.
  */
 import type { MarketplaceHttpClient } from '../_shared/marketplace-http.js';
 import type {
@@ -18,6 +27,7 @@ import type {
   ISellerDeclaredStockAdapter,
   ISellerStockSyncAdapter,
   ISellerPricingAdapter,
+  ISellerCompetitionAdapter,
   ISellerBatchPriceAdapter,
   ISellerCallbackSetupAdapter,
   IProductSearchAdapter,
@@ -33,6 +43,7 @@ import type {
   SyncStockLevelResult,
   PricingContext,
   SellerPayoutResult,
+  CompetitorPrice,
   BatchPriceUpdate,
   BatchPriceUpdateResult,
   RegisterCallbacksResult,
@@ -41,12 +52,14 @@ import type {
 } from '../../../core/ports/marketplace-adapter.port.js';
 import type {
   KinguinOffer,
+  KinguinOfferPage,
   KinguinCreateOfferRequest,
   KinguinUpdateOfferRequest,
   KinguinPriceAndCommission,
   KinguinSubscription,
   KinguinSubscriptionRequest,
   KinguinStockItem,
+  KinguinBuyerProduct,
   KinguinBuyerSearchResponse,
 } from './types.js';
 import { capKinguinDeclaredStock } from '../../../core/shared/kinguin.constants.js';
@@ -61,6 +74,7 @@ export class KinguinMarketplaceAdapter
     ISellerDeclaredStockAdapter,
     ISellerStockSyncAdapter,
     ISellerPricingAdapter,
+    ISellerCompetitionAdapter,
     ISellerBatchPriceAdapter,
     ISellerCallbackSetupAdapter,
     IProductSearchAdapter
@@ -252,6 +266,137 @@ export class KinguinMarketplaceAdapter
       feeCents,
       netPayoutCents: result.priceIWTR,
     };
+  }
+
+  // ─── ISellerCompetitionAdapter ───────────────────────────────────────
+
+  /**
+   * Returns competitor offers for an external product id.
+   *
+   * Two paths:
+   *   1. Buyer ESA (`GET /v2/products/{id}`) — preferred, returns ALL merchants'
+   *      live offers including ours. Each row's `merchantName` is the actual
+   *      Kinguin seller display name, and we tag our row with `isOwnOffer: true`
+   *      by cross-referencing the seller-side Sales Manager offer id.
+   *   2. Seller API (`GET /api/v1/offers?filter.productId=...`) — fallback when
+   *      no buyer ESA key is configured. Kinguin does NOT expose other sellers'
+   *      offers via the seller API, so every row is our own. Auto-pricing will
+   *      correctly exclude `isOwnOffer: true` rows from "lowest competitor"
+   *      computations and fall back to cost-basis / fixed pricing.
+   */
+  async getCompetitorPrices(externalProductId: string): Promise<CompetitorPrice[]> {
+    if (this.buyerHttpClient) {
+      try {
+        return await this.getCompetitorPricesViaBuyerApi(externalProductId);
+      } catch (err) {
+        logger.warn('Buyer API competitor lookup failed — falling back to seller API', err as Error, {
+          externalProductId,
+        });
+      }
+    }
+
+    return this.getCompetitorPricesViaSellerApi(externalProductId);
+  }
+
+  private async getCompetitorPricesViaBuyerApi(
+    externalProductId: string,
+  ): Promise<CompetitorPrice[]> {
+    if (!this.buyerHttpClient) {
+      return [];
+    }
+
+    const product = await this.buyerHttpClient.get<KinguinBuyerProduct>(
+      `/v2/products/${encodeURIComponent(externalProductId)}`,
+    );
+
+    const buyerOffers = product.offers ?? [];
+
+    // Identify our own offer id (best-effort) so callers can exclude self
+    // from "lowest competitor" computations.
+    let ownOfferId: string | null = null;
+    try {
+      const ownOffers = await this.httpClient.get<KinguinOfferPage>(
+        `/api/v1/offers?filter.productId=${encodeURIComponent(externalProductId)}&size=1`,
+      );
+      if (ownOffers.content?.length) {
+        ownOfferId = ownOffers.content[0].id;
+      }
+    } catch {
+      // Own-offer lookup is best-effort; auto-pricing tolerates `isOwnOffer: null`.
+    }
+
+    // No per-merchant breakdown — fall back to the aggregate `product.price`
+    // so callers at least learn the lowest competitor price for that product.
+    if (buyerOffers.length === 0) {
+      if (product.price > 0) {
+        return [{
+          merchantName: 'unknown',
+          priceCents: floatToCents(product.price),
+          currency: 'EUR',
+          inStock: (product.qty ?? 0) > 0,
+          isOwnOffer: null,
+        }];
+      }
+      return [];
+    }
+
+    const prices = buyerOffers
+      .filter((o) => o.qty > 0)
+      .map((o) => ({
+        merchantName: o.merchantName || 'unknown',
+        priceCents: floatToCents(o.price),
+        currency: 'EUR',
+        inStock: o.qty > 0,
+        isOwnOffer: ownOfferId ? o.offerId === ownOfferId : null,
+        externalListingId: o.offerId || undefined,
+      } satisfies CompetitorPrice));
+
+    return prices;
+  }
+
+  /**
+   * Fallback when no buyer ESA key is available. The Sales Manager
+   * `/api/v1/offers?filter.productId=...` endpoint returns ONLY our own offers
+   * for that product — Kinguin does not expose other sellers' offers via
+   * the seller API. Treat every row as `isOwnOffer: true` so the auto-pricing
+   * intelligence layer excludes them from competitor calculations.
+   */
+  private async getCompetitorPricesViaSellerApi(
+    externalProductId: string,
+  ): Promise<CompetitorPrice[]> {
+    try {
+      const page = await this.httpClient.get<KinguinOfferPage>(
+        `/api/v1/offers?filter.productId=${encodeURIComponent(externalProductId)}&size=20`,
+      );
+
+      const offers = page.content ?? [];
+      const prices = offers
+        .filter((o) => o.status === 'ACTIVE' && !o.block)
+        .map((o) => ({
+          merchantName: 'self',
+          priceCents: o.price.amount,
+          currency: 'EUR',
+          inStock: o.buyableStock > 0 || o.declaredStock > 0,
+          isOwnOffer: true,
+          externalListingId: o.id,
+        } satisfies CompetitorPrice));
+
+      if (prices.length === 0) {
+        logger.warn('Kinguin seller-API competitor lookup returned no own offers — buyer API key recommended for competitor visibility', {
+          externalProductId,
+        });
+      } else {
+        logger.info('Kinguin competitor lookup via seller API (own offers only — buyer API key required for full competitor visibility)', {
+          externalProductId,
+          ownOfferCount: prices.length,
+        });
+      }
+
+      return prices;
+    } catch (err) {
+      logger.error('Kinguin getCompetitorPrices (seller API) failed', err as Error, { externalProductId });
+      return [];
+    }
   }
 
   // ─── IProductSearchAdapter ────────────────────────────────────────────
