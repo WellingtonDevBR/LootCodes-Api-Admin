@@ -41,6 +41,7 @@ import { KeyDecryptionService } from '../infra/crypto/key-decryption.service.js'
 import { SecureKeyManagerAdapter } from '../infra/crypto/secure-key-manager.adapter.js';
 import { SupabaseKeyRotationRepository } from '../infra/inventory/supabase-key-rotation.repository.js';
 import { RecryptProductKeysBatchUseCase } from '../core/use-cases/inventory/recrypt-product-keys-batch.use-case.js';
+import { UploadKeysUseCase } from '../core/use-cases/inventory/upload-keys.use-case.js';
 import { BuyerProviderRegistry } from '../infra/procurement/buyer/buyer-provider-registry.js';
 import { SupabaseProcurementFxConverter } from '../infra/currency/supabase-procurement-fx-converter.js';
 import { SupabaseJitOfferRepository } from '../infra/procurement/supabase-jit-offer.repository.js';
@@ -473,6 +474,7 @@ container.register(UC_TOKENS.DecryptKeys, { useClass: DecryptKeysUseCase });
 container.register(UC_TOKENS.RecryptProductKeys, { useClass: RecryptProductKeysUseCase });
 container.register(UC_TOKENS.SetKeysSalesBlocked, { useClass: SetKeysSalesBlockedUseCase });
 container.register(UC_TOKENS.SetVariantSalesBlocked, { useClass: SetVariantSalesBlockedUseCase });
+container.register(UC_TOKENS.UploadKeys, { useClass: UploadKeysUseCase });
 container.register(UC_TOKENS.MarkKeysFaulty, { useClass: MarkKeysFaultyUseCase });
 container.register(UC_TOKENS.LinkReplacementKey, { useClass: LinkReplacementKeyUseCase });
 container.register(UC_TOKENS.ManualSell, { useClass: ManualSellUseCase });

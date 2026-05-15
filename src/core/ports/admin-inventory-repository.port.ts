@@ -29,6 +29,8 @@ import type {
   GetInventoryCatalogResult,
   GetVariantContextDto,
   GetVariantContextResult,
+  UploadKeysDto,
+  UploadKeysResult,
 } from '../use-cases/inventory/inventory.types.js';
 
 export interface IAdminInventoryRepository {
@@ -47,4 +49,10 @@ export interface IAdminInventoryRepository {
   updateVariantPrice(dto: UpdateVariantPriceDto): Promise<UpdateVariantPriceResult>;
   getInventoryCatalog(dto: GetInventoryCatalogDto): Promise<GetInventoryCatalogResult>;
   getVariantContext(dto: GetVariantContextDto): Promise<GetVariantContextResult>;
+  uploadKeys(dto: UploadKeysDto, encryptFn: (plaintext: string) => Promise<{
+    encrypted_key: string;
+    encryption_iv: string;
+    encryption_salt: string;
+    encryption_key_id: string;
+  }>): Promise<UploadKeysResult>;
 }

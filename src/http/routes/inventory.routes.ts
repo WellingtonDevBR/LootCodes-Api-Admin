@@ -1,10 +1,14 @@
 import type { FastifyInstance } from 'fastify';
-import crypto from 'node:crypto';
 import { adminGuard, employeeGuard } from '../middleware/auth.guard.js';
 import { container } from '../../di/container.js';
 import { TOKENS, UC_TOKENS } from '../../di/tokens.js';
-import { SecureKeyManager } from '../../infra/crypto/secure-key-manager.js';
+import { getEnv } from '../../config/env.js';
+import type { IDatabase } from '../../core/ports/database.port.js';
+import type { IKeyEncryptionPort } from '../../core/ports/key-encryption.port.js';
 import type { GetInventoryCatalogUseCase } from '../../core/use-cases/inventory/get-inventory-catalog.use-case.js';
+import type { UploadKeysUseCase } from '../../core/use-cases/inventory/upload-keys.use-case.js';
+import type { MarkKeysFaultyUseCase } from '../../core/use-cases/inventory/mark-keys-faulty.use-case.js';
+import type { GetVariantContextUseCase } from '../../core/use-cases/inventory/get-variant-context.use-case.js';
 import type { INotificationDispatcher } from '../../core/ports/notification-channel.port.js';
 import { loadCurrencyRates, convertCentsToUsd } from './_currency-helpers.js';
 import { createLogger } from '../../shared/logger.js';
@@ -21,9 +25,7 @@ function keyStateToKpiBucket(keyState: string | null, isUsed: boolean): 'availab
 
 export async function adminInventoryRoutes(app: FastifyInstance) {
   app.get('/kpis', { preHandler: [employeeGuard] }, async (_request, reply) => {
-    const db = container.resolve<import('../../core/ports/database.port.js').IDatabase>(
-      TOKENS.Database,
-    );
+    const db = container.resolve<IDatabase>(TOKENS.Database);
 
     // Parallelise: count, cost rows, and currency rates are independent.
     // Use queryAll for cost rows to avoid the previous 10k hard cap.
@@ -96,9 +98,7 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
     const from = (page - 1) * pageSize;
     const to = from + pageSize - 1;
 
-    const db = container.resolve<import('../../core/ports/database.port.js').IDatabase>(
-      TOKENS.Database,
-    );
+    const db = container.resolve<IDatabase>(TOKENS.Database);
 
     const selectCols = 'id, variant_id, key_state, is_used, created_at, used_at, supplier_reference, order_id, purchase_cost, purchase_currency, orders(order_number, order_channel, marketplace_pricing, delivery_email, guest_email, contact_email, customer_full_name)';
 
@@ -244,9 +244,7 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
     const from = offset;
     const to = offset + limit - 1;
 
-    const db = container.resolve<import('../../core/ports/database.port.js').IDatabase>(
-      TOKENS.Database,
-    );
+    const db = container.resolve<IDatabase>(TOKENS.Database);
 
     const eqFilters: Array<[string, unknown]> = [['variant_id', variantId]];
     const inFilters: Array<[string, unknown[]]> = [];
@@ -307,7 +305,7 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
   }, async (request, reply) => {
     const body = request.body as {
       variant_id?: string;
-      keys?: string[];
+      keys?: unknown;
       purchase_cost?: number;
       purchase_currency?: string;
       price_mode?: 'total' | 'per_key';
@@ -323,11 +321,8 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
     if (!Array.isArray(body.keys) || body.keys.length === 0) {
       return reply.code(400).send({ error: 'keys array is required and must not be empty' });
     }
-    if (body.keys.length > 1000) {
-      return reply.code(400).send({ error: 'Maximum 1000 keys per upload batch' });
-    }
 
-    if (!process.env.ENCRYPTION_MASTER_KEY) {
+    if (!getEnv().ENCRYPTION_MASTER_KEY) {
       return reply.code(500).send({
         error: 'ENCRYPTION_FAILED',
         message: 'Server encryption configuration is unavailable.',
@@ -336,152 +331,33 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
 
     const authUser = (request as unknown as Record<string, unknown>).authUser as
       { id: string; email?: string } | undefined;
-    const adminUserId = authUser?.id ?? 'unknown';
-    const adminEmail = authUser?.email ?? null;
-    const clientIp = request.ip;
 
-    const db = container.resolve<import('../../core/ports/database.port.js').IDatabase>(
-      TOKENS.Database,
-    );
-
-    const variant = await db.queryOne<{ id: string; product_id: string }>(
-      'product_variants',
-      { select: 'id, product_id', eq: [['id', body.variant_id]] },
-    );
-    if (!variant) {
-      return reply.code(404).send({ error: 'Variant not found' });
-    }
-
-    const rawKeys = body.keys
-      .map(k => k.trim())
-      .filter(k => k.length > 0);
-
-    if (rawKeys.length === 0) {
-      return reply.code(400).send({ error: 'No valid keys after trimming whitespace' });
-    }
-
-    const priceMode = body.price_mode ?? 'total';
-    const inputCost = body.purchase_cost ?? 0;
-    const perKeyCost = priceMode === 'total' && rawKeys.length > 0
-      ? Math.round(inputCost / rawKeys.length)
-      : inputCost;
-
-    const hashFn = async (key: string): Promise<string> => {
-      const encoder = new TextEncoder();
-      const data = encoder.encode(key);
-      const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-      return Buffer.from(hashBuffer).toString('hex');
-    };
-
-    const hashes = await Promise.all(rawKeys.map(k => hashFn(k)));
-
-    const allowDuplicates = body.allow_duplicates === true;
-
-    // Chunk hash lookups: each SHA-256 hash is 64 chars; sending all at once in a GET URL
-    // would exceed the ~8 KB PostgREST URL limit for large batches.
-    const HASH_LOOKUP_CHUNK = 100;
-    const existingHashes = new Set<string>();
-    if (!allowDuplicates) {
-      for (let c = 0; c < hashes.length; c += HASH_LOOKUP_CHUNK) {
-        const chunk = hashes.slice(c, c + HASH_LOOKUP_CHUNK);
-        const rows = await db.query<{ raw_key_hash: string }>(
-          'product_keys',
-          { select: 'raw_key_hash', in: [['raw_key_hash', chunk]] },
-        );
-        for (const r of rows) existingHashes.add(r.raw_key_hash);
-      }
-    }
-
-    // Separate new keys from duplicates (skipped when allow_duplicates is true)
-    const newEntries: Array<{ key: string; hash: string }> = [];
-    let duplicates = 0;
-    for (let i = 0; i < rawKeys.length; i++) {
-      if (!allowDuplicates && existingHashes.has(hashes[i])) {
-        duplicates++;
-      } else {
-        newEntries.push({ key: rawKeys[i], hash: hashes[i] });
-      }
-    }
-
-    // Encrypt new keys in parallel chunks to avoid overwhelming the event loop
-    const ENCRYPT_CHUNK = 50;
-    const rows: Record<string, unknown>[] = [];
-    for (let c = 0; c < newEntries.length; c += ENCRYPT_CHUNK) {
-      const chunk = newEntries.slice(c, c + ENCRYPT_CHUNK);
-      const encryptedChunk = await Promise.all(chunk.map((e) => SecureKeyManager.encrypt(e.key)));
-      for (let j = 0; j < chunk.length; j++) {
-        const enc = encryptedChunk[j];
-        rows.push({
-          variant_id: body.variant_id,
-          encrypted_key: enc.encrypted,
-          encryption_iv: enc.iv,
-          encryption_salt: enc.salt,
-          encryption_key_id: enc.keyId,
-          encryption_version: 'aes-256-gcm',
-          // When allow_duplicates is true, omit the hash so the unique
-          // constraint (idx_product_keys_raw_key_hash) does not fire.
-          // PostgreSQL treats each NULL as distinct, so multiple NULL
-          // rows are permitted. The hash is only needed for dedup checks.
-          raw_key_hash: allowDuplicates ? null : chunk[j].hash,
-          key_state: 'available',
-          is_used: false,
-          created_by: adminUserId,
-          purchase_cost: perKeyCost,
-          purchase_currency: body.purchase_currency ?? 'USD',
-          supplier_reference: body.supplier_reference ?? null,
-          marketplace_eligible: body.marketplace_eligible ?? true,
-          allowed_seller_provider_account_ids: body.allowed_seller_provider_account_ids ?? null,
-        });
-      }
-    }
-
-    // Bulk-insert all prepared rows in one DB round-trip (or chunked at 500 for safety)
-    const INSERT_CHUNK = 500;
-    let uploaded = 0;
-    for (let c = 0; c < rows.length; c += INSERT_CHUNK) {
-      const chunk = rows.slice(c, c + INSERT_CHUNK);
-      try {
-        await db.insertMany('product_keys', chunk);
-        uploaded += chunk.length;
-      } catch (err) {
-        logger.error('Bulk key insert failed', err as Error, {
-          chunkStart: c,
-          chunkSize: chunk.length,
-          variant_id: body.variant_id,
-        });
-      }
-    }
+    const uc = container.resolve<UploadKeysUseCase>(UC_TOKENS.UploadKeys);
 
     try {
-      await db.insert('admin_actions', {
-        admin_user_id: adminUserId,
-        admin_email: adminEmail,
-        action_type: 'keys_upload',
-        target_type: 'product_keys',
-        target_id: body.variant_id,
-        details: {
-          variant_id: body.variant_id,
-          uploaded,
-          duplicates,
-          total_submitted: rawKeys.length,
-          allow_duplicates: allowDuplicates,
-          purchase_cost: body.purchase_cost ?? 0,
-          purchase_currency: body.purchase_currency ?? 'USD',
-          supplier_reference: body.supplier_reference ?? null,
-        },
-        ip_address: clientIp,
-        user_agent: request.headers['user-agent'] ?? null,
-        client_channel: 'crm',
-      });
-    } catch (auditErr) {
-      logger.error('Failed to write upload audit log', auditErr as Error, {
+      const result = await uc.execute({
         variant_id: body.variant_id,
-        uploaded,
-        duplicates,
+        keys: body.keys as string[],
+        purchase_cost: body.purchase_cost,
+        purchase_currency: body.purchase_currency,
+        price_mode: body.price_mode,
+        supplier_reference: body.supplier_reference ?? null,
+        marketplace_eligible: body.marketplace_eligible,
+        allowed_seller_provider_account_ids: body.allowed_seller_provider_account_ids ?? null,
+        allow_duplicates: body.allow_duplicates,
+        admin_user_id: authUser?.id ?? 'unknown',
+        admin_email: authUser?.email ?? null,
+        client_ip: request.ip,
+        user_agent: (request.headers['user-agent'] as string) ?? null,
       });
+      return reply.send(result);
+    } catch (err) {
+      if (err instanceof Error && err.message.startsWith('Maximum ')) {
+        return reply.code(400).send({ error: err.message });
+      }
+      logger.error('Key upload failed', err as Error, { variant_id: body.variant_id });
+      return reply.code(500).send({ error: 'Key upload failed' });
     }
-
-    return reply.send({ uploaded, duplicates });
   });
 
   app.post('/keys/replace', { preHandler: [adminGuard] }, async (_request, reply) => {
@@ -517,7 +393,7 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
       }
     }
 
-    if (!process.env.ENCRYPTION_MASTER_KEY) {
+    if (!getEnv().ENCRYPTION_MASTER_KEY) {
       return reply.code(500).send({
         error: 'DECRYPTION_FAILED',
         message: 'Server encryption configuration is unavailable.',
@@ -530,9 +406,8 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
     const adminEmail = authUser?.email ?? null;
     const clientIp = request.ip;
 
-    const db = container.resolve<import('../../core/ports/database.port.js').IDatabase>(
-      TOKENS.Database,
-    );
+    const db = container.resolve<IDatabase>(TOKENS.Database);
+    const keyEncryption = container.resolve<IKeyEncryptionPort>(TOKENS.KeyEncryptionPort);
 
     const rows = await db.query<{
       id: string;
@@ -554,7 +429,7 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
         continue;
       }
       try {
-        const value = await SecureKeyManager.decrypt(
+        const value = await keyEncryption.decrypt(
           row.encrypted_key,
           row.encryption_iv,
           row.encryption_salt,
@@ -586,7 +461,7 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
         client_channel: 'crm',
       });
     } catch {
-      request.log.error('Failed to write decrypt audit log');
+      logger.error('Failed to write decrypt audit log');
     }
 
     if (decrypted.length >= 10) {
@@ -600,7 +475,7 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
           timestamp: new Date().toISOString(),
         });
       } catch {
-        request.log.error('Failed to dispatch decrypt notification');
+        logger.error('Failed to dispatch decrypt notification');
       }
     }
 
@@ -636,7 +511,7 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
       }
     }
 
-    if (!process.env.ENCRYPTION_MASTER_KEY) {
+    if (!getEnv().ENCRYPTION_MASTER_KEY) {
       return reply.code(500).send({
         error: 'DECRYPTION_FAILED',
         message: 'Server encryption configuration is unavailable.',
@@ -649,9 +524,7 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
     const adminEmail = authUser?.email ?? null;
     const clientIp = request.ip;
 
-    const db = container.resolve<import('../../core/ports/database.port.js').IDatabase>(
-      TOKENS.Database,
-    );
+    const db = container.resolve<IDatabase>(TOKENS.Database);
 
     const rows = await db.query<{
       id: string;
@@ -690,11 +563,13 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
 
     const csvLines: string[] = ['key_id,product,variant_id,key_value,key_state,added_at'];
 
+    const keyEncryption = container.resolve<IKeyEncryptionPort>(TOKENS.KeyEncryptionPort);
+
     for (const row of rows) {
       let keyValue = '';
       if (row.encrypted_key && row.encryption_iv && row.encryption_salt) {
         try {
-          keyValue = await SecureKeyManager.decrypt(
+          keyValue = await keyEncryption.decrypt(
             row.encrypted_key,
             row.encryption_iv,
             row.encryption_salt,
@@ -735,7 +610,7 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
         client_channel: 'crm',
       });
     } catch {
-      request.log.error('Failed to write export audit log');
+      logger.error('Failed to write export audit log');
     }
 
     if (body.remove_from_inventory === true) {
@@ -746,7 +621,7 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
             is_used: true,
           });
         } catch {
-          request.log.error({ keyId: row.id }, 'Failed to mark key as burnt during export');
+          logger.error('Failed to mark key as burnt during export', undefined, { keyId: row.id });
         }
       }
     }
@@ -764,7 +639,7 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
           timestamp: new Date().toISOString(),
         });
       } catch {
-        request.log.error('Failed to dispatch export notification');
+        logger.error('Failed to dispatch export notification');
       }
     }
 
@@ -812,9 +687,7 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
     const hashToValue = new Map<string, string>();
     hashes.forEach((h, i) => hashToValue.set(h, rawValues[i]!));
 
-    const db = container.resolve<import('../../core/ports/database.port.js').IDatabase>(
-      TOKENS.Database,
-    );
+    const db = container.resolve<IDatabase>(TOKENS.Database);
 
     type KeyLookupRow = {
       id: string;
@@ -922,9 +795,7 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
 
     try {
       if (targetState === 'faulty') {
-        const uc = container.resolve<import('../../core/use-cases/inventory/mark-keys-faulty.use-case.js').MarkKeysFaultyUseCase>(
-          UC_TOKENS.MarkKeysFaulty,
-        );
+        const uc = container.resolve<MarkKeysFaultyUseCase>(UC_TOKENS.MarkKeysFaulty);
         const result = await uc.execute({
           key_ids: keyIds as string[],
           reason: (body.reason as string).trim(),
@@ -934,9 +805,7 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
       }
 
       // burnt: direct update for keys currently in available state
-      const db = container.resolve<import('../../core/ports/database.port.js').IDatabase>(
-        TOKENS.Database,
-      );
+      const db = container.resolve<IDatabase>(TOKENS.Database);
 
       const rows = await db.query<{ id: string; key_state: string }>(
         'product_keys',
@@ -1000,9 +869,7 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
     const adminId = authUser?.id ?? 'unknown';
 
     try {
-      const uc = container.resolve<import('../../core/use-cases/inventory/mark-keys-faulty.use-case.js').MarkKeysFaultyUseCase>(
-        UC_TOKENS.MarkKeysFaulty,
-      );
+      const uc = container.resolve<MarkKeysFaultyUseCase>(UC_TOKENS.MarkKeysFaulty);
       const result = await uc.execute({
         key_ids: keyIds as string[],
         reason: body.reason.trim(),
@@ -1064,9 +931,7 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
     const adminEmail = authUser?.email ?? null;
     const clientIp = request.ip;
 
-    const db = container.resolve<import('../../core/ports/database.port.js').IDatabase>(
-      TOKENS.Database,
-    );
+    const db = container.resolve<IDatabase>(TOKENS.Database);
 
     const keys = await db.query<{ id: string; key_state: string; variant_id: string }>(
       'product_keys',
@@ -1144,7 +1009,7 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
         client_channel: 'crm',
       });
     } catch {
-      request.log.error('Failed to write manual-sell audit log');
+      logger.error('Failed to write manual-sell audit log');
     }
 
     if (keyIds.length >= 5) {
@@ -1160,7 +1025,7 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
           timestamp: now,
         });
       } catch {
-        request.log.error('Failed to dispatch manual-sell notification');
+        logger.error('Failed to dispatch manual-sell notification');
       }
     }
 
@@ -1185,7 +1050,7 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
 
   app.get('/variant-context/:variantId', { preHandler: [employeeGuard] }, async (request, reply) => {
     const { variantId } = request.params as { variantId: string };
-    const uc = container.resolve<import('../../core/use-cases/inventory/get-variant-context.use-case.js').GetVariantContextUseCase>(UC_TOKENS.GetVariantContext);
+    const uc = container.resolve<GetVariantContextUseCase>(UC_TOKENS.GetVariantContext);
 
     try {
       const result = await uc.execute({ variant_id: variantId });

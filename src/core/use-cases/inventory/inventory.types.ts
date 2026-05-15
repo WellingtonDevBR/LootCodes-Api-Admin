@@ -204,3 +204,27 @@ export interface GetVariantContextResult {
   stock_available: number;
   price_usd: number;
 }
+
+// --- Upload Keys ---
+
+export interface UploadKeysDto {
+  variant_id: string;
+  keys: string[];
+  purchase_cost?: number;
+  purchase_currency?: string;
+  /** 'total' splits the cost evenly across all keys; 'per_key' treats cost as individual. */
+  price_mode?: 'total' | 'per_key';
+  supplier_reference?: string | null;
+  marketplace_eligible?: boolean;
+  allowed_seller_provider_account_ids?: string[] | null;
+  allow_duplicates?: boolean;
+  admin_user_id: string;
+  admin_email: string | null;
+  client_ip: string;
+  user_agent: string | null;
+}
+
+export interface UploadKeysResult {
+  uploaded: number;
+  duplicates: number;
+}

@@ -1,8 +1,12 @@
+import crypto from 'node:crypto';
 import { injectable, inject } from 'tsyringe';
 import { TOKENS } from '../../di/tokens.js';
 import type { IDatabase, QueryOptions } from '../../core/ports/database.port.js';
 import { sanitizeIlikeTerm } from '../../shared/sanitize-ilike.js';
+import { createLogger } from '../../shared/logger.js';
 import type { IAdminInventoryRepository } from '../../core/ports/admin-inventory-repository.port.js';
+
+const logger = createLogger('supabase-admin-inventory-repository');
 import type {
   EmitInventoryStockChangedDto,
   EmitInventoryStockChangedResult,
@@ -35,6 +39,8 @@ import type {
   GetVariantContextDto,
   GetVariantContextResult,
   InventoryCatalogRow,
+  UploadKeysDto,
+  UploadKeysResult,
 } from '../../core/use-cases/inventory/inventory.types.js';
 
 @injectable()
@@ -428,5 +434,129 @@ export class SupabaseAdminInventoryRepository implements IAdminInventoryReposito
       stock_available: availableKeys.length,
       price_usd: variant.price_usd as number,
     };
+  }
+
+  async uploadKeys(
+    dto: UploadKeysDto,
+    encryptFn: (plaintext: string) => Promise<{
+      encrypted_key: string;
+      encryption_iv: string;
+      encryption_salt: string;
+      encryption_key_id: string;
+    }>,
+  ): Promise<UploadKeysResult> {
+    const rawKeys = dto.keys.map(k => k.trim()).filter(k => k.length > 0);
+
+    const hashKey = async (key: string): Promise<string> => {
+      const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(key));
+      return Buffer.from(buf).toString('hex');
+    };
+
+    const hashes = await Promise.all(rawKeys.map(k => hashKey(k)));
+
+    const allowDuplicates = dto.allow_duplicates === true;
+
+    const existingHashes = new Set<string>();
+    if (!allowDuplicates) {
+      const HASH_CHUNK = 100;
+      for (let c = 0; c < hashes.length; c += HASH_CHUNK) {
+        const chunk = hashes.slice(c, c + HASH_CHUNK);
+        const rows = await this.db.query<{ raw_key_hash: string }>(
+          'product_keys',
+          { select: 'raw_key_hash', in: [['raw_key_hash', chunk]] },
+        );
+        for (const r of rows) existingHashes.add(r.raw_key_hash);
+      }
+    }
+
+    const priceMode = dto.price_mode ?? 'total';
+    const inputCost = dto.purchase_cost ?? 0;
+    const perKeyCost = priceMode === 'total' && rawKeys.length > 0
+      ? Math.round(inputCost / rawKeys.length)
+      : inputCost;
+
+    const newEntries: Array<{ key: string; hash: string }> = [];
+    let duplicates = 0;
+    for (let i = 0; i < rawKeys.length; i++) {
+      if (!allowDuplicates && existingHashes.has(hashes[i]!)) {
+        duplicates++;
+      } else {
+        newEntries.push({ key: rawKeys[i]!, hash: hashes[i]! });
+      }
+    }
+
+    const ENCRYPT_CHUNK = 50;
+    const rows: Record<string, unknown>[] = [];
+    for (let c = 0; c < newEntries.length; c += ENCRYPT_CHUNK) {
+      const chunk = newEntries.slice(c, c + ENCRYPT_CHUNK);
+      const encryptedChunk = await Promise.all(chunk.map((e) => encryptFn(e.key)));
+      for (let j = 0; j < chunk.length; j++) {
+        const enc = encryptedChunk[j]!;
+        rows.push({
+          variant_id: dto.variant_id,
+          encrypted_key: enc.encrypted_key,
+          encryption_iv: enc.encryption_iv,
+          encryption_salt: enc.encryption_salt,
+          encryption_key_id: enc.encryption_key_id,
+          encryption_version: 'aes-256-gcm',
+          raw_key_hash: allowDuplicates ? null : chunk[j]!.hash,
+          key_state: 'available',
+          is_used: false,
+          created_by: dto.admin_user_id,
+          purchase_cost: perKeyCost,
+          purchase_currency: dto.purchase_currency ?? 'USD',
+          supplier_reference: dto.supplier_reference ?? null,
+          marketplace_eligible: dto.marketplace_eligible ?? true,
+          allowed_seller_provider_account_ids: dto.allowed_seller_provider_account_ids ?? null,
+        });
+      }
+    }
+
+    const INSERT_CHUNK = 500;
+    let uploaded = 0;
+    for (let c = 0; c < rows.length; c += INSERT_CHUNK) {
+      const chunk = rows.slice(c, c + INSERT_CHUNK);
+      try {
+        await this.db.insertMany('product_keys', chunk);
+        uploaded += chunk.length;
+      } catch (err) {
+        logger.error('Bulk key insert failed', err as Error, {
+          chunkStart: c,
+          chunkSize: chunk.length,
+          variant_id: dto.variant_id,
+        });
+      }
+    }
+
+    try {
+      await this.db.insert('admin_actions', {
+        admin_user_id: dto.admin_user_id,
+        admin_email: dto.admin_email,
+        action_type: 'keys_upload',
+        target_type: 'product_keys',
+        target_id: dto.variant_id,
+        details: {
+          variant_id: dto.variant_id,
+          uploaded,
+          duplicates,
+          total_submitted: rawKeys.length,
+          allow_duplicates: allowDuplicates,
+          purchase_cost: dto.purchase_cost ?? 0,
+          purchase_currency: dto.purchase_currency ?? 'USD',
+          supplier_reference: dto.supplier_reference ?? null,
+        },
+        ip_address: dto.client_ip,
+        user_agent: dto.user_agent,
+        client_channel: 'crm',
+      });
+    } catch (auditErr) {
+      logger.error('Failed to write upload audit log', auditErr as Error, {
+        variant_id: dto.variant_id,
+        uploaded,
+        duplicates,
+      });
+    }
+
+    return { uploaded, duplicates };
   }
 }

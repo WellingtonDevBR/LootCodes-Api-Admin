@@ -107,6 +107,7 @@ export const UC_TOKENS = {
   RecryptProductKeysBatch: Symbol.for('RecryptProductKeysBatchUseCase'),
   SetKeysSalesBlocked: Symbol.for('SetKeysSalesBlockedUseCase'),
   SetVariantSalesBlocked: Symbol.for('SetVariantSalesBlockedUseCase'),
+  UploadKeys: Symbol.for('UploadKeysUseCase'),
   MarkKeysFaulty: Symbol.for('MarkKeysFaultyUseCase'),
   LinkReplacementKey: Symbol.for('LinkReplacementKeyUseCase'),
   ManualSell: Symbol.for('ManualSellUseCase'),
