@@ -256,28 +256,36 @@ export class WgcardsHttpClient {
    * `serviceOrder` is the caller-provided idempotency key (must be unique).
    */
   async placeOrder(req: WgcardsPlaceOrderRequest): Promise<string> {
-    // Per WGCards API: userId = appId, detailVos[].skuId = string, buyNum = integer,
-    // faceValue required for custom-denomination SKUs (variable min/max face range).
+    // Per WGCards API: userId = appId (string), accountId (string), currency (string),
+    // serviceOrder (string), detailVos[].skuId (string), buyNum (integer),
+    // faceValue when required (caller should use integer denominations when the SKU expects it).
+    // Inner `appId` mirrors getItemAndStock / getToken — some deployments reject placeOrder without it (outer -101).
     const payload = {
-      userId: this.appId,
-      accountId: this.accountId,
-      currency: req.currency,
-      serviceOrder: req.serviceOrder,
+      appId: String(this.appId),
+      userId: String(this.appId),
+      accountId: String(this.accountId),
+      currency: String(req.currency).trim(),
+      serviceOrder: String(req.serviceOrder),
+      // Doc example order: skuId, faceValue, buyNum (some gateways are picky about field order).
       detailVos: req.items.map((item) => {
-        const row: {
-          skuId: string;
-          buyNum: number;
-          faceValue?: number;
-        } = {
-          skuId: String(item.skuId),
-          buyNum: Math.max(1, Math.trunc(Number(item.buyNum))),
-        };
+        const skuId = String(item.skuId);
+        const buyNum = Math.max(1, Math.trunc(Number(item.buyNum)));
         if (item.faceValue !== undefined && Number.isFinite(item.faceValue)) {
-          row.faceValue = Number(item.faceValue);
+          return {
+            skuId,
+            faceValue: Number(item.faceValue),
+            buyNum,
+          };
         }
-        return row;
+        return { skuId, buyNum };
       }),
     };
+
+    logger.debug('WGCards placeOrder plaintext (pre-encrypt)', {
+      currency: payload.currency,
+      serviceOrderLen: payload.serviceOrder.length,
+      detailVos: payload.detailVos,
+    });
 
     const data = await this.post<WgcardsPlaceOrderData>('/api/placeOrder', payload);
 
@@ -393,8 +401,18 @@ function formatWgcardsMsg(msg: unknown): string {
 
 function assertOk(envelope: WgcardsEnvelope<unknown>, path: string): void {
   if (envelope.code !== 200) {
+    const asRecord = envelope as unknown as Record<string, unknown>;
+    const msgField = asRecord['msg'] ?? asRecord['message'];
+    const extra =
+      typeof asRecord['data'] === 'string' && asRecord['data'].length > 0
+        ? ` data=${asRecord['data']!.slice(0, 120)}`
+        : '';
+    const hint =
+      envelope.code === -101
+        ? ' — WGCards -101 is undocumented; common causes: wrong pay currency, illegal faceValue for this skuId, insufficient wallet balance, duplicate serviceOrder, or sku not open for API purchase. Check Api-Admin debug log "placeOrder plaintext" and WGCards dashboard.'
+        : '';
     throw new Error(
-      `WGCards API error at ${path}: code=${envelope.code} msg=${formatWgcardsMsg(envelope.msg)}`,
+      `WGCards API error at ${path}: code=${envelope.code} msg=${formatWgcardsMsg(msgField)}${extra}${hint}`,
     );
   }
 }

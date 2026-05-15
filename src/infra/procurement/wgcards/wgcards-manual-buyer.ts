@@ -153,10 +153,9 @@ export class WgcardsManualBuyer {
     const maxFv = Number(sku.maxFaceValue);
     const boundsOk = Number.isFinite(minFv) && Number.isFinite(maxFv);
 
+    // min===max===0 is treated as "no fixed face from API" — do not send faceValue 0 to placeOrder.
     const faceValue =
-      boundsOk && minFv === maxFv
-        ? minFv
-        : undefined;
+      boundsOk && minFv === maxFv && minFv !== 0 ? minFv : undefined;
 
     return {
       payCurrency,

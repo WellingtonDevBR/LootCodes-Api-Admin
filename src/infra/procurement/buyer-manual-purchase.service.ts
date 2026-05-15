@@ -954,7 +954,6 @@ export class BuyerManualPurchaseService {
     }
 
     let payCurrency = walletHint;
-    let faceValue: number | undefined;
     const meta = await wgcardsBuyer.getSkuCheckoutMeta(parentId, offerId, walletHint);
     if (!meta) {
       return {
@@ -964,13 +963,27 @@ export class BuyerManualPurchaseService {
       };
     }
     payCurrency = meta.payCurrency;
-    faceValue = meta.faceValue;
 
-    const hasFaceRange =
+    // WGCards doc: `faceValue` is only for custom-denomination SKUs. Fixed SKUs (min===max>0)
+    // encode the face in the skuId — sending faceValue anyway often yields outer code -101.
+    const fixedDenomination =
       Number.isFinite(meta.minFaceValue) &&
       Number.isFinite(meta.maxFaceValue) &&
-      meta.minFaceValue !== meta.maxFaceValue;
-    if (faceValue === undefined && hasFaceRange) {
+      meta.minFaceValue === meta.maxFaceValue &&
+      meta.minFaceValue > 0;
+
+    // Variable denomination: explicit range, or 0/0 bounds from supplier (unknown fixed face).
+    const hasFaceRange =
+      (Number.isFinite(meta.minFaceValue) &&
+        Number.isFinite(meta.maxFaceValue) &&
+        meta.minFaceValue !== meta.maxFaceValue) ||
+      (meta.minFaceValue === 0 && meta.maxFaceValue === 0);
+
+    let placeOrderFaceValue: number | undefined;
+    if (fixedDenomination) {
+      placeOrderFaceValue = undefined;
+    } else if (hasFaceRange) {
+      let faceValue: number | undefined;
       const rawOverride = apiProfile['wgcards_checkout_face_value'];
       let overrideNum: number | undefined;
       if (typeof rawOverride === 'number' && Number.isFinite(rawOverride)) {
@@ -990,7 +1003,14 @@ export class BuyerManualPurchaseService {
         const cents = offerLinkRow?.last_price_cents;
         if (cents != null && cents > 0) {
           const fromPriceMajor = cents / 100;
-          if (fromPriceMajor >= meta.minFaceValue && fromPriceMajor <= meta.maxFaceValue) {
+          // Prefer a whole denomination when it still fits the SKU range (e.g. 1810¢ → 18 not 18.1).
+          const roundedMajor = Math.round(fromPriceMajor);
+          if (roundedMajor >= meta.minFaceValue && roundedMajor <= meta.maxFaceValue) {
+            faceValue = roundedMajor;
+          } else if (
+            fromPriceMajor >= meta.minFaceValue &&
+            fromPriceMajor <= meta.maxFaceValue
+          ) {
             faceValue = Math.round(fromPriceMajor * 100) / 100;
           }
         }
@@ -1003,6 +1023,9 @@ export class BuyerManualPurchaseService {
             `Set provider account api_profile.wgcards_checkout_face_value to the card face amount, or ensure last_price_cents matches a face value in that range.`,
         };
       }
+      placeOrderFaceValue = faceValue;
+    } else {
+      placeOrderFaceValue = undefined;
     }
 
     let accountSnapshot;
@@ -1064,7 +1087,13 @@ export class BuyerManualPurchaseService {
       const result = await wgcardsBuyer.purchase({
         serviceOrder: idempotencyKey,
         currency: payCurrency,
-        items: [{ skuId: offerId, buyNum: quantity, ...(faceValue !== undefined ? { faceValue } : {}) }],
+        items: [
+          {
+            skuId: offerId,
+            buyNum: quantity,
+            ...(placeOrderFaceValue !== undefined ? { faceValue: placeOrderFaceValue } : {}),
+          },
+        ],
       });
 
       if (!result.success && result.recoverable && result.orderId) {

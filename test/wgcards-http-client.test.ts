@@ -179,13 +179,20 @@ describe('WgcardsHttpClient', () => {
       const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
       const body = JSON.parse(init.body as string) as { msg: string };
       const payload = JSON.parse(crypto.decrypt(body.msg)) as {
+        appId: string;
+        userId: string;
+        accountId: string;
         serviceOrder: string;
         currency: string;
         detailVos: Array<{ skuId: string; buyNum: number; faceValue?: number }>;
       };
+      expect(payload.appId).toBe(APP_ID);
+      expect(payload.userId).toBe(APP_ID);
+      expect(payload.accountId).toBe(ACCOUNT_ID);
       expect(payload.serviceOrder).toBe('my-idempotency-key');
       expect(payload.currency).toBe('EUR');
-      expect(payload.detailVos).toEqual([{ skuId: 'sku-z', buyNum: 3, faceValue: 42.5 }]);
+      expect(payload.detailVos).toEqual([{ skuId: 'sku-z', faceValue: 42.5, buyNum: 3 }]);
+      expect(Object.keys(payload.detailVos[0]!)).toEqual(['skuId', 'faceValue', 'buyNum']);
     });
 
     it('coerces skuId to string and truncates buyNum', async () => {
@@ -275,6 +282,18 @@ describe('WgcardsHttpClient', () => {
       const client = makeClient(fetchMock);
 
       await expect(client.getAccount()).rejects.toThrow('Unauthorized: token expired');
+    });
+
+    it('includes a troubleshooting hint when encrypted envelope code is -101', async () => {
+      const envelope = { appId: APP_ID, code: -101, msg: '', data: null };
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        text: () => Promise.resolve(crypto.encrypt(JSON.stringify(envelope))),
+      } as Response);
+      const client = makeClient(fetchMock);
+
+      await expect(client.getAccount()).rejects.toThrow(/WGCards -101 is undocumented/);
     });
   });
 });

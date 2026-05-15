@@ -219,6 +219,26 @@ describe('WgcardsManualBuyer.getSkuCheckoutMeta', () => {
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 
+  it('omits faceValue when minFaceValue and maxFaceValue are both zero (supplier sent no fixed denomination)', async () => {
+    const page = itemPageForParent('parent-zero', [
+      { skuId: 'sku-zero-bounds', skuPriceCurrency: 'USD', minFaceValue: 0, maxFaceValue: 0 },
+    ]);
+    stubSequentialItemAndStockPages([page]);
+
+    const buyer = createWgcardsManualBuyer({
+      secrets: VALID_SECRETS,
+      profile: VALID_PROFILE,
+      initialTokenCache: { accessToken: 'tok', expiresAt: Date.now() + 3_600_000 },
+    })!;
+
+    const meta = await buyer.getSkuCheckoutMeta('parent-zero', 'sku-zero-bounds', 'USD');
+    expect(meta).toEqual({
+      payCurrency: 'USD',
+      minFaceValue: 0,
+      maxFaceValue: 0,
+    });
+  });
+
   it('omits faceValue when minFaceValue and maxFaceValue differ (custom denomination)', async () => {
     const page = itemPageForParent('parent-2', [
       { skuId: 'sku-range', skuPriceCurrency: 'USD', minFaceValue: 5, maxFaceValue: 500 },

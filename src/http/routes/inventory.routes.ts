@@ -12,6 +12,10 @@ import type { GetVariantContextUseCase } from '../../core/use-cases/inventory/ge
 import type { INotificationDispatcher } from '../../core/ports/notification-channel.port.js';
 import { loadCurrencyRates, convertCentsToUsd } from './_currency-helpers.js';
 import { createLogger } from '../../shared/logger.js';
+import {
+  LOOKUP_BY_HASH_CHUNK_SIZE,
+  LOOKUP_IN_CHUNK_UUID,
+} from './inventory-key-lookup.constants.js';
 
 const logger = createLogger('admin-inventory-routes');
 
@@ -684,8 +688,6 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
     };
 
     const hashes = await Promise.all(rawValues.map((v) => hashFn(v)));
-    const hashToValue = new Map<string, string>();
-    hashes.forEach((h, i) => hashToValue.set(h, rawValues[i]!));
 
     const db = container.resolve<IDatabase>(TOKENS.Database);
 
@@ -699,34 +701,54 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
       sales_blocked_at: string | null;
     };
 
-    const found = await db.query<KeyLookupRow>(
-      'product_keys',
-      {
-        select: 'id, raw_key_hash, key_state, variant_id, order_id, marked_faulty_at, sales_blocked_at',
-        in: [['raw_key_hash', hashes]],
-      },
-    );
+    const uniqueHashes = [...new Set(hashes)];
+    const hashToRow = new Map<string, KeyLookupRow>();
+    const select =
+      'id, raw_key_hash, key_state, variant_id, order_id, marked_faulty_at, sales_blocked_at';
+
+    for (let i = 0; i < uniqueHashes.length; i += LOOKUP_BY_HASH_CHUNK_SIZE) {
+      const chunk = uniqueHashes.slice(i, i + LOOKUP_BY_HASH_CHUNK_SIZE);
+      const rows = await db.query<KeyLookupRow>('product_keys', {
+        select,
+        in: [['raw_key_hash', chunk]],
+      });
+      for (const row of rows) {
+        hashToRow.set(row.raw_key_hash, row);
+      }
+    }
+
+    const found = [...hashToRow.values()];
 
     // Enrich with product + variant labels
     const variantIds = [...new Set(found.map((r) => r.variant_id))];
     type VariantRow = { id: string; sku: string | null; product_id: string };
-    const variants = variantIds.length > 0
-      ? await db.query<VariantRow>('product_variants', { select: 'id, sku, product_id', in: [['id', variantIds]] })
-      : [];
+    const variants: VariantRow[] = [];
+    for (let i = 0; i < variantIds.length; i += LOOKUP_IN_CHUNK_UUID) {
+      const chunk = variantIds.slice(i, i + LOOKUP_IN_CHUNK_UUID);
+      const rows = await db.query<VariantRow>('product_variants', {
+        select: 'id, sku, product_id',
+        in: [['id', chunk]],
+      });
+      variants.push(...rows);
+    }
     const variantMap = new Map(variants.map((v) => [v.id, v]));
 
     const productIds = [...new Set(variants.map((v) => v.product_id))];
     type ProductRow = { id: string; name: string };
-    const products = productIds.length > 0
-      ? await db.query<ProductRow>('products', { select: 'id, name', in: [['id', productIds]] })
-      : [];
+    const products: ProductRow[] = [];
+    for (let i = 0; i < productIds.length; i += LOOKUP_IN_CHUNK_UUID) {
+      const chunk = productIds.slice(i, i + LOOKUP_IN_CHUNK_UUID);
+      const rows = await db.query<ProductRow>('products', {
+        select: 'id, name',
+        in: [['id', chunk]],
+      });
+      products.push(...rows);
+    }
     const productMap = new Map(products.map((p) => [p.id, p]));
-
-    const foundSet = new Set(found.map((r) => r.raw_key_hash));
 
     const results = rawValues.map((raw, i) => {
       const hash = hashes[i]!;
-      const row = found.find((r) => r.raw_key_hash === hash);
+      const row = hashToRow.get(hash);
       if (!row) {
         return { input_value: raw, matched: false, key_id: null, key_state: null, product_name: null, variant_sku: null, order_id: null };
       }
@@ -744,7 +766,6 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
     });
 
     const matchedCount = results.filter((r) => r.matched).length;
-    void foundSet; // consumed above
 
     return reply.send({ results, matched: matchedCount, total: rawValues.length });
   });
