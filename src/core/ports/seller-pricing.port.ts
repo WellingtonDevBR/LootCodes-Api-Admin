@@ -109,4 +109,11 @@ export interface ISellerAutoPricingService {
 
 export interface ISellerStockSyncService {
   refreshAllStock(requestId: string): Promise<RefreshStockResult>;
+  /**
+   * Sync a single seller listing's stock through the same pipeline used by
+   * the cron (`refreshAllStock`). Backs the operator-driven "Sync Stock Now"
+   * action in the CRM. Returns 0 listingsProcessed when the listing is
+   * missing or has `auto_sync_stock=false`.
+   */
+  refreshOneListing(requestId: string, listingId: string): Promise<RefreshStockResult>;
 }

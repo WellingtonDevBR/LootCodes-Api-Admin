@@ -50,8 +50,6 @@ import type {
   DeleteSellerListingDto,
   RecoverSellerListingHealthDto,
   RecoverSellerListingHealthResult,
-  SyncSellerStockDto,
-  SyncSellerStockResult,
   SetSellerListingDeclaredStockDto,
   SetSellerListingDeclaredStockResult,
   FetchRemoteStockDto,
@@ -653,38 +651,6 @@ export class SupabaseAdminSellerRepository implements IAdminSellerRepository {
       listing_id: dto.listing_id,
       status,
       health_status: status === 'active' ? 'healthy' : 'degraded',
-    };
-  }
-
-  async syncSellerStock(dto: SyncSellerStockDto): Promise<SyncSellerStockResult> {
-    logger.info('Syncing seller stock', { listingId: dto.listing_id });
-
-    const listing = await this.db.queryOne<Record<string, unknown>>('seller_listings', {
-      filter: { id: dto.listing_id },
-    });
-    if (!listing) throw new Error(`Seller listing ${dto.listing_id} not found`);
-
-    const availableKeys = await this.db.query<Record<string, unknown>>('product_keys', {
-      eq: [
-        ['variant_id', listing.variant_id as string],
-        ['key_state', 'available'],
-      ],
-    });
-
-    const stockCount = availableKeys.length;
-    const now = new Date().toISOString();
-
-    await this.db.update('seller_listings', { id: dto.listing_id }, {
-      declared_stock: stockCount,
-      last_synced_at: now,
-      updated_at: now,
-      error_message: null,
-    });
-
-    return {
-      listing_id: dto.listing_id,
-      declared_stock: stockCount,
-      synced_at: now,
     };
   }
 

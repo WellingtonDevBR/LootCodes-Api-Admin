@@ -36,8 +36,6 @@ import type {
   DeleteSellerListingDto,
   RecoverSellerListingHealthDto,
   RecoverSellerListingHealthResult,
-  SyncSellerStockDto,
-  SyncSellerStockResult,
   SetSellerListingDeclaredStockDto,
   SetSellerListingDeclaredStockResult,
   FetchRemoteStockDto,
@@ -77,7 +75,6 @@ export interface IAdminSellerRepository {
   ): Promise<UnlinkSellerListingMarketplaceProductResult>;
   deleteSellerListing(dto: DeleteSellerListingDto): Promise<void>;
   recoverSellerListingHealth(dto: RecoverSellerListingHealthDto): Promise<RecoverSellerListingHealthResult>;
-  syncSellerStock(dto: SyncSellerStockDto): Promise<SyncSellerStockResult>;
   /**
    * Persist an operator-pinned `manual_declared_stock` value (also mirrored to
    * `declared_stock` since this row was just pushed to the marketplace).

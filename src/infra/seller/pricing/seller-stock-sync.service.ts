@@ -82,7 +82,30 @@ export class SellerStockSyncService implements ISellerStockSyncService {
       logger.info('No active auto-sync-stock listings', { requestId });
       return { listingsProcessed: 0, stockUpdated: 0, errors: 0 };
     }
+    return this.processListings(requestId, listings);
+  }
 
+  async refreshOneListing(requestId: string, listingId: string): Promise<RefreshStockResult> {
+    const listings = await this.getAutoSyncStockListingById(listingId);
+    if (!listings.length) {
+      logger.info('refreshOneListing: listing not eligible (missing or auto_sync_stock=false)', {
+        requestId, listingId,
+      });
+      return { listingsProcessed: 0, stockUpdated: 0, errors: 0 };
+    }
+    return this.processListings(requestId, listings);
+  }
+
+  /**
+   * Shared processing pipeline used by both the cron (`refreshAllStock`) and
+   * the operator-driven manual sync (`refreshOneListing`). Builds the wallet
+   * snapshot ONCE per call, batches declared-stock updates per provider, and
+   * inlines non-declared-stock (`syncStockLevel`) updates.
+   */
+  private async processListings(
+    requestId: string,
+    listings: StockListingRow[],
+  ): Promise<RefreshStockResult> {
     const variantIds = [...new Set(listings.map((l) => l.variant_id))];
     const stockMap = await this.computeAvailableStock(variantIds);
 
@@ -617,7 +640,27 @@ export class SellerStockSyncService implements ISellerStockSyncService {
         ['auto_sync_stock', true],
       ],
     });
+    return this.enrichListingRows(rows);
+  }
 
+  /**
+   * Single-listing variant of {@link getAutoSyncStockListings}. Returns an
+   * empty array when the listing is missing, has `auto_sync_stock=false`,
+   * or is not in an `active`/`paused` state — callers treat that as "skip".
+   */
+  private async getAutoSyncStockListingById(listingId: string): Promise<StockListingRow[]> {
+    const rows = await this.db.query<Record<string, unknown>>('seller_listings', {
+      eq: [
+        ['id', listingId],
+        ['auto_sync_stock', true],
+      ],
+    });
+    return this.enrichListingRows(rows);
+  }
+
+  private async enrichListingRows(
+    rows: Record<string, unknown>[],
+  ): Promise<StockListingRow[]> {
     const activeOrPaused = rows.filter((r) =>
       r.status === 'active' || r.status === 'paused',
     );

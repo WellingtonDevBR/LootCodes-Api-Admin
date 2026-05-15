@@ -170,7 +170,10 @@ export interface SyncSellerStockDto {
 
 export interface SyncSellerStockResult {
   listing_id: string;
-  declared_stock: number;
+  /** True when the marketplace adapter was called and the row was persisted; false on skip-if-unchanged. */
+  stock_updated: boolean;
+  /** Listing-level error count from the underlying refresh (always 0 or 1 for a single listing). */
+  errors: number;
   synced_at: string;
 }
 
