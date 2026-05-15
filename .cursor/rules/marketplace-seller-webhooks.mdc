@@ -1,0 +1,190 @@
+---
+description: "Marketplace seller webhook architecture, contracts, and the per-marketplace wire-format spec each route is locked to"
+globs:
+  - "src/http/routes/seller-webhook.routes.ts"
+  - "src/http/middleware/marketplace-auth.middleware.ts"
+  - "src/core/use-cases/seller-webhook/**"
+  - "test/handle-*-webhook*.test.ts"
+  - "test/handle-gamivo-*.test.ts"
+  - "test/handle-eneba-*.test.ts"
+  - "test/handle-g2a-*.test.ts"
+  - "test/integration/routes/seller-webhook-*.routes.test.ts"
+alwaysApply: false
+---
+# Marketplace Seller Webhooks
+
+All marketplace callbacks (Eneba, Gamivo, G2A, Kinguin, Digiseller, Bamboo)
+are served from this Node.js Fastify backend — **NOT** from a Supabase Edge
+Function. Each marketplace has its own routes registered under `/webhooks/*`
+in `src/http/routes/seller-webhook.routes.ts`, authenticated by
+`createMarketplaceAuthMiddleware(<provider>)`.
+
+## Layered architecture
+
+The webhook stack mirrors the rest of the admin API: HTTP → Use case → Ports.
+
+| Layer | File pattern | Responsibility |
+|---|---|---|
+| Route | `src/http/routes/seller-webhook.routes.ts` | Method/path/auth, parser dispatch, response shape mapping |
+| Parser | `src/core/use-cases/seller-webhook/<provider>/<provider>-parser.ts` | Pure functions: validate the wire body → typed DTO; build the spec error envelope |
+| Use case | `src/core/use-cases/seller-webhook/<provider>/handle-<provider>-<verb>.use-case.ts` | Business logic; orchestrates ports |
+| Ports | `src/core/ports/{database, seller-key-operations, seller-domain-event, seller-listing-health, variant-unavailability}.port.ts` | Adapter contracts; only thing core can depend on |
+
+**Forbidden** in `core/use-cases/seller-webhook/**`:
+- Importing from `infra/`, `http/`, or `@supabase/*` (per `backend-admin.mdc`).
+- Reading `process.env.*` directly.
+- Calling Sentry directly — go through `createLogger().warn(msg, err)` /
+  `.error(msg, err)` so logs and Sentry capture stay coupled.
+
+## Authentication
+
+Each marketplace uses one of these auth strategies, all wired in
+`marketplace-auth.middleware.ts`:
+
+| Provider | Strategy | Source of truth |
+|---|---|---|
+| `eneba` | Bearer token | `provider_accounts.seller_config.callback_auth_token` |
+| `gamivo` | Bearer token | `provider_accounts.seller_config.callback_auth_token` |
+| `g2a` | Bearer token | `provider_accounts.seller_config.g2a_callback_auth_token` |
+| `kinguin` | `X-Auth-Token` header | `provider_accounts.seller_config.callback_auth_token` |
+| `kinguin-buyer` | `X-Event-Secret` header | `provider_accounts.api_profile.buyer_webhook_secret` |
+| `digiseller` | `X-Callback-Secret` header OR `?secret=` query | `provider_accounts.seller_config.callback_auth_token` |
+| `bamboo` | `secretKey` JSON body field | `provider_accounts.seller_config.bamboo_webhook_secret` |
+
+Comparison MUST go through `timingSafeEqual` from
+`src/infra/marketplace/_shared/marketplace-http.ts`. Failures return
+`401 { error: 'Unauthorized' }` regardless of provider — do not leak which
+component (token missing vs token mismatch vs account missing) failed.
+
+## Gamivo Import API — locked contract
+
+Source of truth: **`public-api-import.pdf`** (workspace root). The contract
+below is what every `/webhooks/gamivo/*` route must satisfy. Per-handler
+behaviour is regression-tested by:
+
+| Layer | Test |
+|---|---|
+| Parser | [test/gamivo-parser.test.ts](mdc:test/gamivo-parser.test.ts) |
+| Reservation | [test/handle-gamivo-reservation.use-case.test.ts](mdc:test/handle-gamivo-reservation.use-case.test.ts) |
+| Order create | [test/handle-gamivo-order.use-case.test.ts](mdc:test/handle-gamivo-order.use-case.test.ts) |
+| Order get keys | [test/handle-gamivo-get-keys.use-case.test.ts](mdc:test/handle-gamivo-get-keys.use-case.test.ts) |
+| Refund | [test/handle-gamivo-refund.use-case.test.ts](mdc:test/handle-gamivo-refund.use-case.test.ts) |
+| Offer deactivation | [test/handle-gamivo-offer-deactivation.use-case.test.ts](mdc:test/handle-gamivo-offer-deactivation.use-case.test.ts) |
+| Routes (auth + envelope) | [test/integration/routes/seller-webhook-gamivo.routes.test.ts](mdc:test/integration/routes/seller-webhook-gamivo.routes.test.ts) |
+
+When changing **any** route, parser, or use case in the `gamivo/*` tree, the
+matching test above must be updated in the same change. PR that drops a test
+without keeping equivalent coverage will not pass review.
+
+### Endpoint reference
+
+| Method + path | Auth | Success | Errors |
+|---|---|---|---|
+| `GET /webhooks/gamivo` | none | `204 No Content` | — |
+| `POST /webhooks/gamivo/reservation` | Bearer | `200 { reservation_id }` | `400 invalid_request`, `400 insufficient_stock`, `404 not_found` |
+| `POST /webhooks/gamivo/order` | Bearer | `200 { provider_order_id, keys[], available_stock? }` | `400 invalid_request`, `404 not_found`, `409 already_fulfilled`, `410 reservation_expired`, `500 provision_failed` |
+| `GET /webhooks/gamivo/order/:id/keys` | Bearer | `200 { keys[], available_stock? }` | `400 invalid_request`, `404 not_found`, `500 decrypt_failed` |
+| `POST /webhooks/gamivo/refund` | Bearer | `204 No Content` | `400 invalid_request` |
+| `POST /webhooks/gamivo/offer-deactivation` | Bearer | `204 No Content` | `400 invalid_request` |
+
+### Error envelope
+
+Every 4xx/5xx response from `/webhooks/gamivo/*` MUST use
+`buildErrorResponse(code, message)` from `gamivo-parser.ts`:
+
+```json
+{ "code": "<machine_code>", "message": "<human readable>" }
+```
+
+Allowed `code` values are exactly: `invalid_request`, `not_found`,
+`insufficient_stock`, `reservation_expired`, `already_fulfilled`,
+`provision_failed`, `decrypt_failed`. Adding a new code requires updating
+the integration test envelope assertions.
+
+### Idempotency contract
+
+Gamivo retries every webhook on transient errors. The handlers MUST be
+idempotent in these specific ways — these are the bug-traps the regression
+tests guard:
+
+- `POST /order` with a `reservation_id` whose status is already
+  `provisioned` returns `200` with the same keys it returned originally
+  (decrypted from `seller_key_provisions`). It does NOT mint a new
+  provision. Only when the replay decrypt fails or no provision rows survive
+  do we 409 `already_fulfilled`.
+- `POST /refund` `refunded_keys_count` is **cumulative**, not a delta. A
+  second notification with the same value is a no-op; an increased value
+  refunds only `count - alreadyRefunded` more keys; values exceeding
+  `totalProvisioned` are clamped. Repeat events are dedup'd via
+  `refundEventId = "gamivo:<reservationId>:<count>"`.
+- `POST /offer-deactivation` for a listing we don't have locally still
+  returns `204` and emits the audit event + admin alert. Never 404.
+- `POST /reservation` failure paths after a successful claim are wrapped in
+  `setImmediate` so background event-emit failures cannot break the wire
+  response.
+
+### Wire types
+
+- **`POST /reservation` request** — `product_id` (positive integer),
+  `quantity` (positive integer), `unit_price` (non-negative float). The
+  parser converts `unit_price` to cents via `Math.round(value * 100)`
+  (`shared/pricing.floatToCents`).
+- **`POST /order` request** — `reservation_id` MUST be a UUID v4 shape
+  (validated by the parser); `gamivo_order_id` and `created_time` are
+  non-empty trimmed strings.
+- **`GET /order/:id/keys` `:id`** — must match `^[A-Za-z0-9_-]{1,128}$`.
+  Anything else 400s before the use case is touched.
+- **Keys array** in `200` responses — every element is
+  `{ id: string, value: string, type: "text" }`. We never deliver `image`.
+
+## Adding a new marketplace
+
+When porting another marketplace seller webhook:
+
+1. Write the parser as **pure functions** under
+   `core/use-cases/seller-webhook/<provider>/<provider>-parser.ts`. Throw
+   `class <Provider>ParseError extends Error` on every reject path. Add
+   `buildErrorResponse(code, message)` matching the marketplace's spec
+   envelope.
+2. Each business operation gets its own `handle-<provider>-<verb>.use-case.ts`.
+   Constructor-inject `IDatabase`, `ISellerKeyOperationsPort`,
+   `ISellerDomainEventPort`, `IListingHealthPort`,
+   `IVariantUnavailabilityPort` as needed. Use cases never `import` from
+   `infra/`.
+3. Register the use case in `di/tokens.ts` and `di/container.ts`.
+4. Add the auth strategy (or reuse one) in
+   `marketplace-auth.middleware.ts` keyed by `provider_code`.
+5. Add the routes to `seller-webhook.routes.ts` under `/webhooks/<provider>`
+   with `preHandler: [createMarketplaceAuthMiddleware('<provider>')]`. Routes
+   parse, dispatch, and map use-case results to status + body — **no
+   business logic**.
+6. Write the four test families before merging:
+   - `test/<provider>-parser.test.ts` — every accept and reject path of
+     every parser, plus `buildErrorResponse` shape.
+   - `test/handle-<provider>-<verb>.use-case.test.ts` — one per use case.
+     Use the shared stubs in [test/helpers/gamivo-test-stubs.ts](mdc:test/helpers/gamivo-test-stubs.ts)
+     as a template (or import directly when the port surface matches).
+   - `test/integration/routes/seller-webhook-<provider>.routes.test.ts` —
+     route mapping, auth (401 on missing/bad token), parser → 400 envelope
+     shape, and any health probe endpoint.
+   - Pin the spec sample bodies from the marketplace's PDF/docs verbatim in
+     parser fixtures so future spec drift forces an explicit test update.
+
+### Test stubs — DO and DON'T
+
+- **DO** implement every method on the port interface in your stub. Type
+  it as `class StubFoo implements IFoo` so a port-method addition fails
+  compile-time, not just at runtime.
+- **DO** use `vi.fn()` plus `mockResolvedValue` defaults in stub
+  constructors, so tests that don't care about a method don't trip on
+  `undefined.then`.
+- **DO** assert on `db.updates` / `db.inserts` arrays for SQL writes — see
+  `TableStubDatabase` in `test/helpers/gamivo-test-stubs.ts`.
+- **DO** call `flushSetImmediate()` before asserting on background events
+  emitted via `setImmediate`.
+- **DON'T** reuse `test/helpers/mock-ports.ts` `MockDatabase` for webhook
+  tests — it's missing several `IDatabase` methods (`updateIn`,
+  `upsertMany`, `invokeFunction`, `invokeInternalFunction`, `queryAll`,
+  `insertMany`) and is meant for the auth-mocking integration suite.
+- **DON'T** use `as any` or `as unknown as` to short-circuit a missing port
+  method — extend the stub.

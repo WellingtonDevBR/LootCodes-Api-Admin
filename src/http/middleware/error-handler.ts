@@ -9,7 +9,7 @@ export function errorHandler(
   request: FastifyRequest,
   reply: FastifyReply,
 ) {
-  const requestId = (request as unknown as Record<string, unknown>).requestId as string | undefined;
+  const requestId = request.id;
 
   if (error.validation) {
     return reply.code(400).send({

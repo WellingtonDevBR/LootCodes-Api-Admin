@@ -31,6 +31,12 @@ export interface SellerProviderConfig {
   price_change_fee_cents: number;
   price_change_window_hours: number;
   price_change_max_paid_per_window: number;
+  /**
+   * Max age (ms) of cached competitor data in `seller_competitor_floors`
+   * before we ignore it for declared-stock floor-correction strategy.
+   * Default 4 h. Tunable per-provider to match competitor refresh cadence.
+   */
+  competitor_cache_max_age_ms: number;
   seller_declared_stock_enabled: boolean;
   callback_url: string;
   callback_auth_token: string;
@@ -61,6 +67,7 @@ export const SELLER_CONFIG_DEFAULTS: SellerProviderConfig = {
   price_change_fee_cents: 0,
   price_change_window_hours: 24,
   price_change_max_paid_per_window: 0,
+  competitor_cache_max_age_ms: 4 * 60 * 60 * 1000,
   seller_declared_stock_enabled: false,
   callback_url: '',
   callback_auth_token: '',
@@ -140,6 +147,12 @@ export function parseSellerConfig(raw: Record<string, unknown>): SellerProviderC
     price_change_fee_cents: feeCents,
     price_change_window_hours: windowHours,
     price_change_max_paid_per_window: maxPaid,
+    competitor_cache_max_age_ms: num(
+      'competitor_cache_max_age_ms',
+      60_000,
+      7 * 24 * 60 * 60 * 1000,
+      D.competitor_cache_max_age_ms,
+    ),
     seller_declared_stock_enabled: raw.seller_declared_stock_enabled === true,
     callback_url: str('callback_url', D.callback_url),
     callback_auth_token: str('callback_auth_token', D.callback_auth_token),

@@ -32,7 +32,7 @@ export async function adminPricingRoutes(app: FastifyInstance) {
     const uc = container.resolve<UpdateVariantPriceUseCase>(UC_TOKENS.UpdateVariantPrice);
     const { id } = request.params as { id: string };
     const body = request.body as Record<string, unknown>;
-    const admin_id = (request as unknown as Record<string, unknown>).adminId as string;
+    const admin_id = request.authUser?.id ?? 'unknown';
     const result = await uc.execute({
       variant_id: id,
       price_cents: body.price_cents as number,

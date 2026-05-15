@@ -103,7 +103,7 @@ export async function buildApp(): Promise<FastifyInstance> {
     const requestId = typeof incomingId === 'string' && incomingId.length > 0
       ? incomingId
       : crypto.randomUUID();
-    (request as unknown as Record<string, unknown>).requestId = requestId;
+    request.requestId = requestId;
     reply.header('X-Request-Id', requestId);
     requestContextStore.run({ requestId }, done);
   });

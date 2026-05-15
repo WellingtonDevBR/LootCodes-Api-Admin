@@ -1,4 +1,4 @@
-import type { FastifyInstance, FastifyRequest } from 'fastify';
+import type { FastifyInstance } from 'fastify';
 import { adminGuard, employeeGuard } from '../middleware/auth.guard.js';
 import { container } from '../../di/container.js';
 import { UC_TOKENS } from '../../di/tokens.js';
@@ -26,12 +26,6 @@ const EXPORT_MAX_BATCH = 500;
 
 const ALLOWED_BULK_STATES = ['faulty', 'burnt'] as const;
 type AllowedBulkState = typeof ALLOWED_BULK_STATES[number];
-
-interface AuthUser { id: string; email?: string }
-
-function getAuthUser(request: FastifyRequest): AuthUser | undefined {
-  return (request as unknown as { authUser?: AuthUser }).authUser;
-}
 
 export async function adminInventoryRoutes(app: FastifyInstance) {
   app.get('/kpis', { preHandler: [employeeGuard] }, async (_request, reply) => {
@@ -118,7 +112,7 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
       });
     }
 
-    const authUser = getAuthUser(request);
+    const authUser = request.authUser;
     const uc = container.resolve<UploadKeysUseCase>(UC_TOKENS.UploadKeys);
 
     try {
@@ -181,7 +175,7 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
       });
     }
 
-    const authUser = getAuthUser(request);
+    const authUser = request.authUser;
     const uc = container.resolve<DecryptKeysWithAuditUseCase>(UC_TOKENS.DecryptKeysWithAudit);
 
     const result = await uc.execute({
@@ -232,7 +226,7 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
       });
     }
 
-    const authUser = getAuthUser(request);
+    const authUser = request.authUser;
     const uc = container.resolve<ExportKeysUseCase>(UC_TOKENS.ExportKeys);
     const result = await uc.execute({
       key_ids: keyIds,
@@ -315,7 +309,7 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
       }
     }
 
-    const adminId = getAuthUser(request)?.id ?? 'unknown';
+    const adminId = request.authUser?.id ?? 'unknown';
     try {
       if (targetState === 'faulty') {
         const uc = container.resolve<MarkKeysFaultyUseCase>(UC_TOKENS.MarkKeysFaulty);
@@ -363,7 +357,7 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: 'reason must be 500 characters or fewer' });
     }
 
-    const adminId = getAuthUser(request)?.id ?? 'unknown';
+    const adminId = request.authUser?.id ?? 'unknown';
     try {
       const uc = container.resolve<MarkKeysFaultyUseCase>(UC_TOKENS.MarkKeysFaulty);
       const result = await uc.execute({
@@ -415,7 +409,7 @@ export async function adminInventoryRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: 'buyer_email is required' });
     }
 
-    const authUser = getAuthUser(request);
+    const authUser = request.authUser;
     const uc = container.resolve<ManualSellKeysUseCase>(UC_TOKENS.ManualSellKeys);
     try {
       const result = await uc.execute({

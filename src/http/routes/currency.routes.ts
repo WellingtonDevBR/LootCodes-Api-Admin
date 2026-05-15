@@ -29,7 +29,7 @@ export async function adminCurrencyRoutes(app: FastifyInstance) {
     '/rates',
     { preHandler: [adminGuard] },
     async (request, reply) => {
-      const authUser = (request as unknown as Record<string, unknown>).authUser as { id: string };
+      const authUser = request.authUser ?? { id: 'unknown' };
       const uc = container.resolve<AddCurrencyRateUseCase>(UC_TOKENS.AddCurrencyRate);
       const created = await uc.execute({
         to_currency: request.body.to_currency,
@@ -45,7 +45,7 @@ export async function adminCurrencyRoutes(app: FastifyInstance) {
     '/rates/:id',
     { preHandler: [adminGuard] },
     async (request, reply) => {
-      const authUser = (request as unknown as Record<string, unknown>).authUser as { id: string };
+      const authUser = request.authUser ?? { id: 'unknown' };
       const uc = container.resolve<UpdateCurrencyRateUseCase>(UC_TOKENS.UpdateCurrencyRate);
       await uc.execute({
         id: request.params.id,
@@ -61,7 +61,7 @@ export async function adminCurrencyRoutes(app: FastifyInstance) {
     '/rates/:id/margin',
     { preHandler: [adminGuard] },
     async (request, reply) => {
-      const authUser = (request as unknown as Record<string, unknown>).authUser as { id: string };
+      const authUser = request.authUser ?? { id: 'unknown' };
       const uc = container.resolve<UpdateCurrencyMarginUseCase>(UC_TOKENS.UpdateCurrencyMargin);
       await uc.execute({
         id: request.params.id,
@@ -77,7 +77,7 @@ export async function adminCurrencyRoutes(app: FastifyInstance) {
     '/rates/:id/toggle',
     { preHandler: [adminGuard] },
     async (request, reply) => {
-      const authUser = (request as unknown as Record<string, unknown>).authUser as { id: string };
+      const authUser = request.authUser ?? { id: 'unknown' };
       const uc = container.resolve<ToggleCurrencyActiveUseCase>(UC_TOKENS.ToggleCurrencyActive);
       const is_active = await uc.execute({
         id: request.params.id,
@@ -92,7 +92,7 @@ export async function adminCurrencyRoutes(app: FastifyInstance) {
     '/rates/:id',
     { preHandler: [adminGuard] },
     async (request, reply) => {
-      const authUser = (request as unknown as Record<string, unknown>).authUser as { id: string };
+      const authUser = request.authUser ?? { id: 'unknown' };
       const uc = container.resolve<DeleteCurrencyRateUseCase>(UC_TOKENS.DeleteCurrencyRate);
       await uc.execute({
         id: request.params.id,
@@ -104,7 +104,7 @@ export async function adminCurrencyRoutes(app: FastifyInstance) {
 
   // ── Sync rates from external source ───────────────────────────────
   app.post('/sync', { preHandler: [adminGuard] }, async (request, reply) => {
-    const authUser = (request as unknown as Record<string, unknown>).authUser as { id: string };
+    const authUser = request.authUser ?? { id: 'unknown' };
     const uc = container.resolve<SyncCurrencyUseCase>(UC_TOKENS.SyncCurrency);
     const result = await uc.execute({ admin_id: authUser.id });
     return reply.send(result);
@@ -112,7 +112,7 @@ export async function adminCurrencyRoutes(app: FastifyInstance) {
 
   // ── Generate all localized prices ─────────────────────────────────
   app.post('/generate-prices', { preHandler: [adminGuard] }, async (request, reply) => {
-    const authUser = (request as unknown as Record<string, unknown>).authUser as { id: string };
+    const authUser = request.authUser ?? { id: 'unknown' };
     const uc = container.resolve<GenerateAllPricesUseCase>(UC_TOKENS.GenerateAllPrices);
     const result = await uc.execute({ admin_id: authUser.id });
     return reply.send(result);

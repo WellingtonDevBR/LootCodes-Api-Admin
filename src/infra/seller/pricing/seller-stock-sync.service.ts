@@ -533,6 +533,7 @@ export class SellerStockSyncService implements ISellerStockSyncService {
           priceStrategy: merged.price_strategy,
           priceStrategyValue: merged.price_strategy_value,
           pricingModel,
+          competitorCacheMaxAgeMs: merged.competitor_cache_max_age_ms,
         });
         const declaredQty = Math.min(
           Math.max(1, Math.trunc(cheapest.offer.available_quantity ?? 1)),

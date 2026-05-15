@@ -27,7 +27,7 @@ export async function adminDigisellerRoutes(app: FastifyInstance) {
       limit: body.limit,
       since: body.since,
       dry_run: body.dry_run,
-      admin_id: ((request as unknown as Record<string, { id?: string }>).authUser?.id) ?? 'unknown',
+      admin_id: request.authUser?.id ?? 'unknown',
     };
 
     const uc = container.resolve<DigisellerReconcileProfitUseCase>(UC_TOKENS.DigisellerReconcileProfit);

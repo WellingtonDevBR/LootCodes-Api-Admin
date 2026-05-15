@@ -19,6 +19,10 @@ export class MockDatabase implements IDatabase {
     return (this.queryResults.get(table) ?? []) as T[];
   }
 
+  async queryAll<T = unknown>(table: string, _options?: Omit<QueryOptions, 'range' | 'limit'>): Promise<T[]> {
+    return (this.queryResults.get(table) ?? []) as T[];
+  }
+
   async queryOne<T = unknown>(table: string, _options?: QueryOptions): Promise<T | null> {
     const results = this.queryResults.get(table) ?? [];
     return (results[0] ?? null) as T | null;
@@ -33,12 +37,29 @@ export class MockDatabase implements IDatabase {
     return { id: 'mock-id', ...data } as T;
   }
 
+  async insertMany(_table: string, rows: Record<string, unknown>[]): Promise<number> {
+    return rows.length;
+  }
+
   async update<T = unknown>(_table: string, _filter: Record<string, unknown>, data: Record<string, unknown>): Promise<T[]> {
     return [data] as T[];
   }
 
+  async updateIn<T = unknown>(
+    _table: string,
+    _column: string,
+    values: unknown[],
+    data: Record<string, unknown>,
+  ): Promise<T[]> {
+    return values.map(() => data) as T[];
+  }
+
   async upsert<T = unknown>(_table: string, data: Record<string, unknown>, _onConflict?: string): Promise<T> {
     return data as T;
+  }
+
+  async upsertMany(_table: string, _rows: Record<string, unknown>[], _onConflict: string): Promise<void> {
+    return;
   }
 
   async delete(_table: string, _filter: Record<string, unknown>): Promise<number> {
@@ -49,6 +70,14 @@ export class MockDatabase implements IDatabase {
     if (this.rpcResults.has(functionName)) {
       return this.rpcResults.get(functionName) as T;
     }
+    return {} as T;
+  }
+
+  async invokeFunction<T = unknown>(_functionName: string, _body: Record<string, unknown>): Promise<T> {
+    return {} as T;
+  }
+
+  async invokeInternalFunction<T = unknown>(_functionName: string, _body: Record<string, unknown>): Promise<T> {
     return {} as T;
   }
 }

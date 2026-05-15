@@ -23,13 +23,11 @@
 import type { IDatabase } from '../../core/ports/database.port.js';
 import type { IProcurementFxConverter } from '../../core/ports/procurement-fx-converter.port.js';
 import type { SellerPriceStrategy } from '../../core/use-cases/seller/seller.types.js';
+import { SELLER_CONFIG_DEFAULTS } from '../../core/use-cases/seller/seller.types.js';
 import { applySellerPriceStrategy } from '../../core/use-cases/seller/apply-seller-price-strategy.js';
 import { createLogger } from '../../shared/logger.js';
 
 const logger = createLogger('strategy-aware-correction');
-
-/** Max age of cached competitor data before we ignore it and use just the floor. */
-const COMPETITOR_CACHE_MAX_AGE_MS = 4 * 60 * 60 * 1000; // 4 hours
 
 interface StrategyAwareCorrectionParams {
   db: IDatabase;
@@ -49,6 +47,12 @@ interface StrategyAwareCorrectionParams {
    * 'gross_price' / undefined → gross (buyer-facing): `listing.price_cents` is gross.
    */
   pricingModel?: 'seller_price' | 'gross_price';
+  /**
+   * Max age (ms) of cached competitor data in `seller_competitor_floors`
+   * before we ignore it and fall back to the cost floor.
+   * Defaults to `SELLER_CONFIG_DEFAULTS.competitor_cache_max_age_ms` (4 h).
+   */
+  competitorCacheMaxAgeMs?: number;
 }
 
 /**
@@ -62,6 +66,7 @@ export async function computeStrategyAwareCorrectedPrice(
     db, fx, listingId, listingCurrency, offerCostUsdCents,
     marginPct, commissionPct, fixedFeeCents,
     priceStrategy, priceStrategyValue, pricingModel,
+    competitorCacheMaxAgeMs = SELLER_CONFIG_DEFAULTS.competitor_cache_max_age_ms,
   } = params;
 
   const isSellerPrice = pricingModel === 'seller_price';
@@ -105,7 +110,7 @@ export async function computeStrategyAwareCorrectedPrice(
     if (row) {
       const updatedAt = row.updated_at ? new Date(row.updated_at).getTime() : 0;
       const ageMs = Date.now() - updatedAt;
-      if (ageMs <= COMPETITOR_CACHE_MAX_AGE_MS) {
+      if (ageMs <= competitorCacheMaxAgeMs) {
         if (row.lowest_competitor_cents != null && row.lowest_competitor_cents > 0) {
           lowestCompetitorGross = row.lowest_competitor_cents;
         }

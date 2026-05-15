@@ -209,6 +209,7 @@ export class ProcurementDeclaredStockReconcileService implements IProcurementDec
             priceStrategy: mergedConfig.price_strategy,
             priceStrategyValue: mergedConfig.price_strategy_value,
             pricingModel,
+            competitorCacheMaxAgeMs: mergedConfig.competitor_cache_max_age_ms,
           });
           const declaredQty = Math.min(
             Math.max(1, Math.trunc(cheapest.offer.available_quantity ?? 1)),

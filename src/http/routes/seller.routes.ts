@@ -279,7 +279,7 @@ export async function adminSellerRoutes(app: FastifyInstance) {
     const publishUc = container.resolve<PublishSellerListingToMarketplaceUseCase>(
       UC_TOKENS.PublishSellerListingToMarketplace,
     );
-    const admin_id = (request as unknown as Record<string, unknown>).adminId as string;
+    const admin_id = request.authUser?.id ?? 'unknown';
     const external_product_id = body.external_product_id?.trim() || undefined;
     const publishToMarketplace = Boolean(external_product_id) && body.publish_to_marketplace !== false;
 
@@ -324,7 +324,7 @@ export async function adminSellerRoutes(app: FastifyInstance) {
       UC_TOKENS.PublishSellerListingToMarketplace,
     );
     const { id } = request.params as { id: string };
-    const admin_id = (request as unknown as Record<string, unknown>).adminId as string;
+    const admin_id = request.authUser?.id ?? 'unknown';
     try {
       const result = await uc.execute({ listing_id: id, admin_id });
       return reply.send(result);
@@ -343,7 +343,7 @@ export async function adminSellerRoutes(app: FastifyInstance) {
       UC_TOKENS.BindSellerListingExternalAuction,
     );
     const { id } = request.params as { id: string };
-    const admin_id = (request as unknown as Record<string, unknown>).adminId as string;
+    const admin_id = request.authUser?.id ?? 'unknown';
     try {
       const result = await uc.execute({
         listing_id: id,
@@ -367,7 +367,7 @@ export async function adminSellerRoutes(app: FastifyInstance) {
 
     const uc = container.resolve<UpdateSellerListingPriceUseCase>(UC_TOKENS.UpdateSellerListingPrice);
     const { id } = request.params as { id: string };
-    const admin_id = (request as unknown as Record<string, unknown>).adminId as string;
+    const admin_id = request.authUser?.id ?? 'unknown';
     const result = await uc.execute({
       listing_id: id,
       price_cents: parsed.data.price_cents,
@@ -382,7 +382,7 @@ export async function adminSellerRoutes(app: FastifyInstance) {
 
     const uc = container.resolve<ToggleSellerListingSyncUseCase>(UC_TOKENS.ToggleSellerListingSync);
     const { id } = request.params as { id: string };
-    const admin_id = (request as unknown as Record<string, unknown>).adminId as string;
+    const admin_id = request.authUser?.id ?? 'unknown';
     const result = await uc.execute({
       listing_id: id,
       sync_stock: parsed.data.sync_stock,
@@ -398,7 +398,7 @@ export async function adminSellerRoutes(app: FastifyInstance) {
 
     const uc = container.resolve<UpdateSellerListingMinPriceUseCase>(UC_TOKENS.UpdateSellerListingMinPrice);
     const { id } = request.params as { id: string };
-    const admin_id = (request as unknown as Record<string, unknown>).adminId as string;
+    const admin_id = request.authUser?.id ?? 'unknown';
     const result = await uc.execute({
       listing_id: id,
       mode: parsed.data.mode,
@@ -414,7 +414,7 @@ export async function adminSellerRoutes(app: FastifyInstance) {
 
     const uc = container.resolve<UpdateSellerListingOverridesUseCase>(UC_TOKENS.UpdateSellerListingOverrides);
     const { id } = request.params as { id: string };
-    const admin_id = (request as unknown as Record<string, unknown>).adminId as string;
+    const admin_id = request.authUser?.id ?? 'unknown';
     const result = await uc.execute({
       listing_id: id,
       overrides: parsed.data.overrides,
@@ -429,7 +429,7 @@ export async function adminSellerRoutes(app: FastifyInstance) {
 
     const uc = container.resolve<SetSellerListingVisibilityUseCase>(UC_TOKENS.SetSellerListingVisibility);
     const { id } = request.params as { id: string };
-    const admin_id = (request as unknown as Record<string, unknown>).adminId as string;
+    const admin_id = request.authUser?.id ?? 'unknown';
     const result = await uc.execute({
       listing_id: id,
       visibility: parsed.data.visibility,
@@ -441,7 +441,7 @@ export async function adminSellerRoutes(app: FastifyInstance) {
   app.post('/listings/:id/deactivate', { preHandler: [adminGuard] }, async (request, reply) => {
     const uc = container.resolve<DeactivateSellerListingUseCase>(UC_TOKENS.DeactivateSellerListing);
     const { id } = request.params as { id: string };
-    const admin_id = (request as unknown as Record<string, unknown>).adminId as string;
+    const admin_id = request.authUser?.id ?? 'unknown';
     const result = await uc.execute({ listing_id: id, admin_id });
     return reply.send(result);
   });
@@ -451,7 +451,7 @@ export async function adminSellerRoutes(app: FastifyInstance) {
       UC_TOKENS.UnlinkSellerListingMarketplaceProduct,
     );
     const { id } = request.params as { id: string };
-    const admin_id = (request as unknown as Record<string, unknown>).adminId as string;
+    const admin_id = request.authUser?.id ?? 'unknown';
     const result = await uc.execute({ listing_id: id, admin_id });
     return reply.send(result);
   });
@@ -462,7 +462,7 @@ export async function adminSellerRoutes(app: FastifyInstance) {
 
     const uc = container.resolve<DeleteSellerListingUseCase>(UC_TOKENS.DeleteSellerListing);
     const { id } = request.params as { id: string };
-    const admin_id = (request as unknown as Record<string, unknown>).adminId as string;
+    const admin_id = request.authUser?.id ?? 'unknown';
     await uc.execute({
       listing_id: id,
       deactivate_first: parsed.data.deactivate_first,
@@ -475,7 +475,7 @@ export async function adminSellerRoutes(app: FastifyInstance) {
     const uc = container.resolve<RecoverSellerListingHealthUseCase>(UC_TOKENS.RecoverSellerListingHealth);
     const { id } = request.params as { id: string };
     const body = request.body as Record<string, unknown>;
-    const admin_id = (request as unknown as Record<string, unknown>).adminId as string;
+    const admin_id = request.authUser?.id ?? 'unknown';
     const result = await uc.execute({
       listing_id: id,
       reset_metrics: body.reset_metrics as boolean | undefined,
@@ -489,7 +489,7 @@ export async function adminSellerRoutes(app: FastifyInstance) {
   app.post('/listings/:id/sync-stock', { preHandler: [adminGuard] }, async (request, reply) => {
     const uc = container.resolve<SyncSellerStockUseCase>(UC_TOKENS.SyncSellerStock);
     const { id } = request.params as { id: string };
-    const admin_id = (request as unknown as Record<string, unknown>).adminId as string;
+    const admin_id = request.authUser?.id ?? 'unknown';
     const result = await uc.execute({ listing_id: id, admin_id });
     return reply.send(result);
   });
@@ -527,7 +527,7 @@ export async function adminSellerRoutes(app: FastifyInstance) {
   app.post('/listings/:id/remote-stock', { preHandler: [employeeGuard] }, async (request, reply) => {
     const uc = container.resolve<FetchRemoteStockUseCase>(UC_TOKENS.FetchRemoteStock);
     const { id } = request.params as { id: string };
-    const admin_id = (request as unknown as Record<string, unknown>).adminId as string;
+    const admin_id = request.authUser?.id ?? 'unknown';
     const result = await uc.execute({ listing_id: id, admin_id });
     return reply.send(result);
   });
@@ -591,7 +591,7 @@ export async function adminSellerRoutes(app: FastifyInstance) {
     if (parsed.kind === 'error') return replyInvalidRequestBody(reply, parsed.issues);
 
     const uc = container.resolve<BatchUpdatePricesUseCase>(UC_TOKENS.BatchUpdatePrices);
-    const admin_id = (request as unknown as Record<string, unknown>).adminId as string;
+    const admin_id = request.authUser?.id ?? 'unknown';
     const result = await uc.execute({
       provider_account_id: parsed.data.provider_account_id,
       updates: [...parsed.data.updates],
@@ -603,7 +603,7 @@ export async function adminSellerRoutes(app: FastifyInstance) {
   app.post('/listings/batch-stock', { preHandler: [adminGuard] }, async (request, reply) => {
     const uc = container.resolve<BatchUpdateStockUseCase>(UC_TOKENS.BatchUpdateStock);
     const body = request.body as Record<string, unknown>;
-    const admin_id = (request as unknown as Record<string, unknown>).adminId as string;
+    const admin_id = request.authUser?.id ?? 'unknown';
     const result = await uc.execute({
       provider_account_id: body.provider_account_id as string,
       updates: body.updates as Array<{ external_listing_id: string; quantity: number }>,
@@ -615,7 +615,7 @@ export async function adminSellerRoutes(app: FastifyInstance) {
   app.post('/listings/global-stock-status', { preHandler: [adminGuard] }, async (request, reply) => {
     const uc = container.resolve<UpdateGlobalStockStatusUseCase>(UC_TOKENS.UpdateGlobalStockStatus);
     const body = request.body as Record<string, unknown>;
-    const admin_id = (request as unknown as Record<string, unknown>).adminId as string;
+    const admin_id = request.authUser?.id ?? 'unknown';
     const result = await uc.execute({
       provider_account_id: body.provider_account_id as string,
       enabled: body.enabled as boolean,
@@ -629,7 +629,7 @@ export async function adminSellerRoutes(app: FastifyInstance) {
   app.post('/provider-accounts/:id/enable-declared-stock', { preHandler: [adminGuard] }, async (request, reply) => {
     const uc = container.resolve<EnableDeclaredStockUseCase>(UC_TOKENS.EnableDeclaredStock);
     const { id } = request.params as { id: string };
-    const admin_id = (request as unknown as Record<string, unknown>).adminId as string;
+    const admin_id = request.authUser?.id ?? 'unknown';
     try {
       const result = await uc.execute({ provider_account_id: id, admin_id });
       return reply.send(result);
@@ -643,7 +643,7 @@ export async function adminSellerRoutes(app: FastifyInstance) {
   app.post('/provider-accounts/:id/enable-key-replacements', { preHandler: [adminGuard] }, async (request, reply) => {
     const uc = container.resolve<EnableKeyReplacementsUseCase>(UC_TOKENS.EnableKeyReplacements);
     const { id } = request.params as { id: string };
-    const admin_id = (request as unknown as Record<string, unknown>).adminId as string;
+    const admin_id = request.authUser?.id ?? 'unknown';
     try {
       const result = await uc.execute({ provider_account_id: id, admin_id });
       return reply.send(result);
@@ -659,7 +659,7 @@ export async function adminSellerRoutes(app: FastifyInstance) {
   app.delete('/provider-accounts/:id/webhooks/:callbackId', { preHandler: [adminGuard] }, async (request, reply) => {
     const uc = container.resolve<RemoveCallbackUseCase>(UC_TOKENS.RemoveCallback);
     const { id, callbackId } = request.params as { id: string; callbackId: string };
-    const admin_id = (request as unknown as Record<string, unknown>).adminId as string;
+    const admin_id = request.authUser?.id ?? 'unknown';
     try {
       const result = await uc.execute({ provider_account_id: id, callback_id: callbackId, admin_id });
       return reply.send(result);
@@ -678,7 +678,7 @@ export async function adminSellerRoutes(app: FastifyInstance) {
 
   app.post('/expire-reservations', { preHandler: [adminGuard] }, async (request, reply) => {
     const uc = container.resolve<ExpireReservationsUseCase>(UC_TOKENS.ExpireReservations);
-    const admin_id = (request as unknown as Record<string, unknown>).adminId as string;
+    const admin_id = request.authUser?.id ?? 'unknown';
     const result = await uc.execute({ admin_id });
     return reply.send(result);
   });

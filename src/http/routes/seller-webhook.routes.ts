@@ -29,12 +29,11 @@
  */
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { container } from '../../di/container.js';
-import { TOKENS, UC_TOKENS } from '../../di/tokens.js';
+import { UC_TOKENS } from '../../di/tokens.js';
 import {
   createMarketplaceAuthMiddleware,
   type ProviderAuthResult,
 } from '../middleware/marketplace-auth.middleware.js';
-import type { IDatabase } from '../../core/ports/database.port.js';
 import type { HandleDeclaredStockReserveUseCase } from '../../core/use-cases/seller-webhook/eneba/handle-declared-stock-reserve.use-case.js';
 import type { HandleDeclaredStockProvideUseCase } from '../../core/use-cases/seller-webhook/eneba/handle-declared-stock-provide.use-case.js';
 import type { HandleDeclaredStockCancelUseCase } from '../../core/use-cases/seller-webhook/eneba/handle-declared-stock-cancel.use-case.js';
@@ -48,6 +47,7 @@ import type { HandleG2ACancelReservationUseCase } from '../../core/use-cases/sel
 import type { HandleG2AGetInventoryUseCase } from '../../core/use-cases/seller-webhook/g2a/handle-g2a-get-inventory.use-case.js';
 import type { HandleG2AReturnInventoryUseCase } from '../../core/use-cases/seller-webhook/g2a/handle-g2a-return-inventory.use-case.js';
 import type { HandleG2ANotificationsUseCase } from '../../core/use-cases/seller-webhook/g2a/handle-g2a-notifications.use-case.js';
+import type { HandleG2ATokenExchangeUseCase } from '../../core/use-cases/seller-webhook/g2a/handle-g2a-token-exchange.use-case.js';
 import {
   parseReservationRequest,
   parseOrderRequest,
@@ -55,8 +55,6 @@ import {
   G2AParseError,
   buildContractError,
 } from '../../core/use-cases/seller-webhook/g2a/g2a-parser.js';
-import { resolveProviderSecrets } from '../../infra/marketplace/resolve-provider-secrets.js';
-import { timingSafeEqual } from '../../infra/marketplace/_shared/marketplace-http.js';
 import type { HandleGamivoReservationUseCase } from '../../core/use-cases/seller-webhook/gamivo/handle-gamivo-reservation.use-case.js';
 import type { HandleGamivoOrderUseCase } from '../../core/use-cases/seller-webhook/gamivo/handle-gamivo-order.use-case.js';
 import type { HandleGamivoGetKeysUseCase } from '../../core/use-cases/seller-webhook/gamivo/handle-gamivo-get-keys.use-case.js';
@@ -225,7 +223,9 @@ export async function sellerWebhookRoutes(app: FastifyInstance) {
 
   app.post('/g2a/oauth/token', async (request, reply) => {
     try {
-      const result = await handleG2ATokenExchange(request);
+      const creds = parseG2ACredentials(request);
+      const uc = container.resolve<HandleG2ATokenExchangeUseCase>(UC_TOKENS.HandleG2ATokenExchange);
+      const result = await uc.execute(creds);
       return reply.status(result.status).send(result.body);
     } catch (err) {
       logger.error('G2A token exchange error', err as Error);
@@ -669,15 +669,10 @@ export async function sellerWebhookRoutes(app: FastifyInstance) {
   });
 }
 
-// ─── G2A OAuth2 Token Exchange ────────────────────────────────────────
-
-const G2A_TOKEN_EXPIRY_SECONDS = 3600;
-
-interface TokenExchangeResult {
-  status: number;
-  body: Record<string, unknown>;
-}
-
+/**
+ * G2A sends OAuth2 credentials either as query string or form body. Normalize
+ * into a single shape for the use case.
+ */
 function parseG2ACredentials(
   request: FastifyRequest,
 ): { grantType: string; clientId: string; clientSecret: string } {
@@ -696,70 +691,5 @@ function parseG2ACredentials(
     grantType: body.grant_type ?? '',
     clientId: body.client_id ?? '',
     clientSecret: body.client_secret ?? '',
-  };
-}
-
-async function handleG2ATokenExchange(
-  request: FastifyRequest,
-): Promise<TokenExchangeResult> {
-  const { grantType, clientId, clientSecret } = parseG2ACredentials(request);
-
-  if (grantType !== 'client_credentials') {
-    logger.warn('G2A token request with invalid grant_type', { grantType });
-    return { status: 400, body: { error: 'unsupported_grant_type' } };
-  }
-
-  const db = container.resolve<IDatabase>(TOKENS.Database);
-
-  const account = await db.queryOne<{
-    id: string;
-    seller_config: Record<string, unknown>;
-  }>('provider_accounts', {
-    select: 'id, seller_config',
-    eq: [['provider_code', 'g2a'], ['supports_seller', true]],
-    single: true,
-  });
-
-  if (!account) {
-    logger.error('G2A seller provider account not found');
-    return { status: 500, body: { error: 'server_error' } };
-  }
-
-  const secrets = await resolveProviderSecrets(db, account.id);
-  const expectedClientId = secrets['G2A_CLIENT_ID'] ?? '';
-  const expectedClientSecret = secrets['G2A_CLIENT_SECRET'] ?? '';
-
-  if (
-    !expectedClientId ||
-    !expectedClientSecret ||
-    !timingSafeEqual(clientId, expectedClientId) ||
-    !timingSafeEqual(clientSecret, expectedClientSecret)
-  ) {
-    logger.warn('G2A token request with invalid credentials');
-    return { status: 401, body: { error: 'invalid_client' } };
-  }
-
-  const sellerConfig = (account.seller_config ?? {}) as Record<string, unknown>;
-  let callbackToken = sellerConfig.g2a_callback_auth_token as string | undefined;
-
-  if (!callbackToken) {
-    const { randomUUID } = await import('node:crypto');
-    callbackToken = randomUUID();
-    const updatedConfig = { ...sellerConfig, g2a_callback_auth_token: callbackToken };
-
-    await db.update('provider_accounts', { id: account.id }, {
-      seller_config: updatedConfig,
-    });
-
-    logger.info('Auto-generated g2a_callback_auth_token', { accountId: account.id });
-  }
-
-  return {
-    status: 200,
-    body: {
-      access_token: callbackToken,
-      token_type: 'bearer',
-      expires_in: G2A_TOKEN_EXPIRY_SECONDS,
-    },
   };
 }

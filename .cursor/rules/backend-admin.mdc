@@ -54,3 +54,12 @@ No public routes. No guest access. No storefront routes.
 - **Unit tests** (`test/unit/`): Mock ports, test use case logic
 - **Integration tests** (`test/integration/`): `buildTestApp()` + `app.inject()`
 - Framework: Vitest
+
+## Marketplace Seller Webhooks
+
+`/webhooks/<provider>/*` callbacks (Eneba, Gamivo, G2A, Kinguin, Digiseller,
+Bamboo) live on this Node.js backend, **not** on Supabase Edge Functions.
+Per-marketplace wire-format contracts, auth strategies, idempotency rules,
+and the test-coverage expectation are documented in
+[marketplace-seller-webhooks.mdc](mdc:.cursor/rules/marketplace-seller-webhooks.mdc).
+Read that rule before adding/changing any seller webhook code.

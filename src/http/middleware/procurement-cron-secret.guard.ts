@@ -25,5 +25,5 @@ export async function procurementCronSecretGuard(request: FastifyRequest, reply:
     return;
   }
 
-  (request as unknown as Record<string, unknown>).authUser = { id: 'cron-procurement-stock', role: 'service' };
+  request.authUser = { id: 'cron-procurement-stock', role: 'service' };
 }

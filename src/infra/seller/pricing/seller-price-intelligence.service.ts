@@ -448,7 +448,8 @@ export class SellerPriceIntelligenceService {
       }
 
       return { isOscillating: false, changeCount };
-    } catch {
+    } catch (err) {
+      logger.warn('detectOscillation failed', err as Error, { listingId });
       return { isOscillating: false, changeCount: 0 };
     }
   }
@@ -546,7 +547,8 @@ export class SellerPriceIntelligenceService {
         confirmed: confirmedCount >= requiredSnapshots,
         count: confirmedCount,
       };
-    } catch {
+    } catch (err) {
+      logger.warn('checkDampening failed', err as Error, { listingId });
       return { confirmed: false, count: 0 };
     }
   }

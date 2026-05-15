@@ -351,6 +351,7 @@ import { HandleG2ACancelReservationUseCase } from '../core/use-cases/seller-webh
 import { HandleG2AGetInventoryUseCase } from '../core/use-cases/seller-webhook/g2a/handle-g2a-get-inventory.use-case.js';
 import { HandleG2AReturnInventoryUseCase } from '../core/use-cases/seller-webhook/g2a/handle-g2a-return-inventory.use-case.js';
 import { HandleG2ANotificationsUseCase } from '../core/use-cases/seller-webhook/g2a/handle-g2a-notifications.use-case.js';
+import { HandleG2ATokenExchangeUseCase } from '../core/use-cases/seller-webhook/g2a/handle-g2a-token-exchange.use-case.js';
 import { HandleGamivoReservationUseCase } from '../core/use-cases/seller-webhook/gamivo/handle-gamivo-reservation.use-case.js';
 import { HandleGamivoOrderUseCase } from '../core/use-cases/seller-webhook/gamivo/handle-gamivo-order.use-case.js';
 import { HandleGamivoGetKeysUseCase } from '../core/use-cases/seller-webhook/gamivo/handle-gamivo-get-keys.use-case.js';
@@ -802,6 +803,7 @@ container.register(UC_TOKENS.HandleG2ACancelReservation, { useClass: HandleG2ACa
 container.register(UC_TOKENS.HandleG2AGetInventory, { useClass: HandleG2AGetInventoryUseCase });
 container.register(UC_TOKENS.HandleG2AReturnInventory, { useClass: HandleG2AReturnInventoryUseCase });
 container.register(UC_TOKENS.HandleG2ANotifications, { useClass: HandleG2ANotificationsUseCase });
+container.register(UC_TOKENS.HandleG2ATokenExchange, { useClass: HandleG2ATokenExchangeUseCase });
 container.register(UC_TOKENS.HandleGamivoReservation, { useClass: HandleGamivoReservationUseCase });
 container.register(UC_TOKENS.HandleGamivoOrder, { useClass: HandleGamivoOrderUseCase });
 container.register(UC_TOKENS.HandleGamivoGetKeys, { useClass: HandleGamivoGetKeysUseCase });

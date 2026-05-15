@@ -28,8 +28,7 @@ function pruneAuthCache(): void {
  * Procurement and several routes mistakenly read `adminUserId`, which is never set.
  */
 export function getAuthenticatedUserId(request: FastifyRequest): string {
-  const authUser = (request as unknown as Record<string, unknown>).authUser as { id?: string } | undefined;
-  const id = authUser?.id;
+  const id = request.authUser?.id;
   return typeof id === 'string' && id.length > 0 ? id : 'unknown';
 }
 
@@ -67,7 +66,7 @@ export async function internalSecretGuard(request: FastifyRequest, reply: Fastif
     return reply.code(401).send({ error: 'Invalid internal secret', code: 'AUTHENTICATION_ERROR' });
   }
 
-  (request as unknown as Record<string, unknown>).authUser = { id: 'internal', role: 'service' };
+  request.authUser = { id: 'internal', role: 'service' };
 }
 
 async function resolveAuthEntry(
@@ -82,10 +81,9 @@ async function resolveAuthEntry(
 
   const token = authHeader.slice(7);
 
-  // Fast path: serve from cache
   const cached = authCache.get(token);
   if (cached && cached.expiresAt > Date.now()) {
-    (request as unknown as Record<string, unknown>).authUser = cached.user;
+    request.authUser = cached.user;
     return cached;
   }
 
@@ -113,6 +111,6 @@ async function resolveAuthEntry(
 
   pruneAuthCache();
   authCache.set(token, entry);
-  (request as unknown as Record<string, unknown>).authUser = user;
+  request.authUser = user;
   return entry;
 }
