@@ -109,7 +109,7 @@ export class WgcardsManualBuyer {
       current: 1,
       size: 200,
     });
-    const record = page.records.find((r) => r.itemId === itemId);
+    const record = (page.records ?? []).find((r) => r.itemId === itemId);
     return record?.skuInfos ?? [];
   }
 

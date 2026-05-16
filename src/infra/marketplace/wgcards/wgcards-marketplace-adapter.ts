@@ -117,7 +117,11 @@ export class WgcardsMarketplaceAdapter implements IProductSearchAdapter {
 
     const results: ProductSearchResult[] = [];
 
-    for (const item of page.records) {
+    // WGCards returns 200 with an empty / absent `records` field when the
+    // search yields no matches. Guard before iterating to avoid TypeError.
+    const records = Array.isArray(page?.records) ? page.records : [];
+
+    for (const item of records) {
       for (const sku of item.skuInfos) {
         if (results.length >= limit) break;
 

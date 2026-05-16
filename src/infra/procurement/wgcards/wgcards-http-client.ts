@@ -116,7 +116,8 @@ export interface WgcardsItemPage {
   readonly pages: number;
   readonly size: number;
   readonly total: number;
-  readonly records: readonly WgcardsItemRecord[];
+  /** May be absent when the API returns zero results. Always use `Array.isArray` before iterating. */
+  readonly records?: readonly WgcardsItemRecord[];
 }
 
 export interface WgcardsGetItemParams {
