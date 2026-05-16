@@ -81,6 +81,7 @@ interface ListingRow {
   readonly status: string;
   readonly declared_stock: number;
   readonly auto_sync_stock_follows_provider: boolean;
+  readonly auto_sync_price: boolean;
   readonly currency: string;
   readonly price_cents: number;
   readonly min_price_cents: number;
@@ -177,35 +178,30 @@ export class ProcurementDeclaredStockReconcileService implements IProcurementDec
       if (decision.kind === 'declare') {
         // Loss-prevention guard: even when the strict economic gate passes,
         // verify `listing.price_cents` covers the cost+margin floor at THIS
-        // very moment. The pricing cron may not have caught up to a recent
-        // cost-basis change, smart-compete may have dragged the price down,
-        // or the listing may have been edited manually. Any of those leaves
-        // a window where we'd declare positive stock at a price that JIT
-        // will then refuse — the exact loop documented in
-        // `core/shared/last-realized-net.ts`.
-        //
-        // Compute the strategy-aware floor and, if `listing.price_cents` is
-        // below it, augment this declared-stock update with a price
-        // correction. Marketplace adapters that support batch updates push
-        // both fields in one API call (Eneba batch, Gamivo PUT) — no extra
-        // quota burn vs the existing `declare` path.
-        const mergedConfig = mergeSellerListingPricingOverrides(account.seller_config, listing.pricing_overrides);
-        const pricingModel = this.registry.getPricingAdapter(account.provider_code)?.pricingModel;
-        const requiredFloorCents = await computeStrategyAwareCorrectedPrice({
-          db: this.db,
-          fx: this.fx,
-          listingId: listing.id,
-          listingCurrency: listing.currency,
-          offerCostUsdCents: decision.costBasisUsdCents,
-          marginPct: mergedConfig.min_profit_margin_pct,
-          commissionPct: mergedConfig.commission_rate_percent,
-          fixedFeeCents: mergedConfig.fixed_fee_cents,
-          priceStrategy: mergedConfig.price_strategy,
-          priceStrategyValue: mergedConfig.price_strategy_value,
-          pricingModel,
-          competitorCacheMaxAgeMs: mergedConfig.competitor_cache_max_age_ms,
-        });
-        const needsPriceCorrection = listing.price_cents < requiredFloorCents;
+        // very moment. Only applied when auto_sync_price=true — if the user
+        // has disabled auto price sync they manage the price manually and we
+        // must not override their choice.
+        let needsPriceCorrection = false;
+        let requiredFloorCents: number | undefined;
+        if (listing.auto_sync_price) {
+          const mergedConfig = mergeSellerListingPricingOverrides(account.seller_config, listing.pricing_overrides);
+          const pricingModel = this.registry.getPricingAdapter(account.provider_code)?.pricingModel;
+          requiredFloorCents = await computeStrategyAwareCorrectedPrice({
+            db: this.db,
+            fx: this.fx,
+            listingId: listing.id,
+            listingCurrency: listing.currency,
+            offerCostUsdCents: decision.costBasisUsdCents,
+            marginPct: mergedConfig.min_profit_margin_pct,
+            commissionPct: mergedConfig.commission_rate_percent,
+            fixedFeeCents: mergedConfig.fixed_fee_cents,
+            priceStrategy: mergedConfig.price_strategy,
+            priceStrategyValue: mergedConfig.price_strategy_value,
+            pricingModel,
+            competitorCacheMaxAgeMs: mergedConfig.competitor_cache_max_age_ms,
+          });
+          needsPriceCorrection = listing.price_cents < requiredFloorCents;
+        }
 
         // Skip the API call entirely when nothing changed (declared_stock
         // already matches AND price is safely above the floor) — preserves
@@ -231,7 +227,7 @@ export class ProcurementDeclaredStockReconcileService implements IProcurementDec
           listingId: listing.id,
           externalId: listing.external_listing_id,
           qty: decision.declaredQty,
-          ...(needsPriceCorrection ? {
+          ...(needsPriceCorrection && requiredFloorCents !== undefined ? {
             correctedPriceCents: requiredFloorCents,
             correctedPriceCurrency: listing.currency,
           } : {}),
@@ -240,9 +236,20 @@ export class ProcurementDeclaredStockReconcileService implements IProcurementDec
         updated++;
       } else if (decision.reason === 'uneconomic') {
         // The listing price is currently below the procurement cost floor.
-        // Rule: never block stock declaration due to price — instead raise the
-        // price to floor AND apply the configured pricing strategy on top
-        // (e.g. match_lowest competitor). Then declare stock.
+        // Only attempt a price correction when auto_sync_price=true — if the
+        // user manages price manually we must not override their setting.
+        // When price sync is disabled and the listing is uneconomic, fall
+        // through to the standard disable path below.
+        if (!listing.auto_sync_price) {
+          logger.info('Reconcile: dispatching marketplace disable (uneconomic, auto_sync_price=false)', {
+            requestId, listingId: listing.id, providerCode: account.provider_code,
+          });
+          const pending = pendingByProvider.get(account.provider_code) ?? [];
+          pending.push({ listingId: listing.id, externalId: listing.external_listing_id, qty: 0, disableReason: 'uneconomic' });
+          pendingByProvider.set(account.provider_code, pending);
+          updated++;
+          continue;
+        }
         const mergedConfig = mergeSellerListingPricingOverrides(account.seller_config, listing.pricing_overrides);
         const cheapest = await this.findCheapestCreditedOffer(offers, walletSnapshot);
         if (cheapest) {
@@ -830,6 +837,7 @@ export class ProcurementDeclaredStockReconcileService implements IProcurementDec
       status: r.status as string,
       declared_stock: typeof r.declared_stock === 'number' ? r.declared_stock : 0,
       auto_sync_stock_follows_provider: r.auto_sync_stock_follows_provider === true,
+      auto_sync_price: r.auto_sync_price !== false,
       currency: typeof r.currency === 'string' ? r.currency : 'USD',
       price_cents: typeof r.price_cents === 'number' ? r.price_cents : 0,
       min_price_cents: typeof r.min_price_cents === 'number' ? r.min_price_cents : 0,
