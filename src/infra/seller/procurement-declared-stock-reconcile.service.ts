@@ -81,6 +81,7 @@ interface ListingRow {
   readonly status: string;
   readonly declared_stock: number;
   readonly auto_sync_stock_follows_provider: boolean;
+  readonly auto_sync_price: boolean;
   readonly currency: string;
   readonly price_cents: number;
   readonly min_price_cents: number;
@@ -179,33 +180,34 @@ export class ProcurementDeclaredStockReconcileService implements IProcurementDec
         // verify `listing.price_cents` covers the cost+margin floor at THIS
         // very moment. The pricing cron may not have caught up to a recent
         // cost-basis change, smart-compete may have dragged the price down,
-        // or the listing may have been edited manually. Any of those leaves
-        // a window where we'd declare positive stock at a price that JIT
-        // will then refuse — the exact loop documented in
-        // `core/shared/last-realized-net.ts`.
+        // or the listing may have been edited manually.
         //
-        // Compute the strategy-aware floor and, if `listing.price_cents` is
-        // below it, augment this declared-stock update with a price
-        // correction. Marketplace adapters that support batch updates push
-        // both fields in one API call (Eneba batch, Gamivo PUT) — no extra
-        // quota burn vs the existing `declare` path.
-        const mergedConfig = mergeSellerListingPricingOverrides(account.seller_config, listing.pricing_overrides);
-        const pricingModel = this.registry.getPricingAdapter(account.provider_code)?.pricingModel;
-        const requiredFloorCents = await computeStrategyAwareCorrectedPrice({
-          db: this.db,
-          fx: this.fx,
-          listingId: listing.id,
-          listingCurrency: listing.currency,
-          offerCostUsdCents: decision.costBasisUsdCents,
-          marginPct: mergedConfig.min_profit_margin_pct,
-          commissionPct: mergedConfig.commission_rate_percent,
-          fixedFeeCents: mergedConfig.fixed_fee_cents,
-          priceStrategy: mergedConfig.price_strategy,
-          priceStrategyValue: mergedConfig.price_strategy_value,
-          pricingModel,
-          competitorCacheMaxAgeMs: mergedConfig.competitor_cache_max_age_ms,
-        });
-        const needsPriceCorrection = listing.price_cents < requiredFloorCents;
+        // Only runs when `auto_sync_price = true`. With auto_sync_price=false
+        // the user owns the price entirely — we never override it. Marketplace
+        // adapters that support batch updates push both fields in one API
+        // call (Eneba batch, Gamivo PUT) — no extra quota burn vs the existing
+        // `declare` path.
+        let needsPriceCorrection = false;
+        let requiredFloorCents: number | undefined;
+        if (listing.auto_sync_price) {
+          const mergedConfig = mergeSellerListingPricingOverrides(account.seller_config, listing.pricing_overrides);
+          const pricingModel = this.registry.getPricingAdapter(account.provider_code)?.pricingModel;
+          requiredFloorCents = await computeStrategyAwareCorrectedPrice({
+            db: this.db,
+            fx: this.fx,
+            listingId: listing.id,
+            listingCurrency: listing.currency,
+            offerCostUsdCents: decision.costBasisUsdCents,
+            marginPct: mergedConfig.min_profit_margin_pct,
+            commissionPct: mergedConfig.commission_rate_percent,
+            fixedFeeCents: mergedConfig.fixed_fee_cents,
+            priceStrategy: mergedConfig.price_strategy,
+            priceStrategyValue: mergedConfig.price_strategy_value,
+            pricingModel,
+            competitorCacheMaxAgeMs: mergedConfig.competitor_cache_max_age_ms,
+          });
+          needsPriceCorrection = listing.price_cents < requiredFloorCents;
+        }
 
         // Skip the API call entirely when nothing changed (declared_stock
         // already matches AND price is safely above the floor) — preserves
@@ -231,7 +233,7 @@ export class ProcurementDeclaredStockReconcileService implements IProcurementDec
           listingId: listing.id,
           externalId: listing.external_listing_id,
           qty: decision.declaredQty,
-          ...(needsPriceCorrection ? {
+          ...(needsPriceCorrection && requiredFloorCents !== undefined ? {
             correctedPriceCents: requiredFloorCents,
             correctedPriceCurrency: listing.currency,
           } : {}),
@@ -239,46 +241,70 @@ export class ProcurementDeclaredStockReconcileService implements IProcurementDec
         pendingByProvider.set(account.provider_code, pending);
         updated++;
       } else if (decision.reason === 'uneconomic') {
-        // The listing price is currently below the procurement cost floor.
-        // Rule: never block stock declaration due to price — instead raise the
-        // price to floor AND apply the configured pricing strategy on top
-        // (e.g. match_lowest competitor). Then declare stock.
-        const mergedConfig = mergeSellerListingPricingOverrides(account.seller_config, listing.pricing_overrides);
+        // The listing price is below the cost+profit floor according to the
+        // selector. Rule: never disable a listing for "uneconomic" — declare
+        // stock anyway. Behaviour splits on `auto_sync_price`:
+        //
+        //   - auto_sync_price=true: raise price to floor + declare stock.
+        //   - auto_sync_price=false: keep user's price, declare stock anyway.
+        //     They've explicitly opted out of smart-pricing corrections; their
+        //     manual price is final, even if the selector flags it as below
+        //     cost+profit.
         const cheapest = await this.findCheapestCreditedOffer(offers, walletSnapshot);
         if (cheapest) {
-          const pricingModel = this.registry.getPricingAdapter(account.provider_code)?.pricingModel;
-          const correctedPriceCents = await computeStrategyAwareCorrectedPrice({
-            db: this.db,
-            fx: this.fx,
-            listingId: listing.id,
-            listingCurrency: listing.currency,
-            offerCostUsdCents: cheapest.unitCostUsdCents,
-            marginPct: mergedConfig.min_profit_margin_pct,
-            commissionPct: mergedConfig.commission_rate_percent,
-            fixedFeeCents: mergedConfig.fixed_fee_cents,
-            priceStrategy: mergedConfig.price_strategy,
-            priceStrategyValue: mergedConfig.price_strategy_value,
-            pricingModel,
-            competitorCacheMaxAgeMs: mergedConfig.competitor_cache_max_age_ms,
-          });
           const declaredQty = Math.min(
             Math.max(1, Math.trunc(cheapest.offer.available_quantity ?? 1)),
             MAX_PROCUREMENT_DECLARED_STOCK,
           );
-          logger.info('Reconcile: price below floor — correcting price and declaring', {
-            requestId, listingId: listing.id, providerCode: account.provider_code,
-            currentPriceCents: listing.price_cents,
-            correctedPriceCents,
-            currency: listing.currency,
-            buyerProviderCode: cheapest.offer.provider_code,
-            declaredQty,
-          });
+
+          let correctedPriceCents: number | undefined;
+          if (listing.auto_sync_price) {
+            const mergedConfig = mergeSellerListingPricingOverrides(account.seller_config, listing.pricing_overrides);
+            const pricingModel = this.registry.getPricingAdapter(account.provider_code)?.pricingModel;
+            correctedPriceCents = await computeStrategyAwareCorrectedPrice({
+              db: this.db,
+              fx: this.fx,
+              listingId: listing.id,
+              listingCurrency: listing.currency,
+              offerCostUsdCents: cheapest.unitCostUsdCents,
+              marginPct: mergedConfig.min_profit_margin_pct,
+              commissionPct: mergedConfig.commission_rate_percent,
+              fixedFeeCents: mergedConfig.fixed_fee_cents,
+              priceStrategy: mergedConfig.price_strategy,
+              priceStrategyValue: mergedConfig.price_strategy_value,
+              pricingModel,
+              competitorCacheMaxAgeMs: mergedConfig.competitor_cache_max_age_ms,
+            });
+          }
+
+          if (correctedPriceCents !== undefined) {
+            logger.info('Reconcile: price below floor — correcting price and declaring', {
+              requestId, listingId: listing.id, providerCode: account.provider_code,
+              currentPriceCents: listing.price_cents,
+              correctedPriceCents,
+              currency: listing.currency,
+              buyerProviderCode: cheapest.offer.provider_code,
+              declaredQty,
+            });
+          } else {
+            logger.info('Reconcile: declaring stock at user-managed price (auto_sync_price=false)', {
+              requestId, listingId: listing.id, providerCode: account.provider_code,
+              currentPriceCents: listing.price_cents,
+              currency: listing.currency,
+              buyerProviderCode: cheapest.offer.provider_code,
+              declaredQty,
+            });
+          }
+
           const pending = pendingByProvider.get(account.provider_code) ?? [];
           pending.push({
-            listingId: listing.id, externalId: listing.external_listing_id,
+            listingId: listing.id,
+            externalId: listing.external_listing_id,
             qty: declaredQty,
-            correctedPriceCents,
-            correctedPriceCurrency: listing.currency,
+            ...(correctedPriceCents !== undefined ? {
+              correctedPriceCents,
+              correctedPriceCurrency: listing.currency,
+            } : {}),
           });
           pendingByProvider.set(account.provider_code, pending);
           updated++;
@@ -830,6 +856,7 @@ export class ProcurementDeclaredStockReconcileService implements IProcurementDec
       status: r.status as string,
       declared_stock: typeof r.declared_stock === 'number' ? r.declared_stock : 0,
       auto_sync_stock_follows_provider: r.auto_sync_stock_follows_provider === true,
+      auto_sync_price: r.auto_sync_price !== false,
       currency: typeof r.currency === 'string' ? r.currency : 'USD',
       price_cents: typeof r.price_cents === 'number' ? r.price_cents : 0,
       min_price_cents: typeof r.min_price_cents === 'number' ? r.min_price_cents : 0,
