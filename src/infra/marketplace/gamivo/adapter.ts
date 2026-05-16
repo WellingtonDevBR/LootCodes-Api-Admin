@@ -250,6 +250,48 @@ export class GamivoMarketplaceAdapter
     };
   }
 
+  /**
+   * GROSS (customer_price) → NET (seller_price) via Gamivo's
+   * `/api/public/v1/offers/calculate-seller-price/{id}?price=X`.
+   *
+   * The auto-pricing engine works competitor positions in GROSS space (the
+   * customer_price every Gamivo seller publishes), and we want to undercut by
+   * the configured strategy in that same space. When we land on a target
+   * customer price (e.g. 1 cent below P1), we PUT a `seller_price` to the
+   * marketplace — but the relationship is not a flat percentage (Gamivo
+   * applies tiered commission + fixed fee), so an observed-ratio approximation
+   * drifts. This calls Gamivo's calculator directly so the seller_price we
+   * push corresponds exactly to the customer_price we intended.
+   */
+  async calculateSellerPriceFromCustomerPrice(
+    externalListingId: string,
+    grossCustomerCents: number,
+  ): Promise<number> {
+    if (!externalListingId) {
+      throw new Error('Gamivo calculateSellerPriceFromCustomerPrice requires externalListingId');
+    }
+    if (!Number.isFinite(grossCustomerCents) || grossCustomerCents <= 0) {
+      throw new Error(
+        `Gamivo calculateSellerPriceFromCustomerPrice requires positive grossCustomerCents (got ${grossCustomerCents})`,
+      );
+    }
+    const grossEur = grossCustomerCents / 100;
+    const qs = new URLSearchParams();
+    qs.set('price', grossEur.toFixed(2));
+    qs.set('tier_one_price', grossEur.toFixed(2));
+    qs.set('tier_two_price', grossEur.toFixed(2));
+    const resp = await this.httpClient.get<GamivoCalculatePriceResponse>(
+      `/api/public/v1/offers/calculate-seller-price/${encodeURIComponent(externalListingId)}?${qs.toString()}`,
+    );
+    const netCents = floatToCents(resp.seller_price);
+    if (!Number.isFinite(netCents) || netCents <= 0) {
+      throw new Error(
+        `Gamivo calculate-seller-price returned non-positive seller_price for offer ${externalListingId}`,
+      );
+    }
+    return netCents;
+  }
+
   // ─── ISellerCompetitionAdapter ───────────────────────────────────────
 
   /**

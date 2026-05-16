@@ -894,29 +894,67 @@ export class SellerAutoPricingService implements ISellerAutoPricingService {
         listingCompareGross,
       );
 
-      // GROSS → NET conversion via the observed gross/NET ratio. See
-      // seller-net-gross-model.ts for why we cannot use S_calculatePrice here
-      // (it is asymmetric vs priceIWantToGet for Eneba).
-      const targetCentsNet = isNetPricingModel && netModelGrossNetRatio !== null
-        ? convertGrossToNet(analysis.suggestedPriceCents, netModelGrossNetRatio, listing.id)
-        : analysis.suggestedPriceCents;
-      const proposedCentsNet = analysis.proposedPriceCents != null
-        ? (isNetPricingModel && netModelGrossNetRatio !== null
-          ? convertGrossToNet(analysis.proposedPriceCents, netModelGrossNetRatio, listing.id)
-          : analysis.proposedPriceCents)
+      // GROSS → NET conversion. Prefer the marketplace's own calculator
+      // (Gamivo `/calculate-seller-price`) when the pricing adapter exposes
+      // one — the engine works competitor positions in GROSS (customer_price)
+      // space and the calculator gives the exact `seller_price` to PUT for
+      // that GROSS, which is what we want to credit. Falls back to the
+      // observed ratio for adapters without a calculator (Eneba: see
+      // seller-net-gross-model.ts for why round-trips are asymmetric there).
+      const pricingAdapter = isNetPricingModel
+        ? this.registry.getPricingAdapter(providerCode)
         : null;
+      const calculator = pricingAdapter?.calculateSellerPriceFromCustomerPrice?.bind(pricingAdapter);
+
+      const grossToNet = async (grossCents: number): Promise<number> => {
+        if (!isNetPricingModel) return grossCents;
+        if (calculator && listing.external_listing_id) {
+          try {
+            return await calculator(listing.external_listing_id, grossCents);
+          } catch (err) {
+            logger.info(
+              'Marketplace seller-price calculator failed; falling back to ratio',
+              { listingId: listing.id, providerCode, error: err instanceof Error ? err.message : String(err) },
+            );
+          }
+        }
+        if (netModelGrossNetRatio !== null) {
+          return convertGrossToNet(grossCents, netModelGrossNetRatio, listing.id);
+        }
+        return grossCents;
+      };
+
+      let targetCentsNet = await grossToNet(analysis.suggestedPriceCents);
+      const proposedCentsNet = analysis.proposedPriceCents != null
+        ? await grossToNet(analysis.proposedPriceCents)
+        : null;
+
+      // NET-space floor enforcement: the calculator may have produced a
+      // seller_price below cost+profit even though the GROSS-space decision
+      // sat above effectiveMinGross. Never push below the NET floor.
+      let floorEnforced = false;
+      if (isNetPricingModel && effectiveMin > 0 && targetCentsNet < effectiveMin) {
+        targetCentsNet = effectiveMin;
+        floorEnforced = true;
+      }
 
       // For NET pricing models the round-trip NET → GROSS → NET introduces
       // small rounding drift. Suppress the push when the computed NET equals
       // the stored NET — otherwise we burn free quota on no-op updates.
       const netShouldChange = analysis.shouldChange && targetCentsNet !== listing.price_cents;
+      const reasonCode = netShouldChange
+        ? (floorEnforced ? 'floor_match' : analysis.reasonCode)
+        : 'no_change';
+      const reasonDetail = netShouldChange
+        ? (floorEnforced
+          ? `Calculator-derived NET below floor=${effectiveMin}; pushing floor`
+          : (analysis.skipReason ?? analysis.reason))
+        : 'Target NET price equals current (rounding-stable)';
 
       return {
         targetCents: targetCentsNet,
-        reasonCode: netShouldChange ? analysis.reasonCode : 'no_change',
-        reasonDetail: netShouldChange
-          ? (analysis.skipReason ?? analysis.reason)
-          : 'Target NET price equals current (rounding-stable)',
+        reasonCode,
+        reasonDetail,
         shouldChange: netShouldChange,
         competitorCount: live.nonOwnCount,
         lowestCompetitorCents: live.lowestNonOwnCents,

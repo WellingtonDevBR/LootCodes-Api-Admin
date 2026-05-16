@@ -345,3 +345,59 @@ describe('GamivoMarketplaceAdapter.batchUpdatePrices', () => {
     expect(result.errors![0].externalListingId).toBe('7000');
   });
 });
+
+describe('GamivoMarketplaceAdapter.calculateSellerPriceFromCustomerPrice', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('queries /calculate-seller-price with the gross customer price and returns seller_price cents', async () => {
+    const http: MockHttp = { get: vi.fn(), put: vi.fn(), post: vi.fn() };
+    http.get.mockResolvedValue({
+      customer_price: 15.93,
+      seller_price: 14.31,
+      wholesale_price_tier_one: 15.93,
+      wholesale_seller_price_tier_one: 14.31,
+      wholesale_price_tier_two: 15.93,
+      wholesale_seller_price_tier_two: 14.31,
+    });
+
+    const { adapter } = makeAdapter(http);
+    const netCents = await adapter.calculateSellerPriceFromCustomerPrice('3413536', 1593);
+
+    expect(netCents).toBe(1431);
+    expect(http.get).toHaveBeenCalledTimes(1);
+    const url = http.get.mock.calls[0][0] as string;
+    expect(url).toMatch(/^\/api\/public\/v1\/offers\/calculate-seller-price\/3413536\?/);
+    expect(url).toContain('price=15.93');
+    expect(url).toContain('tier_one_price=15.93');
+    expect(url).toContain('tier_two_price=15.93');
+  });
+
+  it('throws when externalListingId is empty', async () => {
+    const http: MockHttp = { get: vi.fn(), put: vi.fn(), post: vi.fn() };
+    const { adapter } = makeAdapter(http);
+    await expect(adapter.calculateSellerPriceFromCustomerPrice('', 1500)).rejects.toThrow(/externalListingId/);
+    expect(http.get).not.toHaveBeenCalled();
+  });
+
+  it('throws when grossCustomerCents is non-positive', async () => {
+    const http: MockHttp = { get: vi.fn(), put: vi.fn(), post: vi.fn() };
+    const { adapter } = makeAdapter(http);
+    await expect(adapter.calculateSellerPriceFromCustomerPrice('3413536', 0)).rejects.toThrow(/positive/);
+    await expect(adapter.calculateSellerPriceFromCustomerPrice('3413536', -10)).rejects.toThrow(/positive/);
+    expect(http.get).not.toHaveBeenCalled();
+  });
+
+  it('throws when the calculator returns a non-positive seller_price', async () => {
+    const http: MockHttp = { get: vi.fn(), put: vi.fn(), post: vi.fn() };
+    http.get.mockResolvedValue({
+      customer_price: 15.93,
+      seller_price: 0,
+      wholesale_price_tier_one: 15.93,
+      wholesale_seller_price_tier_one: 0,
+      wholesale_price_tier_two: 15.93,
+      wholesale_seller_price_tier_two: 0,
+    });
+    const { adapter } = makeAdapter(http);
+    await expect(adapter.calculateSellerPriceFromCustomerPrice('3413536', 1593)).rejects.toThrow(/non-positive/);
+  });
+});

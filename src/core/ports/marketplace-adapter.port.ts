@@ -175,6 +175,29 @@ export interface ISellerPricingAdapter {
    */
   readonly pricingModel?: 'gross_price' | 'seller_price';
   calculateNetPayout(ctx: PricingContext): Promise<SellerPayoutResult>;
+  /**
+   * Optional capability: convert a buyer-facing GROSS / customer price into the
+   * exact `seller_price` (NET) for that listing as computed by the marketplace
+   * itself. Used by the auto-pricing engine to skip the observed-ratio
+   * approximation in `seller-net-gross-model.ts` when the marketplace exposes
+   * a deterministic, symmetric calculator (Gamivo `/calculate-seller-price`).
+   *
+   * Implementations must:
+   *   - Take the buyer-facing customer price the engine wants the listing to
+   *     display (cents in listing currency).
+   *   - Return what the marketplace would credit us as `seller_price` (cents,
+   *     same currency).
+   *   - Throw on failure rather than returning a guess; callers are expected to
+   *     fall back to the ratio path.
+   *
+   * Eneba intentionally does NOT implement this — its NET→GROSS round-trip via
+   * `S_calculatePrice` drifts ~1% on Eneba's side, so the observed-ratio model
+   * is more accurate there. Gamivo's calculator is exact and symmetric.
+   */
+  calculateSellerPriceFromCustomerPrice?(
+    externalListingId: string,
+    grossCustomerCents: number,
+  ): Promise<number>;
 }
 
 export interface ISellerCompetitionAdapter {
