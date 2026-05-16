@@ -102,11 +102,15 @@ export class SellerDomainEventsService implements ISellerDomainEventPort {
     const url = `${baseUrl}/functions/v1/event-dispatcher`;
 
     try {
-      // 8-second ceiling: Edge Function cold starts are ~2–5 s. Waiting 30 s
-      // would hang this background promise for half a minute on every cold start,
-      // generate high-severity Sentry events, and burn memory — all for a
-      // fire-and-forget call whose event is already persisted to domain_events.
-      // The pg_cron fallback processes any events the dispatcher missed.
+      // 8-second ceiling: Edge Function cold starts are ~2–5 s. The dispatcher
+      // call is a low-latency optimization — a fire-and-forget nudge so observers
+      // (Algolia sync, etc.) react within seconds instead of waiting for the
+      // pg_cron fallback (every minute). The event itself is ALREADY persisted
+      // to `domain_events` before this call is made; if this fetch fails or
+      // times out, pg_cron picks up the event on its next tick. So timeout /
+      // abort errors here are non-actionable noise — log them at `info` so they
+      // stay out of Sentry. Non-timeout failures (5xx, auth) might indicate
+      // real misconfiguration and remain at `warn`.
       const res = await fetch(url, {
         method: 'POST',
         headers: {
@@ -120,17 +124,40 @@ export class SellerDomainEventsService implements ISellerDomainEventPort {
 
       if (!res.ok) {
         const text = await res.text();
-        // Non-fatal: event is already in domain_events. warn → Sentry warning,
-        // not an error alert.
         logger.warn('event-dispatcher invocation failed', new Error(`${res.status}: ${text}`), {
           eventType: event.event_type as string,
         });
       }
     } catch (err) {
-      // Timeout or network blip — not fatal since the event is persisted.
+      if (isExpectedDispatcherError(err)) {
+        // Console-only: event is in domain_events; pg_cron will process it.
+        logger.info('event-dispatcher: timeout/abort — pg_cron fallback will process', {
+          eventType: event.event_type as string,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        return;
+      }
       logger.warn('event-dispatcher invocation network error', err as Error, {
         eventType: event.event_type as string,
       });
     }
   }
+}
+
+/**
+ * Recognises errors that the dispatcher invocation can safely swallow:
+ *   - `TimeoutError` / `AbortError` from `AbortSignal.timeout` — Edge Function
+ *     cold start exceeded our ceiling
+ *   - undici-style network blips (`ECONNRESET`, `ETIMEDOUT`, …)
+ *
+ * The dispatcher call is best-effort; pg_cron is the source-of-truth processor.
+ * These errors are not actionable in Sentry.
+ */
+function isExpectedDispatcherError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  if (err.name === 'TimeoutError' || err.name === 'AbortError') return true;
+  if (/aborted due to timeout|fetch failed|ECONNRESET|ETIMEDOUT|ENOTFOUND|socket hang up/i.test(err.message)) {
+    return true;
+  }
+  return false;
 }

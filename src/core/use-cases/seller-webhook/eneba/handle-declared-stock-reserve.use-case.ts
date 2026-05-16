@@ -23,6 +23,7 @@ import type {
   DeclaredStockReserveResult,
   ListingRow,
 } from '../seller-webhook.types.js';
+import { withLastRealizedNet } from '../../../shared/last-realized-net.js';
 import { createLogger } from '../../../../shared/logger.js';
 
 const logger = createLogger('webhook:reserve');
@@ -137,6 +138,35 @@ export class HandleDeclaredStockReserveUseCase {
 
         if (auction.marketplaceFinancials) {
           providerMetadata.marketplaceFinancials = auction.marketplaceFinancials;
+        }
+
+        // Persist the realised seller-net BEFORE attempting JIT/key claim.
+        // This ensures the reconcile cron sees the empirical auction price
+        // even if the claim fails — closing the feedback loop that produced
+        // the out_of_stock infinite loop (see core/shared/last-realized-net.ts).
+        if (
+          typeof salePriceCents === 'number'
+          && Number.isFinite(salePriceCents)
+          && salePriceCents > 0
+          && listingCurrency.length > 0
+        ) {
+          try {
+            const metadataRows = await this.db.query<{
+              provider_metadata: Record<string, unknown> | null;
+            }>('seller_listings', { eq: [['id', listing.id]], select: 'provider_metadata' });
+            const next = withLastRealizedNet(metadataRows[0]?.provider_metadata ?? null, {
+              centsPerUnit: salePriceCents,
+              currency: listingCurrency,
+              at: new Date().toISOString(),
+            });
+            await this.db.update('seller_listings', { id: listing.id }, {
+              provider_metadata: next,
+            });
+          } catch (capErr) {
+            logger.warn('Failed to capture last realised net (non-fatal)', capErr as Error, {
+              listingId: listing.id, auctionId, salePriceCents,
+            });
+          }
         }
 
         let outcome;

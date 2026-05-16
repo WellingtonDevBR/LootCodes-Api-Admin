@@ -17,6 +17,7 @@ import type { IVariantUnavailabilityPort } from '../../../ports/variant-unavaila
 import type { GamivoReservationDto, GamivoReservationResult } from '../seller-webhook.types.js';
 import { floatToCents } from './gamivo-parser.js';
 import { MARKETPLACE_RESERVATION_EXPIRY_MS } from '../../../shared/stock-queries.js';
+import { withLastRealizedNet } from '../../../shared/last-realized-net.js';
 import { createLogger } from '../../../../shared/logger.js';
 
 const logger = createLogger('webhook:gamivo:reservation');
@@ -62,6 +63,30 @@ export class HandleGamivoReservationUseCase {
     const externalReservationId = randomUUID();
     const unitPriceCents = floatToCents(unitPrice);
 
+    // Persist the realised seller-net BEFORE attempting JIT/key claim. Per
+    // Gamivo's `seller_price` pricing model, the reservation's `unit_price`
+    // IS the seller-net (retail_price − commission), so we can store it
+    // directly without further deduction. See core/shared/last-realized-net.ts.
+    if (Number.isFinite(unitPriceCents) && unitPriceCents > 0) {
+      try {
+        const metadataRows = await this.db.query<{
+          provider_metadata: Record<string, unknown> | null;
+        }>('seller_listings', { eq: [['id', listing.id]], select: 'provider_metadata' });
+        const next = withLastRealizedNet(metadataRows[0]?.provider_metadata ?? null, {
+          centsPerUnit: unitPriceCents,
+          currency: (listing.currency ?? 'EUR').toUpperCase(),
+          at: new Date().toISOString(),
+        });
+        await this.db.update('seller_listings', { id: listing.id }, {
+          provider_metadata: next,
+        });
+      } catch (capErr) {
+        logger.warn('Failed to capture last realised net (non-fatal)', capErr as Error, {
+          listingId: listing.id, productId, unitPriceCents,
+        });
+      }
+    }
+
     let outcome;
     try {
       outcome = await this.keyOps.claimKeysForReservation({
@@ -83,9 +108,22 @@ export class HandleGamivoReservationUseCase {
         minMarginCents: listing.min_jit_margin_cents ?? undefined,
       });
     } catch (claimErr) {
-      logger.error('Gamivo reservation failed - insufficient stock', claimErr as Error, {
-        productId, quantity, variantId: listing.variant_id,
-      });
+      // Match the Eneba handler's classification (see
+      // handle-declared-stock-reserve.use-case.ts): INSUFFICIENT_STOCK after
+      // JIT exhaustion is a normal business outcome — Gamivo gets a 400 and
+      // retries. Only unrecognized failures (DB errors, RPC timeouts, …)
+      // are real bugs worth a Sentry alert.
+      const claimMsg = claimErr instanceof Error ? claimErr.message : String(claimErr);
+      const isExpectedNoStock = /INSUFFICIENT_STOCK|Key claim failed/.test(claimMsg);
+      if (isExpectedNoStock) {
+        logger.warn('Gamivo reservation: no keys available — propagating variant unavailability', {
+          productId, quantity, variantId: listing.variant_id, error: claimMsg,
+        });
+      } else {
+        logger.error('Gamivo reservation: key claim failed unexpectedly', claimErr as Error, {
+          productId, quantity, variantId: listing.variant_id,
+        });
+      }
 
       if (listing.external_listing_id) {
         await this.healthPort.updateHealthCounters(listing.external_listing_id, 'reservation', false);

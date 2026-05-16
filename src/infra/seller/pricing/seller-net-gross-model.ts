@@ -1,17 +1,33 @@
 /**
- * NET/GROSS pricing model helpers — Eneba-only today, but provider-agnostic by
- * design so future marketplaces that publish a buyer-facing GROSS price while
- * accepting a seller-facing NET price (or vice-versa) can plug in.
+ * NET/GROSS pricing model helpers — used by every adapter whose
+ * `pricingModel === 'seller_price'` (Eneba, Gamivo, …).
  *
  * The "ratio" is `gross / net` for the same listing. Derived from one of two
- * authoritative sources:
+ * authoritative sources, in order:
  *
  *   1. The marketplace's own competition response (our offer's `priceCents` is
  *      the GROSS we published; `listing.price_cents` is the NET we stored).
  *      Preferred — it reflects the marketplace's actual fee calculation at the
  *      exact price point we care about.
- *   2. Stock-level GROSS from `S_stock`. Used when our own offer is hidden
- *      from competition (Eneba hides declared_stock=0 listings).
+ *   2. Stock-level GROSS from `S_stock` (Eneba only — Gamivo / G2A / Kinguin
+ *      do not expose an equivalent endpoint). Used when Eneba hides our offer
+ *      from competition (declared_stock=0 listings).
+ *
+ * Per-provider notes on how the own-offer-in-competition path stays populated
+ * even when the marketplace would otherwise hide our paused/inactive offer:
+ *
+ *   - Eneba: live competitors omit declared_stock=0 listings. Falls through
+ *     to the S_stock fallback below.
+ *   - Gamivo: `/products/{id}/offers` filters out INACTIVE offers, but the
+ *     adapter synthesises an own-offer row from `GET /offers` so the ratio
+ *     resolves from path 1 even while the listing is paused. See
+ *     `GamivoMarketplaceAdapter.getCompetitorPrices`.
+ *
+ * When neither source is available we genuinely cannot compute a safe ratio
+ * and skip this tick. That state is unusual — it means we have a NET-priced
+ * listing with no own offer findable on the marketplace at all. Logged at
+ * `warn` so it surfaces in Sentry as a yellow flag (likely orphaned listing /
+ * external id drift) without paging at error severity.
  *
  * @see seller-auto-pricing.service.ts for the round-trip explanation of why we
  *      cannot simply call S_calculatePrice (Eneba's commission is applied
@@ -57,7 +73,10 @@ export function resolveNetGrossRatio(
   }
 
   if (!ctx.externalListingId) {
-    logger.error('NET pricing: own offer absent and no external listing id', {
+    // Coding-error path — a NET-priced listing must have an external id by the
+    // time pricing runs; warn so Sentry surfaces the misconfiguration without
+    // alerting at error severity.
+    logger.warn('NET pricing: own offer absent and no external listing id', {
       listingId: ctx.listingId, providerCode: ctx.providerCode,
       requestId: options.requestId,
     });
@@ -79,7 +98,11 @@ export function resolveNetGrossRatio(
     return ratio;
   }
 
-  logger.error('NET pricing: own offer absent from competition and no S_stock gross price available', {
+  // Genuinely no ratio source — neither own offer in competition (or
+  // synthesised by the adapter) nor S_stock fallback. This is unusual and
+  // likely indicates an orphaned listing or external_listing_id drift. Logged
+  // at `warn` so Sentry surfaces it without paging.
+  logger.warn('NET pricing: no ratio source available — skipping listing', {
     requestId: options.requestId,
     listingId: ctx.listingId,
     providerCode: ctx.providerCode,

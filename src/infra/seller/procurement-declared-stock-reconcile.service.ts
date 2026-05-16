@@ -38,6 +38,10 @@ import {
 } from '../../core/use-cases/seller/credit-aware-declared-stock-selector.use-case.js';
 import { parseSellerConfig, type SellerProviderConfig } from '../../core/use-cases/seller/seller.types.js';
 import { mergeSellerListingPricingOverrides } from '../../core/use-cases/seller/listing-pricing-overrides-merge.js';
+import {
+  pessimisticSaleCents,
+  readLastRealizedNet,
+} from '../../core/shared/last-realized-net.js';
 import { MAX_PROCUREMENT_DECLARED_STOCK } from '../../core/shared/procurement-declared-stock.js';
 import { computeStrategyAwareCorrectedPrice } from './compute-strategy-aware-correction.js';
 import { loadBuyerCapableOffersByVariant } from './load-procurement-offer-supply.js';
@@ -81,6 +85,7 @@ interface ListingRow {
   readonly price_cents: number;
   readonly min_price_cents: number;
   readonly pricing_overrides: Record<string, unknown> | null;
+  readonly provider_metadata: Record<string, unknown> | null;
 }
 
 interface ProviderAccountRow {
@@ -586,8 +591,23 @@ export class ProcurementDeclaredStockReconcileService implements IProcurementDec
       listing.pricing_overrides,
     );
 
+    // Use the lower of (intended `listing.price_cents`, last observed
+    // marketplace realised net) as the effective sale price for the economic
+    // gate. This closes the feedback loop documented in
+    // `core/shared/last-realized-net.ts`: when our last RESERVE callback shows
+    // the auction realising LESS than what we intend (because Eneba/Gamivo are
+    // selling stale listings, applying smart-competition discounts, or our
+    // price-push hasn't propagated yet), the selector must use that empirical
+    // value or it will keep declaring stock that JIT will refuse.
+    const realisedNet = readLastRealizedNet(listing.provider_metadata);
+    const effectiveSaleCents = pessimisticSaleCents(
+      listing.price_cents,
+      listing.currency,
+      realisedNet,
+    );
+
     const salePriceUsd =
-      (await this.fx.toUsdCents(listing.price_cents, listing.currency)) ?? 0;
+      (await this.fx.toUsdCents(effectiveSaleCents, listing.currency)) ?? 0;
     const listingMinUsd =
       (await this.fx.toUsdCents(listing.min_price_cents, listing.currency)) ?? 0;
     const minFloorUsd =
@@ -643,13 +663,22 @@ export class ProcurementDeclaredStockReconcileService implements IProcurementDec
     const adapter = this.registry.getPricingAdapter(account.provider_code);
     if (!adapter) return null;
 
-    // seller_price adapters (e.g. Eneba with priceIWantToGet) store net amounts
-    // in listing.price_cents — calling calculateNetPayout() would treat the NET
-    // price as a GROSS price in S_calculatePrice and return a lower incorrect
-    // value while burning API rate-limit budget per listing. Return directly.
+    // seller_price adapters (e.g. Eneba with priceIWantToGet, Gamivo) store
+    // net amounts in listing.price_cents — calling calculateNetPayout() would
+    // treat the NET price as a GROSS price and return a lower incorrect value
+    // while burning API rate-limit budget per listing. Return directly, but
+    // honour the realised-net feedback loop (see core/shared/last-realized-net.ts):
+    // if the last RESERVE shows the auction realising LESS than our intended
+    // price, use the empirical value so the selector doesn't over-declare.
     if (adapter.pricingModel === 'seller_price') {
-      const usd = await this.fx.toUsdCents(listing.price_cents, listing.currency);
-      return typeof usd === 'number' && Number.isFinite(usd) && usd > 0 ? usd : listing.price_cents;
+      const realised = readLastRealizedNet(listing.provider_metadata);
+      const effectiveCents = pessimisticSaleCents(
+        listing.price_cents,
+        listing.currency,
+        realised,
+      );
+      const usd = await this.fx.toUsdCents(effectiveCents, listing.currency);
+      return typeof usd === 'number' && Number.isFinite(usd) && usd > 0 ? usd : effectiveCents;
     }
 
     try {
@@ -736,9 +765,17 @@ export class ProcurementDeclaredStockReconcileService implements IProcurementDec
 
     const rows = await this.db.query<Record<string, unknown>>('seller_listings', baseOpts);
 
-    const activeOrPaused = rows.filter((r) => r.status === 'active' || r.status === 'paused');
+    // `paused` listings are excluded: a paused status carries an explicit
+    // "stop advertising" intent (admin or auto-pause from listing-health
+    // out-of-stock circuit). Including them here would re-push positive
+    // declared_stock the moment the credit-aware selector decided economics
+    // looked OK on paper, defeating the pause. Listings auto-paused by the
+    // OOS circuit also have declared_stock=0 already pushed to the marketplace
+    // by ListingHealthService.tripOutOfStockCircuit, so there's nothing left
+    // to reconcile here.
+    const activeListings = rows.filter((r) => r.status === 'active');
 
-    const mapped: ListingRow[] = activeOrPaused.map((r) => ({
+    const mapped: ListingRow[] = activeListings.map((r) => ({
       id: r.id as string,
       variant_id: r.variant_id as string,
       provider_account_id: r.provider_account_id as string,
@@ -754,6 +791,10 @@ export class ProcurementDeclaredStockReconcileService implements IProcurementDec
       pricing_overrides:
         r.pricing_overrides && typeof r.pricing_overrides === 'object' && !Array.isArray(r.pricing_overrides)
           ? (r.pricing_overrides as Record<string, unknown>)
+          : null,
+      provider_metadata:
+        r.provider_metadata && typeof r.provider_metadata === 'object' && !Array.isArray(r.provider_metadata)
+          ? (r.provider_metadata as Record<string, unknown>)
           : null,
     }));
 

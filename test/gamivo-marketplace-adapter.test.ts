@@ -139,6 +139,69 @@ describe('GamivoMarketplaceAdapter.getCompetitorPrices', () => {
     expect(c.isOwnOffer).toBeNull();
   });
 
+  it('synthesises a hidden own-offer row when our offer is INACTIVE and missing from /products/{id}/offers', async () => {
+    // Reproduces LOOTCODES-API-31: when declared_stock=0 we push status=INACTIVE,
+    // and Gamivo then excludes our offer from /products/{id}/offers. Without
+    // synthesis the NET/GROSS resolver loses its preferred ratio source and
+    // logs a high-severity Sentry warning every cron tick.
+    const http: MockHttp = {
+      get: vi.fn(),
+      put: vi.fn(),
+      post: vi.fn(),
+    };
+    http.get.mockImplementation((path: string) => {
+      if (path.startsWith('/api/public/v1/products/140724/offers')) {
+        return Promise.resolve([
+          makeOffer({ id: 100, seller_name: 'CompetitorA', retail_price: 15.99, stock_available: 5 }),
+        ]);
+      }
+      if (path === '/api/public/v1/offers') {
+        // Our own offer exists (cached via GET /offers) but is INACTIVE so
+        // it doesn't show up in /products/{id}/offers.
+        return Promise.resolve([
+          makeOffer({ id: 200, product_id: 140724, seller_name: 'LootCodes', retail_price: 14.99, stock_available: 0, status: 0 }),
+        ]);
+      }
+      throw new Error(`Unexpected GET ${path}`);
+    });
+
+    const { adapter } = makeAdapter(http);
+    const competitors = await adapter.getCompetitorPrices('140724');
+
+    expect(competitors).toHaveLength(2);
+    const own = competitors.find((c) => c.isOwnOffer === true);
+    expect(own).toBeDefined();
+    expect(own!.externalListingId).toBe('200');
+    expect(own!.priceCents).toBe(1499);
+    expect(own!.inStock).toBe(false);
+    expect(own!.merchantName).toBe('LootCodes');
+  });
+
+  it('does NOT duplicate the own-offer row when our offer is already in /products/{id}/offers', async () => {
+    const http: MockHttp = {
+      get: vi.fn(),
+      put: vi.fn(),
+      post: vi.fn(),
+    };
+    http.get.mockImplementation((path: string) => {
+      if (path.startsWith('/api/public/v1/products/140724/offers')) {
+        return Promise.resolve([
+          makeOffer({ id: 200, seller_name: 'LootCodes', retail_price: 14.99 }),
+        ]);
+      }
+      if (path === '/api/public/v1/offers') {
+        return Promise.resolve([makeOffer({ id: 200, product_id: 140724 })]);
+      }
+      throw new Error(`Unexpected GET ${path}`);
+    });
+
+    const { adapter } = makeAdapter(http);
+    const competitors = await adapter.getCompetitorPrices('140724');
+
+    expect(competitors).toHaveLength(1);
+    expect(competitors[0].isOwnOffer).toBe(true);
+  });
+
   it('caches own offers across two calls within the 30s TTL', async () => {
     const http: MockHttp = {
       get: vi.fn(),

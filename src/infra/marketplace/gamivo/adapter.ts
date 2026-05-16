@@ -256,21 +256,29 @@ export class GamivoMarketplaceAdapter
    * Fetch the live competitor ladder for a Gamivo product.
    *
    * Gamivo's `GET /api/public/v1/products/{productId}/offers` returns every
-   * seller's active offer for the product. Combined with our own offers list
-   * we can flag `isOwnOffer` correctly. The price exposed to consumers is
-   * `retail_price` (customer-facing gross EUR).
+   * seller's **active** offer for the product (inactive offers are filtered
+   * out server-side). Combined with our own offers list we can flag
+   * `isOwnOffer` correctly. The price exposed to consumers is `retail_price`
+   * (customer-facing gross EUR).
+   *
+   * Hidden own-offer synthesis (LOOTCODES-API-31 fix):
+   * When our own offer is `INACTIVE` (typical: declared_stock=0 → we pushed
+   * `status=INACTIVE`), Gamivo excludes it from `/products/{id}/offers`. We
+   * fetched it directly via `findOwnOfferForProduct`, so we synthesize a
+   * `CompetitorPrice` row for it. This keeps `resolveNetGrossRatio` working
+   * without an extra calculator round-trip, and gives smart-pricing visibility
+   * into our last-published retail price even while the listing is paused.
    */
   async getCompetitorPrices(externalProductId: string): Promise<CompetitorPrice[]> {
     const [offers, ownedOffer] = await Promise.all([
       this.fetchProductOffers(externalProductId),
       this.findOwnOfferForProduct(externalProductId),
     ]);
-    if (!offers.length) return [];
 
     const ownId = ownedOffer?.id != null ? String(ownedOffer.id) : null;
     const sorted = [...offers].sort((a, b) => a.retail_price - b.retail_price);
 
-    return sorted.map((offer) => ({
+    const result: CompetitorPrice[] = sorted.map((offer) => ({
       merchantName: offer.seller_name,
       priceCents: floatToCents(offer.retail_price),
       currency: 'EUR',
@@ -278,6 +286,23 @@ export class GamivoMarketplaceAdapter
       isOwnOffer: ownId != null ? String(offer.id) === ownId : null,
       externalListingId: String(offer.id),
     }));
+
+    if (
+      ownedOffer
+      && ownedOffer.retail_price > 0
+      && !result.some((r) => r.isOwnOffer === true)
+    ) {
+      result.push({
+        merchantName: ownedOffer.seller_name,
+        priceCents: floatToCents(ownedOffer.retail_price),
+        currency: 'EUR',
+        inStock: ownedOffer.stock_available > 0,
+        isOwnOffer: true,
+        externalListingId: String(ownedOffer.id),
+      });
+    }
+
+    return result;
   }
 
   // ─── ISellerBatchPriceAdapter ────────────────────────────────────────

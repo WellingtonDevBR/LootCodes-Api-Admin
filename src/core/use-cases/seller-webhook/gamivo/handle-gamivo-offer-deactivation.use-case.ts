@@ -25,17 +25,10 @@ export class HandleGamivoOfferDeactivationUseCase {
     const { offerId, productName, reason, providerAccountId } = dto;
     const offerIdStr = String(offerId);
 
-    await this.events.emitSellerEvent({
-      eventType: 'seller.listing_removed',
-      aggregateId: offerIdStr,
-      payload: {
-        providerCode: 'gamivo',
-        externalListingId: offerIdStr,
-        product_name: productName,
-        reason,
-      },
-    });
-
+    // Look up the listing FIRST — domain_events.aggregate_id is UUID-typed,
+    // and Gamivo's offerId is a numeric string (e.g. "3413536"), which would
+    // raise `invalid input syntax for type uuid` on the seller event insert.
+    // The listing UUID is the correct aggregate id for `seller.listing_removed`.
     const listing = await this.db.queryOne<{ id: string }>('seller_listings', {
       select: 'id',
       eq: [['external_listing_id', offerIdStr], ['provider_account_id', providerAccountId]],
@@ -48,7 +41,21 @@ export class HandleGamivoOfferDeactivationUseCase {
         error_message: `Deactivated by Gamivo: ${reason || 'unknown reason'}`,
         updated_at: new Date().toISOString(),
       });
+
+      await this.events.emitSellerEvent({
+        eventType: 'seller.listing_removed',
+        aggregateId: listing.id,
+        payload: {
+          providerCode: 'gamivo',
+          externalListingId: offerIdStr,
+          product_name: productName,
+          reason,
+        },
+      });
     } else {
+      // No matching listing — skip the seller event entirely. There is no
+      // listing aggregate to attach the event to, and inserting with a
+      // synthetic id would just hide the orphaned-deactivation signal.
       logger.warn('Listing not found for Gamivo deactivation', { offerId, providerAccountId });
     }
 

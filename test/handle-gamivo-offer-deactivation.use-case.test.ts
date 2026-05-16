@@ -8,10 +8,14 @@
  *     204 -> No Content   (every success path, including missing-listing)
  *     400/401/404 -> { code, message }
  *
- * Internal contract:
- *   - emit `seller.listing_removed` (audit) BEFORE touching local rows
+ * Internal contract (LOOTCODES-API-33 fix):
+ *   - look up the local listing FIRST (its UUID is the seller-event aggregate id;
+ *     Gamivo's offerId is a numeric string and would fail the UUID column type)
  *   - pause local listing with the Gamivo-supplied `reason` in error_message
- *   - best-effort admin alert (alert failure must NOT 500 the webhook)
+ *   - emit `seller.listing_removed` keyed on the listing UUID
+ *   - skip the seller event entirely when no listing matches (no aggregate
+ *     to attach to; we do NOT invent a synthetic aggregate id)
+ *   - best-effort admin alert always fires (alert failure must NOT 500 the webhook)
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { HandleGamivoOfferDeactivationUseCase } from '../src/core/use-cases/seller-webhook/gamivo/handle-gamivo-offer-deactivation.use-case.js';
@@ -62,7 +66,9 @@ describe('HandleGamivoOfferDeactivationUseCase', () => {
     expect(events.sellerEvents).toEqual([
       expect.objectContaining({
         eventType: 'seller.listing_removed',
-        aggregateId: String(OFFER_ID),
+        // aggregateId must be the listing UUID, NOT the Gamivo numeric offerId
+        // (domain_events.aggregate_id is UUID-typed in Postgres).
+        aggregateId: LISTING_ID,
         payload: expect.objectContaining({
           providerCode: 'gamivo',
           externalListingId: String(OFFER_ID),
@@ -100,11 +106,13 @@ describe('HandleGamivoOfferDeactivationUseCase', () => {
     const result = await useCase.execute(SPEC_DTO);
 
     expect(result).toEqual({ status: 204 });
-    // Audit event still fires.
-    expect(events.sellerEvents).toHaveLength(1);
+    // No seller event fires — without a listing there is no UUID aggregate to
+    // attach the event to. Inventing one would either fail the UUID column
+    // (offerId is numeric) or hide the orphan-deactivation signal.
+    expect(events.sellerEvents).toHaveLength(0);
     // No row update happens because there's no row to update.
     expect(db.updates.filter((u) => u.table === 'seller_listings')).toHaveLength(0);
-    // Alert is still useful — admin should investigate why we don't have the listing.
+    // Alert still fires — admin should investigate why we don't have the listing.
     expect(db.inserts.filter((i) => i.table === 'admin_alerts')).toHaveLength(1);
   });
 

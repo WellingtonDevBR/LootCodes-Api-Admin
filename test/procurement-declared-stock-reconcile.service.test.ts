@@ -143,6 +143,7 @@ interface SellerListingFixture {
   price_cents: number;
   min_price_cents: number;
   pricing_overrides: Record<string, unknown> | null;
+  provider_metadata: Record<string, unknown> | null;
 }
 
 interface ProviderAccountFixture {
@@ -283,6 +284,7 @@ function makeListing(over: Partial<SellerListingFixture>): SellerListingFixture 
     price_cents: 1500,
     min_price_cents: 800,
     pricing_overrides: null,
+    provider_metadata: null,
     ...over,
   };
 }
@@ -432,6 +434,183 @@ describe('ProcurementDeclaredStockReconcileService — credit-gated flow', () =>
     expect(enebaDeclared.calls).toHaveLength(1);
     expect(enebaDeclared.calls[0].externalListingId).toBe('eneba-deal');
     expect(enebaDeclared.calls[0].quantity).toBeGreaterThan(0);
+  });
+
+  it('uses the lower of (price_cents, last realised marketplace net) as the economic gate — triggers price correction when realised net < cost', async () => {
+    // Regression: the four-layered out_of_stock loop documented in
+    // `core/shared/last-realized-net.ts`. Setup mirrors the production case:
+    //   listing.price_cents = 1500 (USD-cent equivalent of €14.21 NET) — passes the 1% margin gate on paper
+    //   last realised net = 1373 (€13.73) — what Eneba's auction is ACTUALLY paying
+    //   cheapest JIT offer cost = 1406 (€14.06)
+    // With the OLD code, the selector evaluated (1500 vs 1406 + 1%) and let
+    // declared_stock=9999 through. JIT then refused at the real auction price,
+    // an out-of-stock cycle followed, and the loop never broke.
+    //
+    // With the realised-net feedback the selector instead sees (1373 vs
+    // 1406 + 1%) → uneconomic. The cron then auto-corrects the price to
+    // floor (ceil(1406 × 1.01) = 1421) and pushes BOTH the price update
+    // and declared stock — closing the loop without a marketplace pause.
+    db.providerAccounts.push(makeAccount({
+      id: 'acct-eneba',
+      provider_code: 'eneba',
+      seller_config: { commission_rate_percent: 0, fixed_fee_cents: 0, min_profit_margin_pct: 1 },
+    }));
+    db.buyerAccounts.push({
+      id: 'acct-bamboo', provider_code: 'bamboo', is_enabled: true, supports_seller: false,
+    });
+    db.listings.push(
+      makeListing({
+        id: 'l-realised',
+        variant_id: 'v-realised',
+        external_listing_id: 'eneba-realised',
+        currency: 'USD',
+        price_cents: 1500,
+        provider_metadata: {
+          lastRealizedNet: {
+            centsPerUnit: 1373,
+            currency: 'USD',
+            at: new Date().toISOString(),
+          },
+        },
+      }),
+    );
+    db.offers.push({
+      id: 'offer-real',
+      variant_id: 'v-realised',
+      provider_account_id: 'acct-bamboo',
+      currency: 'USD',
+      last_price_cents: 1406,
+      available_quantity: 10,
+      prioritize_quote_sync: false,
+      is_active: true,
+    });
+    snapshotter = new CountingWalletSnapshotter(
+      new Map([['acct-bamboo', new Map([['USD', 1_000_000]])]]),
+    );
+    const fx = new IdentityFxConverter();
+    const selector = new CreditAwareDeclaredStockSelectorUseCase(fx);
+    service = new ProcurementDeclaredStockReconcileService(db, registry, snapshotter, fx, selector);
+
+    await service.execute('req-realised', {});
+
+    // The realised-net gate fires the `uneconomic` path: stock is still
+    // declared at the available quantity (we never block declaration when
+    // credit exists) BUT a price-correction DB update is also recorded —
+    // specifically the cost+margin floor (ceil(1406 × 1.01) = 1421).
+    //
+    // Without the realised-net gate, the selector would have evaluated the
+    // intended price 1500 against cost 1406 (passes the 1% margin floor of
+    // 1485) and taken the simple `declare` path — NO price-correction update
+    // would be recorded. The presence of a price_cents update on this
+    // listing in the DB is therefore the empirical signal that the
+    // realised-net feedback was honoured.
+    expect(enebaDeclared.calls).toEqual([{ externalListingId: 'eneba-realised', quantity: 10 }]);
+    const priceCorrections = db.updates.filter(
+      (u) => u.table === 'seller_listings'
+        && (u.filter as Record<string, unknown>).id === 'l-realised'
+        && typeof (u.data as Record<string, unknown>).price_cents === 'number',
+    );
+    expect(priceCorrections).toHaveLength(1);
+    const correctedPrice = (priceCorrections[0].data as Record<string, unknown>).price_cents as number;
+    expect(correctedPrice).toBe(1421);
+  });
+
+  it('ignores stale realised-net (>7 days) and falls back to listing.price_cents', async () => {
+    // Once a listing has had no observed sale for over a week, the captured
+    // value is too old to be trustworthy (cost basis, FX, marketplace strategy
+    // may all have moved). The selector must then fall back to listing.price_cents
+    // so we never get permanently stuck on stale observational data.
+    db.providerAccounts.push(makeAccount({
+      id: 'acct-eneba',
+      provider_code: 'eneba',
+      seller_config: { commission_rate_percent: 0, fixed_fee_cents: 0, min_profit_margin_pct: 1 },
+    }));
+    db.buyerAccounts.push({
+      id: 'acct-bamboo', provider_code: 'bamboo', is_enabled: true, supports_seller: false,
+    });
+    const eightDaysAgo = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString();
+    db.listings.push(
+      makeListing({
+        id: 'l-stale',
+        variant_id: 'v-stale',
+        external_listing_id: 'eneba-stale',
+        currency: 'USD',
+        price_cents: 2000,
+        provider_metadata: {
+          lastRealizedNet: { centsPerUnit: 100, currency: 'USD', at: eightDaysAgo },
+        },
+      }),
+    );
+    db.offers.push({
+      id: 'offer-stale',
+      variant_id: 'v-stale',
+      provider_account_id: 'acct-bamboo',
+      currency: 'USD',
+      last_price_cents: 800,
+      available_quantity: 10,
+      prioritize_quote_sync: false,
+      is_active: true,
+    });
+    snapshotter = new CountingWalletSnapshotter(
+      new Map([['acct-bamboo', new Map([['USD', 1_000_000]])]]),
+    );
+    const fx = new IdentityFxConverter();
+    const selector = new CreditAwareDeclaredStockSelectorUseCase(fx);
+    service = new ProcurementDeclaredStockReconcileService(db, registry, snapshotter, fx, selector);
+
+    const result = await service.execute('req-stale', {});
+
+    // Stale realised-net ignored → falls back to listing.price_cents=2000 →
+    // economics OK at offer cost 800 → declare positive.
+    expect(result.updated).toBe(1);
+    expect(enebaDeclared.calls[0].quantity).toBeGreaterThan(0);
+  });
+
+  it('skips paused listings entirely — never re-declares positive stock to a paused listing', async () => {
+    // Regression: before the fix the cron included `paused` listings, so a
+    // listing auto-paused by ListingHealthService.tripOutOfStockCircuit (5
+    // consecutive out_of_stock failures) would get declared_stock=9999 pushed
+    // back the moment economics looked OK on paper, generating an infinite
+    // pause/republish loop. See LOOTCODES-API issue '[webhook-routes] Eneba
+    // RESERVE responding success:false' (54 events / hour from one variant).
+    db.providerAccounts.push(makeAccount({ id: 'acct-eneba', provider_code: 'eneba' }));
+    db.buyerAccounts.push({
+      id: 'acct-bamboo', provider_code: 'bamboo', is_enabled: true, supports_seller: false,
+    });
+    db.listings.push(
+      makeListing({
+        id: 'l-paused',
+        variant_id: 'v-paused',
+        external_listing_id: 'eneba-paused',
+        status: 'paused',
+        declared_stock: 0,
+        price_cents: 2000,
+        currency: 'USD',
+      }),
+    );
+    db.offers.push({
+      id: 'offer-paused',
+      variant_id: 'v-paused',
+      provider_account_id: 'acct-bamboo',
+      currency: 'USD',
+      last_price_cents: 800,
+      available_quantity: 10,
+      prioritize_quote_sync: false,
+      is_active: true,
+    });
+    snapshotter = new CountingWalletSnapshotter(
+      new Map([['acct-bamboo', new Map([['USD', 100_000]])]]),
+    );
+    const fx = new IdentityFxConverter();
+    const selector = new CreditAwareDeclaredStockSelectorUseCase(fx);
+    service = new ProcurementDeclaredStockReconcileService(db, registry, snapshotter, fx, selector);
+
+    const result = await service.execute('req-paused', {});
+
+    expect(result.scanned).toBe(0);
+    expect(enebaDeclared.calls).toEqual([]);
+    expect(db.listings[0].declared_stock).toBe(0);
+    expect(db.listings[0].status).toBe('paused');
   });
 
   it('persists `error_message=no_offer` on the listing when no buyer-capable offers exist', async () => {

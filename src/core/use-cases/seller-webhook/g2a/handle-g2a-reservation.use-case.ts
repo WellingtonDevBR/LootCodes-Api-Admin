@@ -102,9 +102,21 @@ export class HandleG2AReservationUseCase {
           minMarginCents: listing.min_jit_margin_cents ?? undefined,
         });
       } catch (claimErr) {
-        logger.error('G2A reservation failed — insufficient stock', claimErr as Error, {
-          product_id: item.product_id, quantity: item.quantity, variantId: listing.variant_id,
-        });
+        // Match the Eneba handler's classification (see
+        // handle-declared-stock-reserve.use-case.ts): INSUFFICIENT_STOCK
+        // after JIT exhaustion is a normal business outcome — we return
+        // BR02 and G2A retries. Only unrecognized failures should page.
+        const claimMsg = claimErr instanceof Error ? claimErr.message : String(claimErr);
+        const isExpectedNoStock = /INSUFFICIENT_STOCK|Key claim failed/.test(claimMsg);
+        if (isExpectedNoStock) {
+          logger.warn('G2A reservation: no keys available — propagating variant unavailability', {
+            product_id: item.product_id, quantity: item.quantity, variantId: listing.variant_id, error: claimMsg,
+          });
+        } else {
+          logger.error('G2A reservation: key claim failed unexpectedly', claimErr as Error, {
+            product_id: item.product_id, quantity: item.quantity, variantId: listing.variant_id,
+          });
+        }
 
         if (listing.external_listing_id) {
           await this.healthPort.updateHealthCounters(listing.external_listing_id, 'reservation', false);
