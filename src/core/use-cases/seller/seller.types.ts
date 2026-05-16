@@ -41,6 +41,16 @@ export interface SellerProviderConfig {
   callback_url: string;
   callback_auth_token: string;
   callback_ids: unknown[];
+  /**
+   * Merchant names that should never be undercut when sitting at P1.
+   * Case-insensitive comparison. When P1's `merchantName` matches any entry,
+   * the smart-pricing engine skips that offer and competes against P2 instead
+   * (or holds the current price when no P2 is available).
+   *
+   * Can also be set per-listing via `pricing_overrides.excluded_p1_merchants`
+   * (arrays are merged: listing values are appended to account values).
+   */
+  excluded_p1_merchants: string[];
 }
 
 export const SELLER_CONFIG_DEFAULTS: SellerProviderConfig = {
@@ -72,6 +82,7 @@ export const SELLER_CONFIG_DEFAULTS: SellerProviderConfig = {
   callback_url: '',
   callback_auth_token: '',
   callback_ids: [],
+  excluded_p1_merchants: [],
 };
 
 const VALID_LISTING_TYPES: SellerListingType[] = ['key_upload', 'declared_stock'];
@@ -157,6 +168,9 @@ export function parseSellerConfig(raw: Record<string, unknown>): SellerProviderC
     callback_url: str('callback_url', D.callback_url),
     callback_auth_token: str('callback_auth_token', D.callback_auth_token),
     callback_ids: Array.isArray(raw.callback_ids) ? (raw.callback_ids as unknown[]) : D.callback_ids,
+    excluded_p1_merchants: Array.isArray(raw.excluded_p1_merchants)
+      ? (raw.excluded_p1_merchants as unknown[]).filter((v): v is string => typeof v === 'string')
+      : D.excluded_p1_merchants,
   };
 }
 

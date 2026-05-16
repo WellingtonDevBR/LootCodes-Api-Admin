@@ -5,8 +5,8 @@ import {
 } from '../src/infra/seller/pricing/seller-pricing-math.js';
 import type { CompetitorPrice } from '../src/core/ports/marketplace-adapter.port.js';
 
-function comp(priceCents: number, isOwn = false): CompetitorPrice {
-  return { priceCents, inStock: true, isOwnOffer: isOwn };
+function comp(priceCents: number, isOwn = false, merchantName?: string): CompetitorPrice {
+  return { priceCents, inStock: true, isOwnOffer: isOwn, merchantName: merchantName ?? '' };
 }
 
 const NO_FLOOR = { floor_price_cents: null };
@@ -73,6 +73,67 @@ describe('computeUndampenedOptimalTarget', () => {
         [comp(1600, true)], NO_FLOOR, 1400, config,
       );
       expect(result).toBeNull();
+    });
+  });
+
+  describe('excluded_p1_merchants — SharpGames rule', () => {
+    const cfgExclude = {
+      max_position_target: 2,
+      position_gap_threshold_pct: 10,
+      excluded_p1_merchants: ['SharpGames'],
+    };
+
+    it('skips P1 (SharpGames) and undercuts P2 when P2 exists', () => {
+      // SharpGames@1500, next-best@1600 → target = 1599 (undercut P2 which becomes new P1)
+      const result = computeUndampenedOptimalTarget(
+        [comp(1500, false, 'SharpGames'), comp(1600, false, 'OtherShop')],
+        NO_FLOOR, 1400, cfgExclude,
+      );
+      expect(result?.targetPrice).toBe(1599);
+    });
+
+    it('returns null (hold price) when SharpGames is the only competitor', () => {
+      const result = computeUndampenedOptimalTarget(
+        [comp(1500, false, 'SharpGames')],
+        NO_FLOOR, 1400, cfgExclude,
+      );
+      expect(result).toBeNull();
+    });
+
+    it('competes normally when SharpGames is NOT at P1', () => {
+      // OtherShop@1500 (P1), SharpGames@1600 (P2) → undercut P1 normally
+      const result = computeUndampenedOptimalTarget(
+        [comp(1500, false, 'OtherShop'), comp(1600, false, 'SharpGames')],
+        NO_FLOOR, 1400, cfgExclude,
+      );
+      expect(result?.targetPrice).toBe(1499);
+    });
+
+    it('is case-insensitive — "sharpgames" in config matches "SharpGames" in data', () => {
+      const cfgLower = { ...cfgExclude, excluded_p1_merchants: ['sharpgames'] };
+      const result = computeUndampenedOptimalTarget(
+        [comp(1500, false, 'SharpGames'), comp(1600, false, 'OtherShop')],
+        NO_FLOOR, 1400, cfgLower,
+      );
+      expect(result?.targetPrice).toBe(1599);
+    });
+
+    it('still applies floor when P2 is below profitability floor', () => {
+      // SharpGames@1400 excluded, OtherShop@1420 < floor 1500 → fallback at floor
+      const result = computeUndampenedOptimalTarget(
+        [comp(1400, false, 'SharpGames'), comp(1420, false, 'OtherShop')],
+        NO_FLOOR, 1500, cfgExclude,
+      );
+      expect(result?.targetPrice).toBe(1500);
+    });
+
+    it('no-op when excluded_p1_merchants is empty (default behaviour unchanged)', () => {
+      const result = computeUndampenedOptimalTarget(
+        [comp(1500, false, 'SharpGames'), comp(1600, false, 'OtherShop')],
+        NO_FLOOR, 1400, config,
+      );
+      // With no exclusion config, SharpGames is P1 → undercut to 1499
+      expect(result?.targetPrice).toBe(1499);
     });
   });
 

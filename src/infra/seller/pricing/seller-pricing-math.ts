@@ -19,6 +19,14 @@ export interface UndampenedFloorInput {
 export interface UndampenedConfigInput {
   max_position_target: number;
   position_gap_threshold_pct: number;
+  /**
+   * Merchant names that are never undercut at P1.
+   * When the cheapest non-own in-stock competitor's `merchantName` matches any
+   * entry (case-insensitive), that competitor is skipped and the next-cheapest
+   * is used as the effective P1.  When no other competitor exists after
+   * skipping, the function returns `null` (hold current price).
+   */
+  excluded_p1_merchants?: readonly string[];
 }
 
 export interface UndampenedTargetResult {
@@ -76,8 +84,23 @@ export function computeUndampenedOptimalTarget(
   const nonOwn = activeNonOwnSorted(competitors);
   if (nonOwn.length === 0) return null;
 
-  const p1 = nonOwn[0].priceCents;
-  const p2 = nonOwn.length > 1 ? nonOwn[1].priceCents : null;
+  // Excluded-P1 rule: if the cheapest non-own competitor's merchant name
+  // appears in the exclusion list, skip them entirely and compete against P2.
+  // Only applies when that merchant is at P1 — if they're further back the
+  // normal strategy runs.
+  const excludedLower = (config.excluded_p1_merchants ?? []).map((m) => m.toLowerCase());
+  const effectiveNonOwn =
+    excludedLower.length > 0
+    && nonOwn[0].merchantName != null
+    && excludedLower.includes(nonOwn[0].merchantName.toLowerCase())
+      ? nonOwn.slice(1)
+      : nonOwn;
+
+  // After exclusion, if no other competitors remain, hold the current price.
+  if (effectiveNonOwn.length === 0) return null;
+
+  const p1 = effectiveNonOwn[0].priceCents;
+  const p2 = effectiveNonOwn.length > 1 ? effectiveNonOwn[1].priceCents : null;
   const observedFloor = floorData.floor_price_cents;
 
   let targetPrice: number;
@@ -121,7 +144,7 @@ export function computeUndampenedOptimalTarget(
   // Example: floor=€15.30, competitors=[€15.09, €15.12, €15.20, €15.45, €15.57]
   //   P1=€15.09 < floor → firstAboveFloor=€15.45 → target=€15.44 (not €15.30)
   if (p1 < effectiveMinPrice) {
-    const firstAboveFloor = nonOwn.find((c) => c.priceCents > effectiveMinPrice);
+    const firstAboveFloor = effectiveNonOwn.find((c) => c.priceCents > effectiveMinPrice);
     if (firstAboveFloor) {
       const gapTarget = firstAboveFloor.priceCents - 1;
       if (gapTarget > effectiveMinPrice) {

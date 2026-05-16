@@ -56,5 +56,16 @@ export function mergeSellerListingPricingOverrides(
     merged.price_strategy_value = ov.price_strategy_value;
   }
 
+  // excluded_p1_merchants is additive: listing entries are appended to
+  // account-level entries so both sets are respected.
+  if (Array.isArray(ov.excluded_p1_merchants)) {
+    const extra = (ov.excluded_p1_merchants as unknown[]).filter(
+      (v): v is string => typeof v === 'string',
+    );
+    if (extra.length > 0) {
+      merged.excluded_p1_merchants = [...(baseConfig.excluded_p1_merchants ?? []), ...extra];
+    }
+  }
+
   return merged;
 }
