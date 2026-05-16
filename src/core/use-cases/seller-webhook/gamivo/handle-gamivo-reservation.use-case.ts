@@ -105,6 +105,7 @@ export class HandleGamivoReservationUseCase {
           provider: 'gamivo',
         },
         salePriceCents: unitPriceCents,
+        salePriceCurrency: listing.currency ?? 'EUR',
         minMarginCents: listing.min_jit_margin_cents ?? undefined,
       });
     } catch (claimErr) {

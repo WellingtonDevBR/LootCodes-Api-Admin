@@ -124,6 +124,7 @@ export class HandleKinguinWebhookUseCase {
         expiresAt: new Date(Date.now() + FIFTEEN_MINUTES_MS).toISOString(),
         providerMetadata: buildBuyingProviderMetadata(payload, orderQty),
         salePriceCents: listing.price_cents ?? undefined,
+        salePriceCurrency: listing.currency ?? 'EUR',
         minMarginCents: listing.min_jit_margin_cents ?? undefined,
       });
 
@@ -192,6 +193,7 @@ export class HandleKinguinWebhookUseCase {
             orderedQuantity: orderQty,
           },
           salePriceCents: listing.price_cents ?? undefined,
+          salePriceCurrency: listing.currency ?? 'EUR',
           minMarginCents: listing.min_jit_margin_cents ?? undefined,
         });
         dbReservationId = outcome.reservationId;

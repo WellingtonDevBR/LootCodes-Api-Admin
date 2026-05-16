@@ -37,6 +37,7 @@ interface ListingRow {
   id: string;
   variant_id: string;
   price_cents: number;
+  currency: string;
   external_listing_id: string | null;
   min_jit_margin_cents: number | null;
   provider_account_id: string;
@@ -64,7 +65,7 @@ export class HandleG2AReservationUseCase {
 
     for (const item of items) {
       const listing = await this.db.queryOne<ListingRow>('seller_listings', {
-        select: 'id, variant_id, price_cents, external_listing_id, min_jit_margin_cents, provider_account_id',
+        select: 'id, variant_id, price_cents, currency, external_listing_id, min_jit_margin_cents, provider_account_id',
         eq: [
           ['external_product_id', String(item.product_id)],
           ['provider_account_id', providerAccountId],
@@ -99,6 +100,7 @@ export class HandleG2AReservationUseCase {
             provider: 'g2a',
           },
           salePriceCents: listing.price_cents ?? undefined,
+          salePriceCurrency: listing.currency ?? 'EUR',
           minMarginCents: listing.min_jit_margin_cents ?? undefined,
         });
       } catch (claimErr) {
