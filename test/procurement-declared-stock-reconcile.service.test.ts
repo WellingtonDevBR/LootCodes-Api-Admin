@@ -436,6 +436,116 @@ describe('ProcurementDeclaredStockReconcileService — credit-gated flow', () =>
     expect(enebaDeclared.calls[0].quantity).toBeGreaterThan(0);
   });
 
+  it('always pushes a price correction with the declare when listing.price_cents is below cost+margin floor', async () => {
+    // Loss-prevention guard: even when the strict economic gate passes
+    // (e.g. price 1500 vs cost 1406+1% = 1421 → economic), the guard
+    // verifies price covers the FULL strategy-aware floor at this very
+    // moment. With 5% margin override, floor = ceil(1406 × 1.05) = 1477.
+    // listing.price_cents = 1500 already passes the 1% strict gate, but the
+    // 5% override floor demands 1477 — guard kicks in and pushes the
+    // corrected price alongside declared stock so we NEVER advertise stock
+    // at a sub-margin price, regardless of the gate decision.
+    //
+    // This is the production-identical scenario for variant
+    // `e42c5746-34ab-4a3b-97f1-bab436b8a608` after we set
+    // `pricing_overrides.min_profit_percent = 5`.
+    db.providerAccounts.push(makeAccount({
+      id: 'acct-eneba',
+      provider_code: 'eneba',
+      seller_config: { commission_rate_percent: 0, fixed_fee_cents: 0, min_profit_margin_pct: 1 },
+    }));
+    db.buyerAccounts.push({
+      id: 'acct-bamboo', provider_code: 'bamboo', is_enabled: true, supports_seller: false,
+    });
+    db.listings.push(
+      makeListing({
+        id: 'l-floor',
+        variant_id: 'v-floor',
+        external_listing_id: 'eneba-floor',
+        currency: 'USD',
+        price_cents: 1430,
+        pricing_overrides: { min_profit_percent: 5 },
+      }),
+    );
+    db.offers.push({
+      id: 'offer-floor',
+      variant_id: 'v-floor',
+      provider_account_id: 'acct-bamboo',
+      currency: 'USD',
+      last_price_cents: 1406,
+      available_quantity: 10,
+      prioritize_quote_sync: false,
+      is_active: true,
+    });
+    snapshotter = new CountingWalletSnapshotter(
+      new Map([['acct-bamboo', new Map([['USD', 1_000_000]])]]),
+    );
+    const fx = new IdentityFxConverter();
+    const selector = new CreditAwareDeclaredStockSelectorUseCase(fx);
+    service = new ProcurementDeclaredStockReconcileService(db, registry, snapshotter, fx, selector);
+
+    await service.execute('req-floor-guard', {});
+
+    expect(enebaDeclared.calls).toEqual([{ externalListingId: 'eneba-floor', quantity: 10 }]);
+    const priceCorrections = db.updates.filter(
+      (u) => u.table === 'seller_listings'
+        && (u.filter as Record<string, unknown>).id === 'l-floor'
+        && typeof (u.data as Record<string, unknown>).price_cents === 'number',
+    );
+    expect(priceCorrections).toHaveLength(1);
+    expect((priceCorrections[0].data as Record<string, unknown>).price_cents).toBe(1477);
+  });
+
+  it('does NOT push a price correction when listing.price_cents already covers the cost+margin floor', async () => {
+    // Inverse of the floor guard: if the listing is already priced safely
+    // above floor, the declare path must NOT burn marketplace API quota
+    // on a redundant price update. Stock-only push.
+    db.providerAccounts.push(makeAccount({
+      id: 'acct-eneba',
+      provider_code: 'eneba',
+      seller_config: { commission_rate_percent: 0, fixed_fee_cents: 0, min_profit_margin_pct: 1 },
+    }));
+    db.buyerAccounts.push({
+      id: 'acct-bamboo', provider_code: 'bamboo', is_enabled: true, supports_seller: false,
+    });
+    db.listings.push(
+      makeListing({
+        id: 'l-safe',
+        variant_id: 'v-safe',
+        external_listing_id: 'eneba-safe',
+        currency: 'USD',
+        price_cents: 2000,
+        pricing_overrides: { min_profit_percent: 5 },
+      }),
+    );
+    db.offers.push({
+      id: 'offer-safe',
+      variant_id: 'v-safe',
+      provider_account_id: 'acct-bamboo',
+      currency: 'USD',
+      last_price_cents: 1406,
+      available_quantity: 10,
+      prioritize_quote_sync: false,
+      is_active: true,
+    });
+    snapshotter = new CountingWalletSnapshotter(
+      new Map([['acct-bamboo', new Map([['USD', 1_000_000]])]]),
+    );
+    const fx = new IdentityFxConverter();
+    const selector = new CreditAwareDeclaredStockSelectorUseCase(fx);
+    service = new ProcurementDeclaredStockReconcileService(db, registry, snapshotter, fx, selector);
+
+    await service.execute('req-safe', {});
+
+    expect(enebaDeclared.calls).toEqual([{ externalListingId: 'eneba-safe', quantity: 10 }]);
+    const priceCorrections = db.updates.filter(
+      (u) => u.table === 'seller_listings'
+        && (u.filter as Record<string, unknown>).id === 'l-safe'
+        && typeof (u.data as Record<string, unknown>).price_cents === 'number',
+    );
+    expect(priceCorrections).toHaveLength(0);
+  });
+
   it('uses the lower of (price_cents, last realised marketplace net) as the economic gate — triggers price correction when realised net < cost', async () => {
     // Regression: the four-layered out_of_stock loop documented in
     // `core/shared/last-realized-net.ts`. Setup mirrors the production case:

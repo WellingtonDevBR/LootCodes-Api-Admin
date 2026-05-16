@@ -175,12 +175,46 @@ export class ProcurementDeclaredStockReconcileService implements IProcurementDec
       }
 
       if (decision.kind === 'declare') {
-        // Skip the API call if declared stock is already at the target quantity
-        // to preserve marketplace API quota.
-        if (decision.declaredQty === listing.declared_stock) {
+        // Loss-prevention guard: even when the strict economic gate passes,
+        // verify `listing.price_cents` covers the cost+margin floor at THIS
+        // very moment. The pricing cron may not have caught up to a recent
+        // cost-basis change, smart-compete may have dragged the price down,
+        // or the listing may have been edited manually. Any of those leaves
+        // a window where we'd declare positive stock at a price that JIT
+        // will then refuse — the exact loop documented in
+        // `core/shared/last-realized-net.ts`.
+        //
+        // Compute the strategy-aware floor and, if `listing.price_cents` is
+        // below it, augment this declared-stock update with a price
+        // correction. Marketplace adapters that support batch updates push
+        // both fields in one API call (Eneba batch, Gamivo PUT) — no extra
+        // quota burn vs the existing `declare` path.
+        const mergedConfig = mergeSellerListingPricingOverrides(account.seller_config, listing.pricing_overrides);
+        const pricingModel = this.registry.getPricingAdapter(account.provider_code)?.pricingModel;
+        const requiredFloorCents = await computeStrategyAwareCorrectedPrice({
+          db: this.db,
+          fx: this.fx,
+          listingId: listing.id,
+          listingCurrency: listing.currency,
+          offerCostUsdCents: decision.costBasisUsdCents,
+          marginPct: mergedConfig.min_profit_margin_pct,
+          commissionPct: mergedConfig.commission_rate_percent,
+          fixedFeeCents: mergedConfig.fixed_fee_cents,
+          priceStrategy: mergedConfig.price_strategy,
+          priceStrategyValue: mergedConfig.price_strategy_value,
+          pricingModel,
+          competitorCacheMaxAgeMs: mergedConfig.competitor_cache_max_age_ms,
+        });
+        const needsPriceCorrection = listing.price_cents < requiredFloorCents;
+
+        // Skip the API call entirely when nothing changed (declared_stock
+        // already matches AND price is safely above the floor) — preserves
+        // marketplace API quota.
+        if (decision.declaredQty === listing.declared_stock && !needsPriceCorrection) {
           skipped++;
           continue;
         }
+
         logger.info('Reconcile: declaring stock from credited buyer', {
           requestId, listingId: listing.id, providerCode: account.provider_code,
           buyerProviderCode: decision.offer.provider_code,
@@ -188,9 +222,20 @@ export class ProcurementDeclaredStockReconcileService implements IProcurementDec
           declaredQty: decision.declaredQty,
           previousDeclaredStock: listing.declared_stock,
           costBasisUsdCents: decision.costBasisUsdCents,
+          currentPriceCents: listing.price_cents,
+          requiredFloorCents,
+          needsPriceCorrection,
         });
         const pending = pendingByProvider.get(account.provider_code) ?? [];
-        pending.push({ listingId: listing.id, externalId: listing.external_listing_id, qty: decision.declaredQty });
+        pending.push({
+          listingId: listing.id,
+          externalId: listing.external_listing_id,
+          qty: decision.declaredQty,
+          ...(needsPriceCorrection ? {
+            correctedPriceCents: requiredFloorCents,
+            correctedPriceCurrency: listing.currency,
+          } : {}),
+        });
         pendingByProvider.set(account.provider_code, pending);
         updated++;
       } else if (decision.reason === 'uneconomic') {
