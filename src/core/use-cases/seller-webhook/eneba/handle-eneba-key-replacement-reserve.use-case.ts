@@ -114,7 +114,11 @@ export class HandleEnebaKeyReplacementReserveUseCase {
       ) ?? null;
 
       if (!originalReservation) {
-        logger.warn('Replacement RESERVE: no provisioned reservation found — proceeding to claim only', {
+        // Expected path: original reservation may have been cleaned up (expired,
+        // key-upload model, or order predates reservation tracking). Claim only
+        // — do not attempt to mark a key faulty. Logged at info so it stays
+        // observable without triggering Sentry.
+        logger.info('Replacement RESERVE: no provisioned reservation found — proceeding to claim only', {
           orderId, auctionId,
         });
       }
